@@ -33,27 +33,27 @@ encapsulated package SimCodeFunctionUtil "SimCode functions not related to equat
 
 import DAE;
 import HashTableExpToIndex;
-import SimCode;
+import SimCodeFunction;
+import SimCodeVar;
 
 protected
 
 import Array;
 import BaseHashTable;
 import CevalScript;
-import ClockIndexes;
 import ComponentReference;
 import DAEDump;
 import DAEUtil;
-import Debug;
+import ElementSource;
 import Error;
 import Expression;
 import ExpressionSimplify;
 import ExpressionDump;
 import Flags;
-import GC;
 import Graph;
 import List;
 import Mod;
+import Patternm;
 import SCode;
 
 public
@@ -61,11 +61,11 @@ public
 public function elementVars
 "Used by templates to get a list of variables from a valueblock."
   input list<DAE.Element> ild;
-  output list<SimCode.Variable> vars;
+  output list<SimCodeFunction.Variable> vars;
 protected
   list<DAE.Element> ld;
 algorithm
-  ld := List.filter(ild, isVarQ);
+  ld := List.filterOnTrue(ild, isVarQ);
   vars := List.map(ld, daeInOutSimVar);
 end elementVars;
 
@@ -109,12 +109,12 @@ algorithm
 end crefNoSub;
 
 public function inFunctionContext
-  input SimCode.Context inContext;
+  input SimCodeFunction.Context inContext;
   output Boolean outInFunction;
 algorithm
   outInFunction := match inContext
-    case SimCode.FUNCTION_CONTEXT() then true;
-    case SimCode.PARALLEL_FUNCTION_CONTEXT() then true;
+    case SimCodeFunction.FUNCTION_CONTEXT() then true;
+    case SimCodeFunction.PARALLEL_FUNCTION_CONTEXT() then true;
     else false;
   end match;
 end inFunctionContext;
@@ -126,7 +126,7 @@ public function crefIsScalar
   only constant subscripts are also scalars, since a variable is generated for
   each element of an array in the model."
   input DAE.ComponentRef cref;
-  input SimCode.Context context;
+  input SimCodeFunction.Context context;
   output Boolean isScalar;
 algorithm
   if inFunctionContext(context) then
@@ -216,55 +216,6 @@ algorithm
   end match;
 end makeCrefRecordExp;
 
-public function cref2simvar
-"Used by templates to find SIMVAR for given cref (to gain representaion index info mainly)."
-  input DAE.ComponentRef inCref;
-  input SimCode.SimCode simCode;
-  output SimCodeVar.SimVar outSimVar;
-algorithm
-  outSimVar := matchcontinue(inCref, simCode)
-    local
-      DAE.ComponentRef cref, badcref;
-      SimCodeVar.SimVar sv;
-      SimCode.HashTableCrefToSimVar crefToSimVarHT;
-      String errstr;
-
-    case (cref, SimCode.SIMCODE(crefToSimVarHT = crefToSimVarHT) )
-      equation
-        sv = get(cref, crefToSimVarHT);
-      then sv;
-
-    case (_, _)
-      equation
-        //print("cref2simvar: " + ComponentReference.printComponentRefStr(inCref) + " not found!\n");
-        badcref = ComponentReference.makeCrefIdent("ERROR_cref2simvar_failed", DAE.T_REAL_DEFAULT, {});
-        /* Todo: This also generates an error for example itearation variables, so i commented  out
-        "Template did not find the simulation variable for "+ ComponentReference.printComponentRefStr(cref) + ". ";
-        Error.addInternalError(errstr, sourceInfo());*/
-      then
-         SimCodeVar.SIMVAR(badcref, BackendDAE.VARIABLE(), "", "", "", -2, NONE(), NONE(), NONE(), NONE(), false, DAE.T_REAL_DEFAULT, false, NONE(), SimCodeVar.NOALIAS(), DAE.emptyElementSource, SimCodeVar.INTERNAL(), NONE(), {}, false, true);
-  end matchcontinue;
-end cref2simvar;
-
-public function isModelTooBigForCSharpInOneFile
-"Used by C# template to determine if the generated code should be split into several files
- to make Visual Studio responsive when the file is opened (C# compiler is OK,
- but VS does not scale well for big C# files)."
-  input SimCode.SimCode simCode;
-  output Boolean outIsTooBig;
-algorithm
-  outIsTooBig := match(simCode)
-    local
-      Integer numAlgVars;
-
-    case (SimCode.SIMCODE(modelInfo = SimCode.MODELINFO(varInfo = SimCode.VARINFO(numAlgVars = numAlgVars))))
-      equation
-        outIsTooBig = numAlgVars > 1000;
-      then outIsTooBig;
-
-  end match;
-end isModelTooBigForCSharpInOneFile;
-
 public function derComponentRef
 "Used by templates to derrive a cref in a der(cref) expression.
  Particularly, this function is called for the C# code generator,
@@ -285,7 +236,7 @@ TODO: This function should not exist!
 Rather the array should not be let expanded when SimCode is entering templates.
 "
   input DAE.Exp inExp;
-  input SimCode.Context context;
+  input SimCodeFunction.Context context;
   output DAE.Exp outExp;
 algorithm
   outExp := matchcontinue (inExp, context)
@@ -297,8 +248,8 @@ algorithm
 
     case(DAE.ARRAY(ty=aty, scalar=true, array =(DAE.CREF(componentRef=cr) ::aRest)), _)
       equation
-        failure(SimCode.FUNCTION_CONTEXT()=context); // only in the function context
-        failure(SimCode.PARALLEL_FUNCTION_CONTEXT()=context); // only in the function context
+        failure(SimCodeFunction.FUNCTION_CONTEXT()=context); // only in the function context
+        failure(SimCodeFunction.PARALLEL_FUNCTION_CONTEXT()=context); // only in the function context
         { DAE.INDEX(DAE.ICONST(1)) } = ComponentReference.crefLastSubs(cr);
         cr = ComponentReference.crefStripLastSubs(cr);
         true = isArrayExpansion(aRest, cr, 2);
@@ -342,7 +293,7 @@ TODO: This function should not exist!
 Rather the matrix should not be let expanded when SimCode is entering templates
 "
   input DAE.Exp inExp;
-  input SimCode.Context context;
+  input SimCodeFunction.Context context;
   output DAE.Exp outExp;
 algorithm
   outExp := matchcontinue (inExp, context)
@@ -354,8 +305,8 @@ algorithm
 
     case(DAE.MATRIX(ty=aty, matrix = rows as (((DAE.CREF(componentRef=cr))::_)::_) ), _)
       equation
-        failure(SimCode.FUNCTION_CONTEXT()=context);
-        failure(SimCode.PARALLEL_FUNCTION_CONTEXT()=context); // only in the function context
+        failure(SimCodeFunction.FUNCTION_CONTEXT()=context);
+        failure(SimCodeFunction.PARALLEL_FUNCTION_CONTEXT()=context); // only in the function context
         { DAE.INDEX(DAE.ICONST(1)), DAE.INDEX(DAE.ICONST(1)) } = ComponentReference.crefLastSubs(cr);
         cr = ComponentReference.crefStripLastSubs(cr);
         true = isMatrixExpansion(rows, cr, 1, 1);
@@ -445,18 +396,18 @@ end createDAEString;
 // section to generate SimCode from functions
 //
 // Finds the called functions in BackendDAE and transforms them to a list of
-// libraries and a list of SimCode.Function uniontypes.
+// libraries and a list of SimCodeFunction.Function uniontypes.
 // =============================================================================
 
 protected function orderRecordDecls
-  input SimCode.RecordDeclaration decl1;
-  input SimCode.RecordDeclaration decl2;
+  input SimCodeFunction.RecordDeclaration decl1;
+  input SimCodeFunction.RecordDeclaration decl2;
   output Boolean b;
 algorithm
   b := match (decl1,decl2)
     local
       Absyn.Path path1,path2;
-    case (SimCode.RECORD_DECL_DEF(path=path1),SimCode.RECORD_DECL_DEF(path=path2)) then Absyn.pathGe(path1,path2);
+    case (SimCodeFunction.RECORD_DECL_DEF(path=path1),SimCodeFunction.RECORD_DECL_DEF(path=path2)) then Absyn.pathGe(path1,path2);
     else true;
   end match;
 end orderRecordDecls;
@@ -467,17 +418,17 @@ public function elaborateFunctions
   input list<DAE.Type> metarecordTypes;
   input list<DAE.Exp> literals;
   input list<String> includes;
-  output list<SimCode.Function> functions;
-  output list<SimCode.RecordDeclaration> extraRecordDecls;
+  output list<SimCodeFunction.Function> functions;
+  output list<SimCodeFunction.RecordDeclaration> extraRecordDecls;
   output list<String> outIncludes;
   output list<String> includeDirs;
   output list<String> libs;
   output list<String> libpaths;
 protected
-  list<SimCode.Function> fns;
+  list<SimCodeFunction.Function> fns;
   list<String> outRecordTypes;
   HashTableStringToPath.HashTable ht;
-  list<tuple<SimCode.RecordDeclaration,list<SimCode.RecordDeclaration>>> g;
+  list<tuple<SimCodeFunction.RecordDeclaration,list<SimCodeFunction.RecordDeclaration>>> g;
 algorithm
   (extraRecordDecls, outRecordTypes) := elaborateRecordDeclarationsForMetarecords(literals, {}, {});
   (functions, outRecordTypes, extraRecordDecls, outIncludes, includeDirs, libs,libpaths) := elaborateFunctions2(program, daeElements, {}, outRecordTypes, extraRecordDecls, includes, {}, {},{});
@@ -492,19 +443,19 @@ algorithm
 end elaborateFunctions;
 
 protected function getRecordDependencies
-  input SimCode.RecordDeclaration decl;
-  input list<SimCode.RecordDeclaration> allDecls;
-  output list<SimCode.RecordDeclaration> dependencies;
+  input SimCodeFunction.RecordDeclaration decl;
+  input list<SimCodeFunction.RecordDeclaration> allDecls;
+  output list<SimCodeFunction.RecordDeclaration> dependencies;
 algorithm
   dependencies := match (decl,allDecls)
     local
       String name;
-      list<SimCode.Variable> vars;
+      list<SimCodeFunction.Variable> vars;
       list<DAE.Type> tys;
       list<list<DAE.Type>> tyss;
-    case (SimCode.RECORD_DECL_FULL(aliasName=SOME(name)),_)
+    case (SimCodeFunction.RECORD_DECL_FULL(aliasName=SOME(name)),_)
       then List.select1(allDecls, isRecordDecl, name);
-    case (SimCode.RECORD_DECL_FULL(variables=vars),_)
+    case (SimCodeFunction.RECORD_DECL_FULL(variables=vars),_)
       equation
         tys = list(getVarType(v) for v in vars);
         tyss = List.map1(tys, Types.getAllInnerTypesOfType, Util.anyReturnTrue);
@@ -516,52 +467,52 @@ algorithm
 end getRecordDependencies;
 
 protected function getVarType
-  input SimCode.Variable var;
+  input SimCodeFunction.Variable var;
   output DAE.Type ty;
 algorithm
   ty := match var
-    case SimCode.VARIABLE(ty=ty) then ty;
+    case SimCodeFunction.VARIABLE(ty=ty) then ty;
     else DAE.T_ANYTYPE_DEFAULT;
   end match;
 end getVarType;
 
 protected function getRecordDependenciesFromType
   input DAE.Type ty;
-  input list<SimCode.RecordDeclaration> allDecls;
-  output SimCode.RecordDeclaration decl;
+  input list<SimCodeFunction.RecordDeclaration> allDecls;
+  output SimCodeFunction.RecordDeclaration decl;
 protected
   Absyn.Path path;
   String name;
 algorithm
   DAE.T_COMPLEX(complexClassType = ClassInf.RECORD(path)) := ty;
   name := Absyn.pathStringUnquoteReplaceDot(path, "_");
-  decl := List.selectFirst1(allDecls, isRecordDecl, name);
+  decl := List.find1(allDecls, isRecordDecl, name);
 end getRecordDependenciesFromType;
 
 protected function isRecordDecl
-  input SimCode.RecordDeclaration decl;
+  input SimCodeFunction.RecordDeclaration decl;
   input String name;
   output Boolean b;
 algorithm
   b := match (decl,name)
     local
       String name1;
-    case (SimCode.RECORD_DECL_FULL(name=name1),_) then stringEq(name,name1);
+    case (SimCodeFunction.RECORD_DECL_FULL(name=name1),_) then stringEq(name,name1);
     else false;
   end match;
 end isRecordDecl;
 
 protected function isRecordDeclEqual
-  input SimCode.RecordDeclaration decl1;
-  input SimCode.RecordDeclaration decl2;
+  input SimCodeFunction.RecordDeclaration decl1;
+  input SimCodeFunction.RecordDeclaration decl2;
   output Boolean b;
 algorithm
   b := match (decl1,decl2)
     local
       String name1,name2;
       Absyn.Path path1,path2;
-    case (SimCode.RECORD_DECL_FULL(name=name1),SimCode.RECORD_DECL_FULL(name=name2)) then stringEq(name1,name2);
-    case (SimCode.RECORD_DECL_DEF(path=path1),SimCode.RECORD_DECL_DEF(path=path2)) then Absyn.pathEqual(path1,path2);
+    case (SimCodeFunction.RECORD_DECL_FULL(name=name1),SimCodeFunction.RECORD_DECL_FULL(name=name2)) then stringEq(name1,name2);
+    case (SimCodeFunction.RECORD_DECL_DEF(path=path1),SimCodeFunction.RECORD_DECL_DEF(path=path2)) then Absyn.pathEqual(path1,path2);
     else false;
   end match;
 end isRecordDeclEqual;
@@ -569,16 +520,16 @@ end isRecordDeclEqual;
 protected function elaborateFunctions2
   input Absyn.Program program;
   input list<DAE.Function> daeElements;
-  input list<SimCode.Function> inFunctions;
+  input list<SimCodeFunction.Function> inFunctions;
   input list<String> inRecordTypes;
-  input list<SimCode.RecordDeclaration> inDecls;
+  input list<SimCodeFunction.RecordDeclaration> inDecls;
   input list<String> inIncludes;
   input list<String> inIncludeDirs;
   input list<String> inLibs;
   input list<String> inPaths;
-  output list<SimCode.Function> outFunctions;
+  output list<SimCodeFunction.Function> outFunctions;
   output list<String> outRecordTypes;
-  output list<SimCode.RecordDeclaration> outDecls;
+  output list<SimCodeFunction.RecordDeclaration> outDecls;
   output list<String> outIncludes;
   output list<String> outIncludeDirs;
   output list<String> outLibs;
@@ -588,12 +539,12 @@ algorithm
   match (program, daeElements, inFunctions, inRecordTypes, inDecls, inIncludes, inIncludeDirs, inLibs,inPaths)
     local
       Boolean b;
-      list<SimCode.Function> accfns, fns;
-      SimCode.Function fn;
+      list<SimCodeFunction.Function> accfns, fns;
+      SimCodeFunction.Function fn;
       list<String> rt, rt_1, rt_2, includes, libs,libPaths;
       DAE.Function fel;
       list<DAE.Function> rest;
-      list<SimCode.RecordDeclaration> decls;
+      list<SimCodeFunction.RecordDeclaration> decls;
       String name;
       list<String> includeDirs;
       Absyn.Path path;
@@ -637,19 +588,19 @@ algorithm
   end match;
 end elaborateFunctions2;
 
-/* Does the actual work of transforming a DAE.FUNCTION to a SimCode.Function. */
+/* Does the actual work of transforming a DAE.FUNCTION to a SimCodeFunction.Function. */
 protected function elaborateFunction
   input Absyn.Program program;
   input DAE.Function inElement;
   input list<String> inRecordTypes;
-  input list<SimCode.RecordDeclaration> inRecordDecls;
+  input list<SimCodeFunction.RecordDeclaration> inRecordDecls;
   input list<String> inIncludes;
   input list<String> inIncludeDirs;
   input list<String> inLibs;
   input list<String> inLibPaths;
-  output SimCode.Function outFunction;
+  output SimCodeFunction.Function outFunction;
   output list<String> outRecordTypes;
-  output list<SimCode.RecordDeclaration> outRecordDecls;
+  output list<SimCodeFunction.RecordDeclaration> outRecordDecls;
   output list<String> outIncludes;
   output list<String> outIncludeDirs;
   output list<String> outLibs;
@@ -666,14 +617,14 @@ algorithm
       list<DAE.FuncArg> args;
       DAE.Type restype, tp;
       list<DAE.ExtArg> extargs;
-      list<SimCode.SimExtArg> simextargs;
-      SimCode.SimExtArg extReturn;
+      list<SimCodeFunction.SimExtArg> simextargs;
+      SimCodeFunction.SimExtArg extReturn;
       DAE.ExtArg extretarg;
       Option<SCode.Annotation> ann;
       DAE.ExternalDecl extdecl;
-      list<SimCode.Variable> outVars, inVars, biVars, funArgs, varDecls;
-      list<SimCode.RecordDeclaration> recordDecls;
-      list<SimCode.Statement> bodyStmts;
+      list<SimCodeFunction.Variable> outVars, inVars, biVars, funArgs, varDecls;
+      list<SimCodeFunction.RecordDeclaration> recordDecls;
+      list<DAE.Statement> bodyStmts;
       list<DAE.Element> daeElts;
       Absyn.Path name;
       DAE.ElementSource source;
@@ -697,13 +648,12 @@ algorithm
         outVars = List.map(DAEUtil.getOutputVars(daeElts), daeInOutSimVar);
         funArgs = List.map1(args, typesSimFunctionArg, NONE());
         (recordDecls, rt_1) = elaborateRecordDeclarations(daeElts, recordDecls, rt);
-        vars = List.filter(daeElts, isVarQ);
+        vars = List.filterOnTrue(daeElts, isVarQ);
         varDecls = List.map(vars, daeInOutSimVar);
-        algs = List.filterOnTrue(daeElts, DAEUtil.isAlgorithm);
-        bodyStmts = List.map(algs, elaborateStatement);
-        info = DAEUtil.getElementSourceFileInfo(source);
+        bodyStmts = listAppend(elaborateStatement(e) for e guard DAEUtil.isAlgorithm(e) in daeElts);
+        info = ElementSource.getElementSourceFileInfo(source);
       then
-        (SimCode.FUNCTION(fpath, outVars, funArgs, varDecls, bodyStmts, visibility, info), rt_1, recordDecls, includes, includeDirs, libs,libPaths);
+        (SimCodeFunction.FUNCTION(fpath, outVars, funArgs, varDecls, bodyStmts, visibility, info), rt_1, recordDecls, includes, includeDirs, libs,libPaths);
 
 
      case (_, DAE.FUNCTION(path = fpath, source = source,
@@ -717,13 +667,12 @@ algorithm
         outVars = List.map(DAEUtil.getOutputVars(daeElts), daeInOutSimVar);
         funArgs = List.map1(args, typesSimFunctionArg, NONE());
         (recordDecls, rt_1) = elaborateRecordDeclarations(daeElts, recordDecls, rt);
-        vars = List.filter(daeElts, isVarNotInputNotOutput);
+        vars = List.filterOnTrue(daeElts, isVarNotInputNotOutput);
         varDecls = List.map(vars, daeInOutSimVar);
-        algs = List.filterOnTrue(daeElts, DAEUtil.isAlgorithm);
-        bodyStmts = List.map(algs, elaborateStatement);
-        info = DAEUtil.getElementSourceFileInfo(source);
+        bodyStmts = listAppend(elaborateStatement(e) for e guard DAEUtil.isAlgorithm(e) in daeElts);
+        info = ElementSource.getElementSourceFileInfo(source);
       then
-        (SimCode.KERNEL_FUNCTION(fpath, outVars, funArgs, varDecls, bodyStmts, info), rt_1, recordDecls, includes, includeDirs, libs,libPaths);
+        (SimCodeFunction.KERNEL_FUNCTION(fpath, outVars, funArgs, varDecls, bodyStmts, info), rt_1, recordDecls, includes, includeDirs, libs,libPaths);
 
 
     case (_, DAE.FUNCTION(path = fpath, source = source,
@@ -737,13 +686,12 @@ algorithm
         outVars = List.map(DAEUtil.getOutputVars(daeElts), daeInOutSimVar);
         funArgs = List.map1(args, typesSimFunctionArg, NONE());
         (recordDecls, rt_1) = elaborateRecordDeclarations(daeElts, recordDecls, rt);
-        vars = List.filter(daeElts, isVarQ);
+        vars = List.filterOnTrue(daeElts, isVarQ);
         varDecls = List.map(vars, daeInOutSimVar);
-        algs = List.filterOnTrue(daeElts, DAEUtil.isAlgorithm);
-        bodyStmts = List.map(algs, elaborateStatement);
-        info = DAEUtil.getElementSourceFileInfo(source);
+        bodyStmts = listAppend(elaborateStatement(e) for e guard DAEUtil.isAlgorithm(e) in daeElts);
+        info = ElementSource.getElementSourceFileInfo(source);
       then
-        (SimCode.PARALLEL_FUNCTION(fpath, outVars, funArgs, varDecls, bodyStmts, info), rt_1, recordDecls, includes, includeDirs, libs,libPaths);
+        (SimCodeFunction.PARALLEL_FUNCTION(fpath, outVars, funArgs, varDecls, bodyStmts, info), rt_1, recordDecls, includes, includeDirs, libs,libPaths);
 
     // External functions.
     case (_, DAE.FUNCTION(path = fpath, source = source, visibility = visibility,
@@ -760,7 +708,7 @@ algorithm
         inVars = List.map(DAEUtil.getInputVars(daeElts), daeInOutSimVar);
         biVars = List.map(DAEUtil.getBidirVars(daeElts), daeInOutSimVar);
         (recordDecls, rt_1) = elaborateRecordDeclarations(daeElts, recordDecls, rt);
-        info = DAEUtil.getElementSourceFileInfo(source);
+        info = ElementSource.getElementSourceFileInfo(source);
         (fn_includes, fn_includeDirs, fn_libs, fn_paths,dynamicLoad) = generateExtFunctionIncludes(program, fpath, ann, info);
         includes = List.union(fn_includes, includes);
         includeDirs = List.union(fn_includeDirs, includeDirs);
@@ -772,21 +720,21 @@ algorithm
         // make lang to-upper as we have FORTRAN 77 and Fortran 77 in the Modelica Library!
         lang = System.toupper(lang);
       then
-        (SimCode.EXTERNAL_FUNCTION(fpath, extfnname, funArgs, simextargs, extReturn,
+        (SimCodeFunction.EXTERNAL_FUNCTION(fpath, extfnname, funArgs, simextargs, extReturn,
           inVars, outVars, biVars, fn_includes, fn_libs, lang, visibility, info, dynamicLoad),
           rt_1, recordDecls, includes, includeDirs, libs,libPaths);
 
         // Record constructor.
-    case (_, DAE.RECORD_CONSTRUCTOR(source = source, type_ = DAE.T_FUNCTION(funcArg = args, funcResultType = restype as DAE.T_COMPLEX(complexClassType = ClassInf.RECORD(name))),kind=kind), rt, recordDecls, includes, includeDirs, libs,libPaths)
+    case (_, DAE.RECORD_CONSTRUCTOR(source = source, type_ = DAE.T_FUNCTION(funcArg = args, funcResultType = restype as DAE.T_COMPLEX(complexClassType = ClassInf.RECORD(name)))), rt, recordDecls, includes, includeDirs, libs,libPaths)
       equation
         funArgs = List.map1(args, typesSimFunctionArg, NONE());
         (recordDecls, rt_1) = elaborateRecordDeclarationsForRecord(restype, recordDecls, rt);
         DAE.T_COMPLEX(varLst = varlst) = restype;
         varlst = List.filterOnTrue(varlst, Types.isProtectedVar);
         varDecls = List.map(varlst, typesVar);
-        info = DAEUtil.getElementSourceFileInfo(source);
+        info = ElementSource.getElementSourceFileInfo(source);
       then
-        (SimCode.RECORD_CONSTRUCTOR(name, funArgs, varDecls, SCode.PUBLIC(), info, kind), rt_1, recordDecls, includes, includeDirs, libs,libPaths);
+        (SimCodeFunction.RECORD_CONSTRUCTOR(name, funArgs, varDecls, SCode.PUBLIC(), info), rt_1, recordDecls, includes, includeDirs, libs,libPaths);
 
         // failure
     case (_, fn, _, _, _, _, _,_)
@@ -801,7 +749,7 @@ protected function typesSimFunctionArg
 "Generates code from a function argument."
   input DAE.FuncArg inFuncArg;
   input Option<DAE.Exp> binding;
-  output SimCode.Variable outVar;
+  output SimCodeFunction.Variable outVar;
 algorithm
   outVar := matchcontinue (inFuncArg, binding)
     local
@@ -811,7 +759,7 @@ algorithm
       DAE.Const const;
       list<DAE.FuncArg> args;
       DAE.Type res_ty;
-      list<SimCode.Variable> var_args;
+      list<SimCodeFunction.Variable> var_args;
       list<DAE.Type> tys;
       DAE.VarKind kind;
       DAE.VarParallelism prl;
@@ -821,20 +769,20 @@ algorithm
         var_args = List.map1(args, typesSimFunctionArg, NONE());
         tys = List.map(tys, Types.simplifyType);
       then
-        SimCode.FUNCTION_PTR(name, tys, var_args, binding);
+        SimCodeFunction.FUNCTION_PTR(name, tys, var_args, binding);
 
     case (DAE.FUNCARG(name=name, ty=DAE.T_FUNCTION(funcArg = args, funcResultType = DAE.T_NORETCALL())), _)
       equation
         var_args = List.map1(args, typesSimFunctionArg, NONE());
       then
-        SimCode.FUNCTION_PTR(name, {}, var_args, binding);
+        SimCodeFunction.FUNCTION_PTR(name, {}, var_args, binding);
 
     case (DAE.FUNCARG(name=name, ty=DAE.T_FUNCTION(funcArg = args, funcResultType = res_ty)), _)
       equation
         res_ty = Types.simplifyType(res_ty);
         var_args = List.map1(args, typesSimFunctionArg, NONE());
       then
-        SimCode.FUNCTION_PTR(name, {res_ty}, var_args, binding);
+        SimCodeFunction.FUNCTION_PTR(name, {res_ty}, var_args, binding);
 
     case (DAE.FUNCARG(name=name, ty=tty, par=prl, const=const), _)
       equation
@@ -842,13 +790,13 @@ algorithm
         cref_  = ComponentReference.makeCrefIdent(name, tty, {});
         kind = DAEUtil.const2VarKind(const);
       then
-        SimCode.VARIABLE(cref_, tty, binding, {}, prl, kind);
+        SimCodeFunction.VARIABLE(cref_, tty, binding, {}, prl, kind);
   end matchcontinue;
 end typesSimFunctionArg;
 
 protected function daeInOutSimVar
   input DAE.Element inElement;
-  output SimCode.Variable outVar;
+  output SimCodeFunction.Variable outVar;
 algorithm
   outVar := matchcontinue(inElement)
     local
@@ -860,7 +808,7 @@ algorithm
       list<DAE.Dimension> inst_dims;
       list<DAE.Exp> inst_dims_exp;
       Option<DAE.Exp> binding;
-      SimCode.Variable var;
+      SimCodeFunction.Variable var;
     case (DAE.VAR(componentRef = DAE.CREF_IDENT(ident=name), ty = daeType as DAE.T_FUNCTION(), parallelism = prl, binding = binding))
       equation
         var = typesSimFunctionArg(DAE.FUNCARG(name, daeType, DAE.C_VAR(), prl, NONE()), binding);
@@ -876,7 +824,7 @@ algorithm
       equation
         daeType = Types.simplifyType(daeType);
         inst_dims_exp = List.map(inst_dims, Expression.dimensionSizeExpHandleUnkown);
-      then SimCode.VARIABLE(id, daeType, binding, inst_dims_exp, prl, kind);
+      then SimCodeFunction.VARIABLE(id, daeType, binding, inst_dims_exp, prl, kind);
     else
       equation
         // TODO: ArrayEqn fails here
@@ -888,13 +836,13 @@ end daeInOutSimVar;
 
 protected function extArgsToSimExtArgs
   input DAE.ExtArg extArg;
-  output SimCode.SimExtArg simExtArg;
+  output SimCodeFunction.SimExtArg simExtArg;
 algorithm
   simExtArg :=
   match (extArg)
     local
       DAE.ComponentRef componentRef;
-      DAE.Attributes attributes;
+      Absyn.Direction dir;
       DAE.Type type_;
       Boolean isInput;
       Boolean isOutput;
@@ -902,38 +850,35 @@ algorithm
       DAE.Exp exp_;
       Integer outputIndex;
 
-    case DAE.EXTARG(componentRef, attributes, type_)
+    case DAE.EXTARG(componentRef, dir, type_)
       equation
-        isInput = Types.isInputAttr(attributes);
-        isOutput = Types.isOutputAttr(attributes);
+        isInput = Absyn.isInput(dir);
+        isOutput = Absyn.isOutput(dir);
         outputIndex = if isOutput then -1 else 0; // correct output index is added later by fixOutputIndex
         isArray = Types.isArray(type_);
         type_ = Types.simplifyType(type_);
-      then SimCode.SIMEXTARG(componentRef, isInput, outputIndex, isArray, false /*fixed later*/, type_);
+      then SimCodeFunction.SIMEXTARG(componentRef, isInput, outputIndex, isArray, false /*fixed later*/, type_);
 
     case DAE.EXTARGEXP(exp_, type_)
       equation
         type_ = Types.simplifyType(type_);
-      then SimCode.SIMEXTARGEXP(exp_, type_);
+      then SimCodeFunction.SIMEXTARGEXP(exp_, type_);
 
-    case DAE.EXTARGSIZE(componentRef, attributes, type_, exp_)
+    case DAE.EXTARGSIZE(componentRef, type_, exp_)
       equation
-        isInput = Types.isInputAttr(attributes);
-        isOutput = Types.isOutputAttr(attributes);
-        outputIndex = if isOutput then -1 else 0; // correct output index is added later by fixOutputIndex
         type_ = Types.simplifyType(type_);
-      then SimCode.SIMEXTARGSIZE(componentRef, isInput, outputIndex, type_, exp_);
+      then SimCodeFunction.SIMEXTARGSIZE(componentRef, true, 0, type_, exp_);
 
-    case DAE.NOEXTARG() then SimCode.SIMNOEXTARG();
+    case DAE.NOEXTARG() then SimCodeFunction.SIMNOEXTARG();
   end match;
 end extArgsToSimExtArgs;
 
 protected function fixOutputIndex
-  input list<SimCode.Variable> outVars;
-  input list<SimCode.SimExtArg> simExtArgsIn;
-  input SimCode.SimExtArg extReturnIn;
-  output list<SimCode.SimExtArg> simExtArgsOut;
-  output SimCode.SimExtArg extReturnOut;
+  input list<SimCodeFunction.Variable> outVars;
+  input list<SimCodeFunction.SimExtArg> simExtArgsIn;
+  input SimCodeFunction.SimExtArg extReturnIn;
+  output list<SimCodeFunction.SimExtArg> simExtArgsOut;
+  output SimCodeFunction.SimExtArg extReturnOut;
 algorithm
   (simExtArgsOut, extReturnOut) := match (outVars, simExtArgsIn, extReturnIn)
     local
@@ -947,9 +892,9 @@ algorithm
 end fixOutputIndex;
 
 protected function assignOutputIndex
-  input SimCode.SimExtArg simExtArgIn;
-  input list<SimCode.Variable> outVars;
-  output SimCode.SimExtArg simExtArgOut;
+  input SimCodeFunction.SimExtArg simExtArgIn;
+  input list<SimCodeFunction.Variable> outVars;
+  output SimCodeFunction.SimExtArg simExtArgOut;
 algorithm
   simExtArgOut :=
   matchcontinue (simExtArgIn, outVars)
@@ -962,20 +907,20 @@ algorithm
       DAE.Exp exp;
       Integer newOutputIndex;
 
-    case (SimCode.SIMEXTARG(cref, isInput, outputIndex, isArray, _, type_), _)
+    case (SimCodeFunction.SIMEXTARG(cref, isInput, outputIndex, isArray, _, type_), _)
       equation
         true = outputIndex == -1;
         fcref = ComponentReference.crefFirstCref(cref);
         (newOutputIndex, hasBinding) = findIndexInList(fcref, outVars, 1);
       then
-        SimCode.SIMEXTARG(cref, isInput, newOutputIndex, isArray, hasBinding, type_);
+        SimCodeFunction.SIMEXTARG(cref, isInput, newOutputIndex, isArray, hasBinding, type_);
 
-    case (SimCode.SIMEXTARGSIZE(cref, isInput, outputIndex, type_, exp), _)
+    case (SimCodeFunction.SIMEXTARGSIZE(cref, isInput, outputIndex, type_, exp), _)
       equation
         true = outputIndex == -1;
         (newOutputIndex, _) = findIndexInList(cref, outVars, 1);
       then
-        SimCode.SIMEXTARGSIZE(cref, isInput, newOutputIndex, type_, exp);
+        SimCodeFunction.SIMEXTARGSIZE(cref, isInput, newOutputIndex, type_, exp);
 
     else
       simExtArgIn;
@@ -984,7 +929,7 @@ end assignOutputIndex;
 
 protected function findIndexInList
   input DAE.ComponentRef cref;
-  input list<SimCode.Variable> outVars;
+  input list<SimCodeFunction.Variable> outVars;
   input Integer inCurrentIndex;
   output Integer crefIndexInOutVars;
   output Boolean hasBinding;
@@ -993,12 +938,12 @@ algorithm
   matchcontinue (cref, outVars, inCurrentIndex)
     local
       DAE.ComponentRef name;
-      list<SimCode.Variable> restOutVars;
+      list<SimCodeFunction.Variable> restOutVars;
       Option<DAE.Exp> v;
       Integer currentIndex;
 
     case (_, {}, _) then (-1, false);
-    case (_, SimCode.VARIABLE(name=name, value=v) :: _, currentIndex)
+    case (_, SimCodeFunction.VARIABLE(name=name, value=v) :: _, currentIndex)
       equation
         true = ComponentReference.crefEqualNoStringCompare(cref, name);
       then (currentIndex, Util.isSome(v));
@@ -1012,22 +957,9 @@ end findIndexInList;
 
 protected function elaborateStatement
   input DAE.Element inElement;
-  output SimCode.Statement outStatement;
+  output list<DAE.Statement> stmts;
 algorithm
-  (outStatement):=
-  matchcontinue (inElement)
-    local
-      list<DAE.Statement> stmts;
-    case (DAE.ALGORITHM(algorithm_ = DAE.ALGORITHM_STMTS(statementLst = stmts)))
-    then
-      SimCode.ALGORITHM(stmts);
-    else
-      equation
-        true = Flags.isSet(Flags.FAILTRACE);
-        Debug.trace("# SimCode.elaborateStatement failed\n");
-      then
-        fail();
-  end matchcontinue;
+  DAE.ALGORITHM(algorithm_ = DAE.ALGORITHM_STMTS(statementLst = stmts)) := inElement;
 end elaborateStatement;
 
 
@@ -1035,18 +967,18 @@ public function checkValidMainFunction
 "Verifies that an in-function can be generated.
 This is not the case if the input involves function-pointers."
   input String name;
-  input SimCode.Function fn;
+  input SimCodeFunction.Function fn;
 algorithm
   _ := matchcontinue (name, fn)
     local
-      list<SimCode.Variable> inVars;
-    case (_, SimCode.FUNCTION(functionArguments = inVars))
+      list<SimCodeFunction.Variable> inVars;
+    case (_, SimCodeFunction.FUNCTION(functionArguments = inVars))
       equation
-        failure(_ = List.selectFirst(inVars, isFunctionPtr));
+        failure(_ = List.find(inVars, isFunctionPtr));
       then ();
-    case (_, SimCode.EXTERNAL_FUNCTION(inVars = inVars))
+    case (_, SimCodeFunction.EXTERNAL_FUNCTION(inVars = inVars))
       equation
-        failure(_ = List.selectFirst(inVars, isFunctionPtr));
+        failure(_ = List.find(inVars, isFunctionPtr));
       then ();
     else
       equation
@@ -1058,18 +990,18 @@ end checkValidMainFunction;
 public function isBoxedFunction
 "Verifies that an in-function can be generated.
 This is not the case if the input involves function-pointers."
-  input SimCode.Function fn;
+  input SimCodeFunction.Function fn;
   output Boolean b;
 algorithm
   b := matchcontinue fn
     local
-      list<SimCode.Variable> inVars, outVars;
-    case (SimCode.FUNCTION(functionArguments = inVars, outVars = outVars))
+      list<SimCodeFunction.Variable> inVars, outVars;
+    case (SimCodeFunction.FUNCTION(functionArguments = inVars, outVars = outVars))
       equation
         List.map_0(inVars, isBoxedArg);
         List.map_0(outVars, isBoxedArg);
       then true;
-    case (SimCode.EXTERNAL_FUNCTION(inVars = inVars, outVars = outVars))
+    case (SimCodeFunction.EXTERNAL_FUNCTION(inVars = inVars, outVars = outVars))
       equation
         List.map_0(inVars, isBoxedArg);
         List.map_0(outVars, isBoxedArg);
@@ -1080,27 +1012,66 @@ end isBoxedFunction;
 
 protected function isFunctionPtr
 "Checks if an input variable is a function pointer"
-  input SimCode.Variable var;
+  input SimCodeFunction.Variable var;
   output Boolean b;
 algorithm
   b := match var
-      /* Yes, they are VARIABLE, not SimCode.FUNCTION_PTR. */
-    case SimCode.FUNCTION_PTR() then true;
+      /* Yes, they are VARIABLE, not SimCodeFunction.FUNCTION_PTR. */
+    case SimCodeFunction.FUNCTION_PTR() then true;
     else false;
   end match;
 end isFunctionPtr;
 
 protected function isBoxedArg
 "Checks if a variable is a boxed datatype"
-  input SimCode.Variable var;
+  input SimCodeFunction.Variable var;
 algorithm
   _ := match var
-    case SimCode.FUNCTION_PTR() then ();
-    case SimCode.VARIABLE(ty = DAE.T_METABOXED()) then ();
-    case SimCode.VARIABLE(ty = DAE.T_METATYPE()) then ();
-    case SimCode.VARIABLE(ty = DAE.T_STRING()) then ();
+    case SimCodeFunction.FUNCTION_PTR() then ();
+    case SimCodeFunction.VARIABLE(ty = DAE.T_METABOXED()) then ();
+    case SimCodeFunction.VARIABLE(ty = DAE.T_METATYPE()) then ();
+    case SimCodeFunction.VARIABLE(ty = DAE.T_STRING()) then ();
   end match;
 end isBoxedArg;
+
+public function funcHasParallelInOutArrays
+"checks if a boxed function can be generated.
+currently this is not the case if the input/output
+involves parallel (global/local) array variables."
+  input SimCodeFunction.Function fn;
+  output Boolean b;
+protected
+  list<SimCodeFunction.Variable> inVars, outVars;
+algorithm
+  SimCodeFunction.FUNCTION(functionArguments = inVars, outVars = outVars) := fn;
+  for e in inVars loop
+    if isParallelArrayVar(e) then
+      b := true;
+      return;
+    end if;
+  end for;
+
+  for e in outVars loop
+    if isParallelArrayVar(e) then
+      b := true;
+      return;
+    end if;
+  end for;
+
+  b := false;
+end funcHasParallelInOutArrays;
+
+protected function isParallelArrayVar
+"Checks if a variable is a boxed datatype"
+  input SimCodeFunction.Variable var;
+  output Boolean b;
+algorithm
+  b := match var
+    case SimCodeFunction.VARIABLE(ty = DAE.T_ARRAY(), parallelism = DAE.PARGLOBAL()) then true;
+    case SimCodeFunction.VARIABLE(ty = DAE.T_ARRAY(), parallelism = DAE.PARLOCAL()) then true;
+    else false;
+  end match;
+end isParallelArrayVar;
 
 public function findLiterals
   "Finds all literal expressions in functions"
@@ -1110,7 +1081,7 @@ public function findLiterals
 algorithm
   (ofns, (_, _, literals)) := DAEUtil.traverseDAEFunctions(
     fns, findLiteralsHelper,
-    (0, HashTableExpToIndex.emptyHashTableSized(BaseHashTable.bigBucketSize), {}), {});
+    (0, HashTableExpToIndex.emptyHashTableSized(BaseHashTable.bigBucketSize), {}));
   literals := listReverse(literals);
 end findLiterals;
 
@@ -1124,7 +1095,9 @@ function findLiteralsHelper
 algorithm
   exp := inExp;
   tpl := inTpl;
-  (exp, tpl) := Expression.traverseExpBottomUp(exp, replaceLiteralExp, tpl);
+  (exp, tpl) := Expression.traverseExpBottomUp(exp,
+    function Patternm.traverseConstantPatternsHelper(func=replaceLiteralExp),
+    tpl);
   (exp, tpl) := Expression.traverseExpTopDown(exp, replaceLiteralArrayExp, tpl);
 end findLiteralsHelper;
 
@@ -1142,33 +1115,35 @@ function replaceLiteralArrayExp
   input DAE.Exp inExp;
   input tuple<Integer, HashTableExpToIndex.HashTable, list<DAE.Exp>> inTpl;
   output DAE.Exp outExp;
-  output Boolean cont;
+  output Boolean cont=true;
   output tuple<Integer, HashTableExpToIndex.HashTable, list<DAE.Exp>> outTpl;
 algorithm
-  (outExp,cont,outTpl) := matchcontinue (inExp,inTpl)
+  (outExp,outTpl) := match (inExp,inTpl)
     local
       DAE.Exp exp,exp2;
       tuple<Integer, HashTableExpToIndex.HashTable, list<DAE.Exp>> tpl;
-    case (DAE.ARRAY(), _)
-      equation
-        isLiteralArrayExp(inExp);
-        (exp2, tpl) = replaceLiteralExp2(inExp, inTpl);
-      then (exp2, false, tpl);
-    case (exp as DAE.ARRAY(), tpl)
-      equation
-        failure(isLiteralArrayExp(exp));
-      then (exp, false, tpl);
-    case (exp as DAE.MATRIX(), _)
-      equation
-        isLiteralArrayExp(exp);
-        (exp2, tpl) = replaceLiteralExp2(inExp, inTpl);
-      then (exp2, false, tpl);
-    case (exp as DAE.MATRIX(), tpl)
-      equation
-        failure(isLiteralArrayExp(exp));
-      then (exp, false, tpl);
-    else (inExp, true, inTpl);
-  end matchcontinue;
+    case (DAE.ARRAY(), tpl)
+      algorithm
+        try
+          isLiteralArrayExp(inExp);
+          (exp2, tpl) := replaceLiteralExp2(inExp, tpl);
+          cont := false;
+        else
+          exp2 := inExp;
+        end try;
+      then (exp2, tpl);
+    case (DAE.MATRIX(), tpl)
+      algorithm
+        try
+          isLiteralArrayExp(inExp);
+          (exp2, tpl) := replaceLiteralExp2(inExp, tpl);
+          cont := false;
+        else
+          exp2 := inExp;
+        end try;
+      then (exp2, tpl);
+    else (inExp, inTpl);
+  end match;
 end replaceLiteralArrayExp;
 
 function replaceLiteralExp
@@ -1239,11 +1214,11 @@ algorithm
       list<DAE.Exp> l;
       DAE.Type et;
       HashTableExpToIndex.HashTable ht;
-    case (exp, (i, ht, l))
+    case (exp, (_, ht, _))
       equation
         ix = BaseHashTable.get(exp, ht);
         nexp = DAE.SHARED_LITERAL(ix, exp);
-      then (nexp, (i, ht, l));
+      then (nexp, inTpl);
     case (exp, (i, ht, l))
       equation
         ht = BaseHashTable.add((exp, i), ht);
@@ -1355,15 +1330,15 @@ end isLiteralExp;
 
 protected function elaborateRecordDeclarationsFromTypes
   input list<DAE.Type> inTypes;
-  input list<SimCode.RecordDeclaration> inAccRecordDecls;
+  input list<SimCodeFunction.RecordDeclaration> inAccRecordDecls;
   input list<String> inReturnTypes;
-  output list<SimCode.RecordDeclaration> outRecordDecls;
+  output list<SimCodeFunction.RecordDeclaration> outRecordDecls;
   output list<String> outReturnTypes;
 algorithm
   (outRecordDecls, outReturnTypes) :=
   match (inTypes, inAccRecordDecls, inReturnTypes)
     local
-      list<SimCode.RecordDeclaration> accRecDecls;
+      list<SimCodeFunction.RecordDeclaration> accRecDecls;
       DAE.Type firstType;
       list<DAE.Type> restTypes;
       list<String> returnTypes;
@@ -1383,9 +1358,9 @@ end elaborateRecordDeclarationsFromTypes;
 protected function elaborateRecordDeclarations
 "Translate all records used by varlist to structs."
   input list<DAE.Element> inVars;
-  input list<SimCode.RecordDeclaration> inAccRecordDecls;
+  input list<SimCodeFunction.RecordDeclaration> inAccRecordDecls;
   input list<String> inReturnTypes;
-  output list<SimCode.RecordDeclaration> outRecordDecls;
+  output list<SimCodeFunction.RecordDeclaration> outRecordDecls;
   output list<String> outReturnTypes;
 algorithm
   (outRecordDecls, outReturnTypes) :=
@@ -1395,7 +1370,7 @@ algorithm
       list<DAE.Element> rest;
       DAE.Type ft;
       list<String> rt, rt_1, rt_2;
-      list<SimCode.RecordDeclaration> accRecDecls;
+      list<SimCodeFunction.RecordDeclaration> accRecDecls;
       DAE.Algorithm algorithm_;
       list<DAE.Exp> expl;
 
@@ -1446,16 +1421,18 @@ end matchMetarecordCalls;
 protected function isVarQ
 "Succeeds if inElement is a variable or constant that is not input."
   input DAE.Element inElement;
+  output Boolean outB;
 algorithm
-  _ := match (inElement)
+  outB := match (inElement)
     local
       DAE.VarKind vk;
       DAE.VarDirection vd;
     case DAE.VAR(kind=vk, direction=vd)
-      equation
-        isVarVarOrConstant(vk);
-        isDirectionNotInput(vd);
-      then ();
+      guard
+        isVarKindVarOrParameter(vk) and
+        isDirectionNotInput(vd)
+      then true;
+    else false;
   end match;
 end isVarQ;
 
@@ -1463,43 +1440,51 @@ protected function isVarNotInputNotOutput
 "Succeeds if inElement is a variable or constant that is not input or output.
 needed in kernel functions since they shouldn't have output vars."
   input DAE.Element inElement;
+  output Boolean outB;
 algorithm
-  _ := match (inElement)
+  outB := match (inElement)
     local
       DAE.VarKind vk;
       DAE.VarDirection vd;
     case DAE.VAR(kind=vk, direction=vd)
-      equation
-        isVarVarOrConstant(vk);
-        isDirectionNotInputNotOutput(vd);
-      then ();
+      guard
+        isVarKindVarOrParameter(vk) and
+        isDirectionNotInputNotOutput(vd)
+      then true;
+    else false;
   end match;
 end isVarNotInputNotOutput;
 
-protected function isVarVarOrConstant
+protected function isVarKindVarOrParameter
   input DAE.VarKind inVarKind;
+  output Boolean outB;
 algorithm
-  _ := match (inVarKind)
-    case DAE.VARIABLE() then ();
-    case DAE.PARAM() then ();
-    case DAE.CONST() then ();
+  outB := match (inVarKind)
+    case DAE.VARIABLE() then true;
+    case DAE.PARAM() then true;
+    case DAE.CONST() then true;
+    else false;
   end match;
-end isVarVarOrConstant;
+end isVarKindVarOrParameter;
 
 protected function isDirectionNotInput
   input DAE.VarDirection inVarDirection;
+  output Boolean outB;
 algorithm
-  _ := match (inVarDirection)
-    case DAE.OUTPUT() then ();
-    case DAE.BIDIR() then ();
+  outB := match (inVarDirection)
+    case DAE.OUTPUT() then true;
+    case DAE.BIDIR() then true;
+    else false;
   end match;
 end isDirectionNotInput;
 
 protected function isDirectionNotInputNotOutput
   input DAE.VarDirection inVarDirection;
+  output Boolean outB;
 algorithm
-  _ := match (inVarDirection)
-    case DAE.BIDIR() then ();
+  outB := match (inVarDirection)
+    case DAE.BIDIR() then true;
+    else false;
   end match;
 end isDirectionNotInputNotOutput;
 
@@ -1542,9 +1527,9 @@ end getCrefFromExp;
 protected function elaborateRecordDeclarationsForRecord
 "Helper function to generateStructsForRecords."
   input DAE.Type inRecordType;
-  input list<SimCode.RecordDeclaration> inAccRecordDecls;
+  input list<SimCodeFunction.RecordDeclaration> inAccRecordDecls;
   input list<String> inReturnTypes;
-  output list<SimCode.RecordDeclaration> outRecordDecls;
+  output list<SimCodeFunction.RecordDeclaration> outRecordDecls;
   output list<String> outReturnTypes;
 algorithm
   (outRecordDecls, outReturnTypes) := match (inRecordType, inAccRecordDecls, inReturnTypes)
@@ -1553,12 +1538,12 @@ algorithm
       list<DAE.Var> varlst;
       String    sname;
       list<String> rt, rt_1, rt_2, fieldNames;
-      list<SimCode.RecordDeclaration> accRecDecls;
-      list<SimCode.Variable> vars;
+      list<SimCodeFunction.RecordDeclaration> accRecDecls;
+      list<SimCodeFunction.Variable> vars;
       Integer index;
-      SimCode.RecordDeclaration recDecl;
+      SimCodeFunction.RecordDeclaration recDecl;
 
-    case (DAE.T_COMPLEX(complexClassType = ClassInf.RECORD(name), varLst = varlst, source = {_}), accRecDecls, rt)
+    case (DAE.T_COMPLEX(complexClassType = ClassInf.RECORD(name), varLst = varlst), accRecDecls, rt)
       equation
         sname = Absyn.pathStringUnquoteReplaceDot(name, "_");
         if not listMember(sname, rt) then
@@ -1566,7 +1551,7 @@ algorithm
           vars = List.sort(vars,compareVariable);
           rt_1 = sname :: rt;
           (accRecDecls, rt_2) = elaborateNestedRecordDeclarations(varlst, accRecDecls, rt_1);
-          recDecl = SimCode.RECORD_DECL_FULL(sname, NONE(), name, vars);
+          recDecl = SimCodeFunction.RECORD_DECL_FULL(sname, NONE(), name, vars);
           accRecDecls = List.appendElt(recDecl, accRecDecls);
         else
           rt_2 = rt;
@@ -1576,15 +1561,15 @@ algorithm
     case (DAE.T_COMPLEX(complexClassType = ClassInf.RECORD(_)), accRecDecls, rt)
     then (accRecDecls, rt);
 
-    case (DAE.T_METARECORD(source = {Absyn.QUALIFIED(name="SourceInfo")}), accRecDecls, rt)
+    case (DAE.T_METARECORD(path = Absyn.QUALIFIED(name="SourceInfo")), accRecDecls, rt)
       then (accRecDecls, rt);
 
-    case (DAE.T_METARECORD( fields = varlst, source = {path}), accRecDecls, rt)
+    case (DAE.T_METARECORD(fields = varlst, path=path), accRecDecls, rt)
       equation
         sname = Absyn.pathStringUnquoteReplaceDot(path, "_");
         if not listMember(sname, rt) then
           fieldNames = List.map(varlst, generateVarName);
-          accRecDecls = SimCode.RECORD_DECL_DEF(path, fieldNames) :: accRecDecls;
+          accRecDecls = SimCodeFunction.RECORD_DECL_DEF(path, fieldNames) :: accRecDecls;
           rt_1 = sname::rt;
           (accRecDecls, rt_2) = elaborateNestedRecordDeclarations(varlst, accRecDecls, rt_1);
         else
@@ -1600,7 +1585,7 @@ end elaborateRecordDeclarationsForRecord;
 
 protected function typesVarNoBinding
   input DAE.Var inTypesVar;
-  output SimCode.Variable outVar;
+  output SimCodeFunction.Variable outVar;
 algorithm
   outVar := match (inTypesVar)
     local
@@ -1617,13 +1602,13 @@ algorithm
         cref_ = ComponentReference.makeCrefIdent(name, ty, {});
         DAE.ATTR(parallelism = scPrl) = attr;
         prl = scodeParallelismToDAEParallelism(scPrl);
-      then SimCode.VARIABLE(cref_, ty, NONE(), {}, prl,DAE.VARIABLE());
+      then SimCodeFunction.VARIABLE(cref_, ty, NONE(), {}, prl,DAE.VARIABLE());
   end match;
 end typesVarNoBinding;
 
 protected function typesVar
   input DAE.Var inTypesVar;
-  output SimCode.Variable outVar;
+  output SimCodeFunction.Variable outVar;
 algorithm
   outVar := match (inTypesVar)
     local
@@ -1642,7 +1627,7 @@ algorithm
         DAE.ATTR(parallelism = scPrl) = attr;
         prl = scodeParallelismToDAEParallelism(scPrl);
         bindExp = Types.getBindingExp(inTypesVar, Absyn.IDENT(name));
-      then SimCode.VARIABLE(cref_, ty, SOME(bindExp), {}, prl, DAE.VARIABLE());
+      then SimCodeFunction.VARIABLE(cref_, ty, SOME(bindExp), {}, prl, DAE.VARIABLE());
   end match;
 end typesVar;
 
@@ -1658,18 +1643,18 @@ algorithm
 end scodeParallelismToDAEParallelism;
 
 protected function variableName
-  input SimCode.Variable v;
+  input SimCodeFunction.Variable v;
   output String s;
 algorithm
   s := match v
-    case SimCode.VARIABLE(name=DAE.CREF_IDENT(ident=s)) then s;
-    case SimCode.FUNCTION_PTR(name=s) then s;
+    case SimCodeFunction.VARIABLE(name=DAE.CREF_IDENT(ident=s)) then s;
+    case SimCodeFunction.FUNCTION_PTR(name=s) then s;
   end match;
 end variableName;
 
 protected function compareVariable
-  input SimCode.Variable v1;
-  input SimCode.Variable v2;
+  input SimCodeFunction.Variable v1;
+  input SimCodeFunction.Variable v2;
   output Boolean b;
 algorithm
   b := stringCompare(variableName(v1),variableName(v2)) > 0;
@@ -1691,9 +1676,9 @@ end generateVarName;
 protected function elaborateNestedRecordDeclarations
 "Helper function to elaborateRecordDeclarations."
   input list<DAE.Var> inRecordTypes;
-  input list<SimCode.RecordDeclaration> inAccRecordDecls;
+  input list<SimCodeFunction.RecordDeclaration> inAccRecordDecls;
   input list<String> inReturnTypes;
-  output list<SimCode.RecordDeclaration> outRecordDecls;
+  output list<SimCodeFunction.RecordDeclaration> outRecordDecls;
   output list<String> outReturnTypes;
 algorithm
   (outRecordDecls, outReturnTypes) := matchcontinue (inRecordTypes, inAccRecordDecls, inReturnTypes)
@@ -1701,7 +1686,7 @@ algorithm
       DAE.Type ty;
       list<DAE.Var> rest;
       list<String> rt, rt_1, rt_2;
-      list<SimCode.RecordDeclaration> accRecDecls;
+      list<SimCodeFunction.RecordDeclaration> accRecDecls;
     case ({}, accRecDecls, rt)
     then (accRecDecls, rt);
     case (DAE.TYPES_VAR(ty = ty as DAE.T_COMPLEX(complexClassType = ClassInf.RECORD(_)))::rest, accRecDecls, rt)
@@ -1718,9 +1703,9 @@ end elaborateNestedRecordDeclarations;
 
 protected function elaborateRecordDeclarationsForMetarecords
   input list<DAE.Exp> inExpl;
-  input list<SimCode.RecordDeclaration> inAccRecordDecls;
+  input list<SimCodeFunction.RecordDeclaration> inAccRecordDecls;
   input list<String> inReturnTypes;
-  output list<SimCode.RecordDeclaration> outRecordDecls;
+  output list<SimCodeFunction.RecordDeclaration> outRecordDecls;
   output list<String> outReturnTypes;
 algorithm
   (outRecordDecls, outReturnTypes) := match (inExpl, inAccRecordDecls, inReturnTypes)
@@ -1729,7 +1714,7 @@ algorithm
       list<DAE.Exp> rest;
       String name;
       Absyn.Path path;
-      list<SimCode.RecordDeclaration> accRecDecls;
+      list<SimCodeFunction.RecordDeclaration> accRecDecls;
       Boolean b;
 
     case ({}, accRecDecls, rt) then (accRecDecls, rt);
@@ -1737,7 +1722,7 @@ algorithm
       equation
         name = Absyn.pathStringUnquoteReplaceDot(path, "_");
         b = listMember(name, rt);
-        accRecDecls = List.consOnTrue(not b, SimCode.RECORD_DECL_DEF(path, fieldNames), accRecDecls);
+        accRecDecls = List.consOnTrue(not b, SimCodeFunction.RECORD_DECL_DEF(path, fieldNames), accRecDecls);
         rt_1 = List.consOnTrue(not b, name, rt);
         (accRecDecls, rt_2) = elaborateRecordDeclarationsForMetarecords(rest, accRecDecls, rt_1);
       then (accRecDecls, rt_2);
@@ -1777,7 +1762,7 @@ algorithm
         includes := generateExtFunctionIncludesIncludestr(mod);
         (libs, dirs, resources) := generateExtFunctionLibraryDirectoryFlags(program, path, mod, libs);
         for name in if Flags.isSet(Flags.CHECK_EXT_LIBS) then libNames else {} loop
-          if target=="msvc" or System.os()=="Windows_NT" then
+          if getGerneralTarget(target)=="msvc" or System.os()=="Windows_NT" then
             fullLibNames := {name + System.getDllExt(), "lib" + name + ".a", "lib" + name + ".lib"};
           else
             fullLibNames := {"lib" + name + ".a", "lib" + name + System.getDllExt()};
@@ -1888,6 +1873,30 @@ algorithm
   end matchcontinue;
 end generateExtFunctionIncludeDirectoryFlags;
 
+protected function getLinkerLibraryPaths"Builds search paths for the linker to find external libraries.
+ Some libraries need special treatment.
+ author: vwaurich TUD 2016-10"
+  input String uri;
+  input Absyn.Path path;
+  input list<String> inLibs;
+  output list<String> libPaths;
+algorithm
+  libPaths := matchcontinue(uri,path,inLibs)
+    local
+      String str, platform1, platform2;
+  case(_, _,{"-lWinmm"}) guard System.os()=="Windows_NT"
+    //Winmm has to be linked from the windows system but not from the resource directories.
+    //This is a fix for M_DD since otherwise the dummy pthread.dll that breaks the built will be linked
+    then {(Settings.getInstallationDirectoryPath() + "/lib/" + System.getTriple() + "/omc")};
+  case(, _,_)
+    equation
+      platform1 = uri + "/" + System.openModelicaPlatform();
+      platform2 = uri + "/" + System.modelicaPlatform();
+    then uri::platform2::platform1::(Settings.getHomeDir(false)+"/.openmodelica/binaries/"+Absyn.pathFirstIdent(path))::
+      (Settings.getInstallationDirectoryPath() + "/lib/")::(Settings.getInstallationDirectoryPath() + "/lib/" + System.getTriple() + "/omc")::{};
+  end matchcontinue;
+end getLinkerLibraryPaths;
+
 protected function generateExtFunctionLibraryDirectoryFlags
   "Process LibraryDirectory and IncludeDirectory"
   input Absyn.Program program;
@@ -1900,7 +1909,7 @@ protected function generateExtFunctionLibraryDirectoryFlags
 algorithm
   (outLibs, installDirs, resources) := matchcontinue (program, path, inMod, inLibs)
     local
-      String str, str1, str2, str3, platform1, platform2, target, dir, resourcesStr;
+      String str, str1, str2, str3, target, dir, resourcesStr;
       list<String> libs, libs2;
       Boolean isLinux;
     case (_, _, _, {}) then ({}, {}, NONE());
@@ -1915,12 +1924,10 @@ algorithm
         end matchcontinue;
         str := CevalScript.getFullPathFromUri(program, str, false);
         resourcesStr := CevalScript.getFullPathFromUri(program, "modelica://" + Absyn.pathFirstIdent(path) + "/Resources", false);
-        platform1 := str + "/" + System.openModelicaPlatform();
-        platform2 := str + "/" + System.modelicaPlatform();
         isLinux := stringEq("linux",System.os());
         target := Flags.getConfigString(Flags.TARGET);
         // please, take care about ordering these libraries, the most specific should have the highest priority
-        libs2 := str::platform2::platform1::(Settings.getHomeDir(false)+"/.openmodelica/binaries/"+Absyn.pathFirstIdent(path))::(Settings.getInstallationDirectoryPath() + "/lib/" + System.getTriple() + "/omc")::(Settings.getInstallationDirectoryPath() + "/lib/")::{};
+        libs2 := getLinkerLibraryPaths(str, path, inLibs);
         libs := List.fold2(libs2, generateExtFunctionLibraryDirectoryFlags2, isLinux, target, libs);
       then (libs, listReverse(libs2), SOME(resourcesStr));
     else (inLibs, {}, NONE());
@@ -1935,8 +1942,22 @@ protected function generateExtFunctionLibraryDirectoryFlags2
   output list<String> libs;
 algorithm
   libs := if isLinux then "-Wl,-rpath=\"" + dir + "\""::inLibs else inLibs;
-  libs := (if target=="msvc" then "/LIBPATH:\"" + dir + "\"" else "\"-L" + dir + "\"")::libs;
+  libs := (if getGerneralTarget(target)=="msvc" then "/LIBPATH:\"" + dir + "\"" else "\"-L" + dir + "\"")::libs;
 end generateExtFunctionLibraryDirectoryFlags2;
+
+protected function getGerneralTarget
+   input String target;
+  output String generalTarget;
+  algorithm
+  generalTarget := matchcontinue (target)
+  case("msvc10")then "msvc";
+  case("msvc12")then "msvc";
+  case("msvc13")then "msvc";
+  case("msvc14")then "msvc";
+  else target;
+ end matchcontinue;
+end getGerneralTarget;
+
 
 protected function userCompiledBinariesDirectory
   input Absyn.Path path;
@@ -2070,17 +2091,55 @@ algorithm
   (strs,names) := matchcontinue exp
     local
       String str, fopenmp;
+      list<String> strs1, strs2, names1, names2;
 
     // Lapack is always included
     case Absyn.STRING("lapack") then ({},{});
     case Absyn.STRING("Lapack") then ({},{});
+
+    //pthreads is already linked under windows
+    case Absyn.STRING("pthread") guard System.os()=="Windows_NT"
+      equation
+        Error.addCompilerNotification("pthreads library is already available. It is not linked from the external library resource directory.\n");
+      then  ({},{});
+
+   //do not link rt.dll for Modelica Device Drivers as it is not needed under windows
+    case Absyn.STRING("rt") guard System.os()=="Windows_NT"
+      equation
+        Error.addCompilerNotification("rt library is not needed under Windows. It is not linked from the external library resource directory.\n");
+      then  ({},{});
+
+   //do not link Ws2_32.dll for Modelica Device Drivers as it is not needed under windows
+    case Absyn.STRING("Ws2_32") guard System.os()=="Windows_NT"
+      equation
+        Error.addCompilerNotification("Ws2_32 library is not needed under Windows. It is not linked from the external library resource directory.\n");
+      then  ({},{});
+
+    //user32 is already linked under windows
+    case Absyn.STRING("User32") guard System.os()=="Windows_NT"
+      equation
+        Error.addCompilerNotification("User32 library is already available. It is not linked from the external library resource directory.\n");
+      then  ({},{});
+
+    //winmm is a windows system lib
+    case Absyn.STRING(str as "Winmm") guard System.os()=="Windows_NT"
+      equation
+        str = "-l" + str;
+        Error.addCompilerNotification("Winmm library is a windows system library. It is not linked from the external library resource directory.\n");
+      then  ({str},{});
+
+    //do not link X11.dll for Modelica Device Drivers as it is not needed under windows
+    case Absyn.STRING("X11") guard System.os()=="Windows_NT"
+      equation
+        Error.addCompilerNotification("X11 library is not needed under Windows. It is not linked from the external library resource directory.\n");
+      then  ({},{});
 
     case Absyn.STRING(str as "omcruntime")
       equation
         if "Windows_NT" == System.os() then
           // omcruntime on windows needs linking with mico2313 and wsock and then some :)
           str = "-l" + str;
-          strs = str :: "-lintl" :: "-liconv" :: "-lexpat" :: "-lsqlite3" :: "-llpsolve55" :: "-lmico2313" :: "-lws2_32" :: "-lregex" :: {};
+          strs = str :: "-lintl" :: "-liconv" :: "-lexpat" :: "-lsqlite3" :: "-llpsolve55" :: "-ltre" :: "-lomniORB420_rt" :: "-lomnithread40_rt" :: "-lws2_32" :: "-lRpcrt4" :: "-lregex" :: {};
         else
           strs = System.getRuntimeLibs();
         end if;
@@ -2098,15 +2157,23 @@ algorithm
       then (if System.os()=="Windows_NT" then {"-lfmilib","-lshlwapi"} else {"-lfmilib"},{});
 
     case Absyn.STRING(str)
-      equation
+      algorithm
+        if str=="ModelicaStandardTables" then
+          (strs1,names1) := getLibraryStringInGccFormat(Absyn.STRING("ModelicaIO"));
+          (strs2,names2) := getLibraryStringInGccFormat(Absyn.STRING("ModelicaMatIO"));
+          strs := listAppend(strs1, strs2);
+          names := listAppend(names1, names2);
+        else
+          strs := {};
+          names := {};
+        end if;
         // If the string is a file, return it as it is
         // If the string starts with a -, it's probably -l or -L gcc flags
         if System.regularFileExists(str) or "-" == stringGetStringChar(str, 1) then
-          strs = {str};
-          names = {};
+          strs := str::strs;
         else
-          strs = {"-l" + str};
-          names = {str};
+          strs := ("-l" + str)::strs;
+          names := str::names;
         end if;
 
       then (strs,names);
@@ -2124,7 +2191,7 @@ protected function generateExtFunctionIncludesLibstr
   output list<String> outStringLst;
   output list<String> names;
 algorithm
-  (outStringLst, names) := matchcontinue (target,inMod)
+  (outStringLst, names) := matchcontinue (getGerneralTarget(target),inMod)
     local
       list<Absyn.Exp> arr;
       list<String> libs;
@@ -2286,10 +2353,10 @@ algorithm
       equation
         funcelem = DAEUtil.getNamedFunction(path, funcs);
         els = DAEUtil.getFunctionElements(funcelem);
-        // SimCode.Function reference variables are filtered out
+        // SimCodeFunction.Function reference variables are filtered out
         varfuncs = List.fold(els, DAEUtil.collectFunctionRefVarPaths, {});
-        (_, (_, varfuncs)) = DAEUtil.traverseDAE2(els, Expression.traverseSubexpressionsHelper, (DAEUtil.collectValueblockFunctionRefVars, varfuncs));
-        (_, (_, (calledfuncs, _))) = DAEUtil.traverseDAE2(els, Expression.traverseSubexpressionsHelper, (matchNonBuiltinCallsAndFnRefPaths, ({}, varfuncs)));
+        (_, (_, varfuncs)) = DAEUtil.traverseDAEElementList(els, Expression.traverseSubexpressionsHelper, (DAEUtil.collectValueblockFunctionRefVars, varfuncs));
+        (_, (_, (calledfuncs, _))) = DAEUtil.traverseDAEElementList(els, Expression.traverseSubexpressionsHelper, (matchNonBuiltinCallsAndFnRefPaths, ({}, varfuncs)));
         ht = BaseHashTable.add((pathstr, path), ht);
         ht = addDestructor(funcelem, ht);
         ht = getCalledFunctionsInFunctions(calledfuncs, ht, funcs);
@@ -2368,22 +2435,22 @@ algorithm
   end matchcontinue;
 end matchNonBuiltinCallsAndFnRefPaths;
 protected function aliasRecordDeclarations
-  input SimCode.RecordDeclaration inDecl;
+  input SimCodeFunction.RecordDeclaration inDecl;
   input HashTableStringToPath.HashTable inHt;
-  output SimCode.RecordDeclaration decl;
+  output SimCodeFunction.RecordDeclaration decl;
   output HashTableStringToPath.HashTable ht;
 algorithm
   (decl,ht) := match (inDecl,inHt)
     local
-      list<SimCode.Variable> vars;
+      list<SimCodeFunction.Variable> vars;
       Absyn.Path name;
       String str,sname;
       Option<String> alias;
-    case (SimCode.RECORD_DECL_FULL(sname, _, name, vars),_)
+    case (SimCodeFunction.RECORD_DECL_FULL(sname, _, name, vars),_)
       equation
         str = stringDelimitList(List.map(vars, variableString), "\n");
         (alias,ht) = aliasRecordDeclarations2(str, name, inHt);
-      then (SimCode.RECORD_DECL_FULL(sname, alias, name, vars),ht);
+      then (SimCodeFunction.RECORD_DECL_FULL(sname, alias, name, vars),ht);
     else (inDecl,inHt);
   end match;
 end aliasRecordDeclarations;
@@ -2410,329 +2477,27 @@ algorithm
 end aliasRecordDeclarations2;
 
 protected function variableString
-  input SimCode.Variable var;
+  input SimCodeFunction.Variable var;
   output String str;
 algorithm
   str := match var
     local
       DAE.ComponentRef name;
       DAE.Type ty;
-    case SimCode.VARIABLE(name=name, ty=ty)
+    case SimCodeFunction.VARIABLE(name=name, ty=ty)
       then Types.unparseType(ty) + " " + ComponentReference.printComponentRefStr(name);
-    case SimCode.FUNCTION_PTR(name=str)
+    case SimCodeFunction.FUNCTION_PTR(name=str)
       then "modelica_fnptr " + str;
   end match;
 end variableString;
-
-/****** HashTable ComponentRef -> SimCodeVar.SimVar ******/
-/* a workaround to enable "cross public import" */
-
-
-/* HashTable instance specific code */
-
-protected function keyEqual
-  input SimCode.Key key1;
-  input SimCode.Key key2;
-  output Boolean res;
-algorithm
-  res := ComponentReference.crefEqualNoStringCompare(key1, key2);
-end keyEqual;
-
-/* end of HashTable instance specific code */
-
-public function emptyHashTableSized "
-  author: PA
-  Returns an empty HashTable.
-  Using the bucketsize 100 and array size 10."
-  input Integer size;
-  output SimCode.HashTableCrefToSimVar hashTable;
-protected
-  array<list<tuple<SimCode.Key, Integer>>> arr;
-  list<Option<tuple<SimCode.Key, SimCode.Value>>> lst;
-  array<Option<tuple<SimCode.Key, SimCode.Value>>> emptyarr;
-  Integer szArr;
-algorithm
-  arr := arrayCreate(size, {});
-  emptyarr := arrayCreate(size, NONE());
-  szArr:=realInt(realMul(intReal(size), 0.6));
-  hashTable := SimCode.HASHTABLE(arr, SimCode.VALUE_ARRAY(0, szArr, emptyarr), size, 0);
-end emptyHashTableSized;
-
-public function add "
-  author: PA
-
-  Add a Key-Value tuple to hashtable.
-  If the Key-Value tuple already exists, the function updates the Value.
-"
-  input tuple<SimCode.Key, SimCode.Value> entry;
-  input SimCode.HashTableCrefToSimVar hashTable;
-  output SimCode.HashTableCrefToSimVar outHashTable;
-algorithm
-  outHashTable := matchcontinue (entry, hashTable)
-    local
-      Integer  indx, newpos, n, n_1, bsize, indx_1;
-      SimCode.ValueArray varr_1, varr;
-      list<tuple<SimCode.Key, Integer>> indexes;
-      array<list<tuple<SimCode.Key, Integer>>> hashvec_1, hashvec;
-      tuple<SimCode.Key, SimCode.Value> v, newv;
-      SimCode.Key key;
-      SimCode.Value value;
-      /* Adding when not existing previously */
-    case ((v as (key, _)), (SimCode.HASHTABLE(hashvec, varr, bsize, _)))
-      equation
-        failure((_) = get(key, hashTable));
-        indx = ComponentReference.hashComponentRefMod(key,bsize);
-        newpos = valueArrayLength(varr);
-        varr_1 = valueArrayAdd(varr, v);
-        indexes = hashvec[indx + 1];
-        hashvec_1 = arrayUpdate(hashvec, indx + 1, ((key, newpos) :: indexes));
-        n_1 = valueArrayLength(varr_1);
-      then SimCode.HASHTABLE(hashvec_1, varr_1, bsize, n_1);
-
-        /* adding when already present => Updating value */
-    case ((newv as (key, _)), (SimCode.HASHTABLE(hashvec, varr, bsize, n)))
-      equation
-        (_, indx) = get1(key, hashTable);
-        // print("adding when present, indx =" );print(intString(indx));print("\n");
-        varr_1 = valueArraySetnth(varr, indx, newv);
-      then SimCode.HASHTABLE(hashvec, varr_1, bsize, n);
-    case (_, _)
-      equation
-        print("- HashTableCrefToSimVar.add failed\n");
-      then
-        fail();
-  end matchcontinue;
-end add;
-
-public function addNoUpdCheck "
-  author: PA
-
-  Add a Key-Value tuple to hashtable.
-  If the Key-Value tuple already exists, the function updates the Value.
-"
-  input tuple<SimCode.Key, SimCode.Value> entry;
-  input SimCode.HashTableCrefToSimVar hashTable;
-  output SimCode.HashTableCrefToSimVar outHashTable;
-algorithm
-  outHashTable := matchcontinue (entry, hashTable)
-    local
-      Integer hval, indx, newpos, n, n_1, bsize, indx_1;
-      SimCode.ValueArray varr_1, varr;
-      list<tuple<SimCode.Key, Integer>> indexes;
-      array<list<tuple<SimCode.Key, Integer>>> hashvec_1, hashvec;
-      String name_str;
-      tuple<SimCode.Key, SimCode.Value> v, newv;
-      SimCode.Key key;
-      SimCode.Value value;
-
-      // adding when not existing previously
-    case ((v as (key, _)), SimCode.HASHTABLE(hashvec, varr, bsize, _))
-      equation
-        indx = ComponentReference.hashComponentRefMod(key,bsize);
-        newpos = valueArrayLength(varr);
-        varr_1 = valueArrayAdd(varr, v);
-        indexes = hashvec[indx + 1];
-        hashvec_1 = arrayUpdate(hashvec, indx + 1, ((key, newpos) :: indexes));
-        n_1 = valueArrayLength(varr_1);
-      then SimCode.HASHTABLE(hashvec_1, varr_1, bsize, n_1);
-
-        // failure
-    else
-      equation
-        print("- HashTableCrefToSimVar.addNoUpdCheck failed\n");
-      then
-        fail();
-  end matchcontinue;
-end addNoUpdCheck;
-
-public function get "
-author: PA
-
-   Returns a Value given a Key and a HashTable.
-"
-  input SimCode.Key key;
-  input SimCode.HashTableCrefToSimVar hashTable;
-  output SimCode.Value value;
-algorithm
-  (value, _):= get1(key, hashTable);
-end get;
-
-protected function get1 "help function to get"
-  input SimCode.Key key;
-  input SimCode.HashTableCrefToSimVar hashTable;
-  output SimCode.Value value;
-  output Integer indx;
-algorithm
-  (value, indx):=
-  match (key, hashTable)
-    local
-      Integer   bsize, n;
-      list<tuple<SimCode.Key, Integer>> indexes;
-      SimCode.Value v;
-      array<list<tuple<SimCode.Key, Integer>>> hashvec;
-      SimCode.ValueArray varr;
-      SimCode.Key k;
-    case (_, (SimCode.HASHTABLE(hashvec, varr, bsize, _)))
-      equation
-        indx = ComponentReference.hashComponentRefMod(key,bsize);
-        indexes = hashvec[indx + 1];
-        indx = get2(key, indexes);
-        (k, v) = valueArrayNth(varr, indx);
-        true = keyEqual(k, key);
-      then
-        (v, indx);
-  end match;
-end get1;
-
-protected function get2 "
- author: PA
-
-  Helper function to get
-"
-  input SimCode.Key key;
-  input list<tuple<SimCode.Key, Integer>> keyIndices;
-  output Integer index;
-algorithm
-  index :=
-  matchcontinue (key, keyIndices)
-    local
-      SimCode.Key key2;
-      list<tuple<SimCode.Key, Integer>> xs;
-    case (_, ((key2, index) :: _))
-      equation
-        true = keyEqual(key, key2);
-      then
-        index;
-    case (_, (_ :: xs))
-      equation
-        index = get2(key, xs);
-      then
-        index;
-  end matchcontinue;
-end get2;
-
-public function valueArrayLength "
-  author: PA
-
-  Returns the number of elements in the ValueArray
-"
-  input SimCode.ValueArray valueArray;
-  output Integer size;
-algorithm
-  size := match (valueArray)
-    case (SimCode.VALUE_ARRAY(numberOfElements = size)) then size;
-  end match;
-end valueArrayLength;
-
-public function valueArrayAdd "author: PA
-  Adds an entry last to the ValueArray, increasing array size
-  if no space left by factor 1.4
-"
-  input SimCode.ValueArray valueArray;
-  input tuple<SimCode.Key, SimCode.Value> entry;
-  output SimCode.ValueArray outValueArray;
-algorithm
-  outValueArray:=
-  matchcontinue (valueArray, entry)
-    local
-      Integer n_1, n, size, expandsize, expandsize_1, newsize;
-      array<Option<tuple<SimCode.Key, SimCode.Value>>> arr_1, arr, arr_2;
-      Real rsize, rexpandsize;
-    case (SimCode.VALUE_ARRAY(numberOfElements = n, arrSize = size, valueArray = arr), _)
-      equation
-        (n < size) = true "Have space to add array elt.";
-        n_1 = n + 1;
-        arr_1 = arrayUpdate(arr, n + 1, SOME(entry));
-      then
-        SimCode.VALUE_ARRAY(n_1, size, arr_1);
-
-    case (SimCode.VALUE_ARRAY(numberOfElements = n, arrSize = size, valueArray = arr), _)
-      equation
-        (n < size) = false "Do NOT have splace to add array elt. Expand with factor 1.4";
-        rsize = intReal(size);
-        rexpandsize = rsize * 0.4;
-        expandsize = realInt(rexpandsize);
-        expandsize_1 = intMax(expandsize, 1);
-        newsize = expandsize_1 + size;
-        arr_1 = Array.expand(expandsize_1, arr, NONE());
-        n_1 = n + 1;
-        arr_2 = arrayUpdate(arr_1, n + 1, SOME(entry));
-      then
-        SimCode.VALUE_ARRAY(n_1, newsize, arr_2);
-    case (_, _)
-      equation
-        print("-HashTableCrefToSimVar.valueArrayAdd failed\n");
-      then
-        fail();
-  end matchcontinue;
-end valueArrayAdd;
-
-public function valueArraySetnth "author: PA
-  Set the n:th variable in the ValueArray to value.
-"
-  input SimCode.ValueArray valueArray;
-  input Integer pos;
-  input tuple<SimCode.Key, SimCode.Value> entry;
-  output SimCode.ValueArray outValueArray;
-algorithm
-  outValueArray:=
-  matchcontinue (valueArray, pos, entry)
-    local
-      array<Option<tuple<SimCode.Key, SimCode.Value>>> arr_1, arr;
-      Integer n, size;
-    case (SimCode.VALUE_ARRAY(n, size, arr), _, _)
-      equation
-        (pos < size) = true;
-        arr_1 = arrayUpdate(arr, pos + 1, SOME(entry));
-      then
-        SimCode.VALUE_ARRAY(n, size, arr_1);
-    case (_, _, _)
-      equation
-        print("-HashTableCrefToSimVar.valueArraySetnth failed\n");
-      then
-        fail();
-  end matchcontinue;
-end valueArraySetnth;
-
-public function valueArrayNth "author: PA
-
-  Retrieve the n:th Vale from ValueArray, index from 0..n-1.
- "
-  input SimCode.ValueArray valueArray;
-  input Integer pos;
-  output SimCode.Key key;
-  output SimCode.Value value;
-algorithm
-  (key, value) :=
-  matchcontinue (valueArray, pos)
-    local
-      SimCode.Key k;
-      SimCode.Value v;
-      Integer n;
-      array<Option<tuple<SimCode.Key, SimCode.Value>>> arr;
-    case (SimCode.VALUE_ARRAY(numberOfElements = n, valueArray = arr), _)
-      equation
-        (pos < n) = true;
-        SOME((k, v)) = arr[pos + 1];
-      then
-        (k, v);
-    case (SimCode.VALUE_ARRAY(numberOfElements = n, valueArray = arr), _)
-      equation
-        (pos < n) = true;
-        NONE() = arr[pos + 1];
-      then
-        fail();
-  end matchcontinue;
-end valueArrayNth;
-
-/***** end of HashTable ComponentRef -> SimCodeVar.SimVar *******/
 
 public function createMakefileParams
   input list<String> includes;
   input list<String> libs;
   input list<String> libPaths;
   input Boolean isFunction;
-  output SimCode.MakefileParams makefileParams;
+  input Boolean isFMU=false;
+  output SimCodeFunction.MakefileParams makefileParams;
 protected
   String omhome, ccompiler, cxxcompiler, linker, exeext, dllext, cflags, ldflags, rtlibs, platform, fopenmp,compileDir;
 algorithm
@@ -2748,10 +2513,10 @@ algorithm
             (if Flags.isSet(Flags.HPCOM) then "-fopenmp" else "");
   cflags := if stringEq(Config.simCodeTarget(),"JavaScript") then "-Os -Wno-warn-absolute-paths" else cflags;
   ldflags := System.getLDFlags();
-  rtlibs := if isFunction then System.getRTLibs() else System.getRTLibsSim();
+  rtlibs := if isFunction then System.getRTLibs() else (if isFMU then System.getRTLibsFMU() else System.getRTLibsSim());
   platform := System.modelicaPlatform();
   compileDir :=  System.pwd() + System.pathDelimiter();
-  makefileParams := SimCode.MAKEFILE_PARAMS(ccompiler, cxxcompiler, linker, exeext, dllext,
+  makefileParams := SimCodeFunction.MAKEFILE_PARAMS(ccompiler, cxxcompiler, linker, exeext, dllext,
         omhome, cflags, ldflags, rtlibs, includes, libs,libPaths, platform,compileDir);
 end createMakefileParams;
 
@@ -2792,44 +2557,6 @@ algorithm
   end match;
 end codegenPeekTryThrowIndex;
 
-public function execStat
-  "Prints an execution stat on the format:
-  *** %name% -> time: %time%, memory %memory%
-  Where you provide name, and time is the time since the last call using this
-  index (the clock is reset after each call). The memory is the total memory
-  consumed by the compiler at this point in time.
-  "
-  input String name;
-algorithm
-  execStat2(Flags.isSet(Flags.EXEC_STAT),name);
-end execStat;
-
-protected function execStat2
-  input Boolean cond;
-  input String name;
-algorithm
-  _ := match (cond,name)
-    local
-      Real t,total,used,allocated;
-      String timeStr,totalTimeStr,gcStr;
-    case (false,_) then ();
-    else
-      equation
-        t = System.realtimeTock(ClockIndexes.RT_CLOCK_EXECSTAT);
-        total = System.realtimeTock(ClockIndexes.RT_CLOCK_EXECSTAT_CUMULATIVE);
-        gcStr = GC.profStatsStr(GC.getProfStats(), head="");
-        timeStr = System.snprintff("%.4g",20,t);
-        totalTimeStr = System.snprintff("%.4g",20,total);
-        if Flags.isSet(Flags.GC_PROF) then
-          Error.addMessage(Error.EXEC_STAT_GC,{name,timeStr,totalTimeStr,gcStr});
-        else
-          Error.addMessage(Error.EXEC_STAT,{name,timeStr,totalTimeStr});
-        end if;
-        System.realtimeTick(ClockIndexes.RT_CLOCK_EXECSTAT);
-      then ();
-  end match;
-end execStat2;
-
 public function varIndex
   input SimCodeVar.SimVar var;
   output Integer index;
@@ -2845,11 +2572,11 @@ algorithm
 end varName;
 
 public function isParallelFunctionContext
-  input SimCode.Context context;
+  input SimCodeFunction.Context context;
   output Boolean outBool;
 algorithm
   outBool := match(context)
-    case (SimCode.PARALLEL_FUNCTION_CONTEXT()) then true;
+    case (SimCodeFunction.PARALLEL_FUNCTION_CONTEXT()) then true;
     else false;
   end match;
 end isParallelFunctionContext;
@@ -2886,5 +2613,5 @@ algorithm
   outdef := stringDelimitList(List.threadMap(List.fill("i_", nrdims), idxstrlst, stringAppend), ",");
 end generateSubPalceholders;
 
-annotation(__OpenModelica_Interface="backend");
+annotation(__OpenModelica_Interface="backendInterface");
 end SimCodeFunctionUtil;

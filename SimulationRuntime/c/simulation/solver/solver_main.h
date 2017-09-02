@@ -42,23 +42,38 @@
 #include "util/list.h"
 #include "util/simulation_options.h"
 
+static const unsigned int numStatistics = 5;
+
 typedef struct SOLVER_INFO
 {
   double currentTime;
   double currentStepSize;
   double laststep;
   int solverMethod;
+  double solverStepSize; /* used by implicit radau solver */
 
   /* set by solver if an internal root finding method is activated  */
   modelica_boolean solverRootFinding;
+  /* set by solver if output points are set by step size control */
+  modelica_boolean solverNoEquidistantGrid;
+  double lastdesiredStep;
 
   /* events */
   LIST* eventLst;
   int didEventStep;
 
+  /* radau_new
+  void* userdata;
+*/
   /* stats */
   unsigned long stateEvents;
   unsigned long sampleEvents;
+  /* integrator stats */
+  unsigned int* solverStats;
+  unsigned int* solverStatsTmp;
+
+  /* further options */
+  int integratorSteps;
 
   void* solverData;
 }SOLVER_INFO;
@@ -67,26 +82,24 @@ typedef struct SOLVER_INFO
   extern "C" {
 #endif
 
-extern int solver_main(DATA* data, const char* init_initMethod,
-    const char* init_file, double init_time, int lambda_steps,
-    int solverID, const char* outputVariablesAtEnd);
+extern int solver_main(DATA* data, threadData_t *threadData, const char* init_initMethod,
+    const char* init_file, double init_time,
+    int solverID, const char* outputVariablesAtEnd, const char *argv_0);
 
 /* Provide solver interface to interactive stuff */
-extern int initializeSolverData(DATA* data, SOLVER_INFO* solverInfo);
+extern int initializeSolverData(DATA* data, threadData_t *threadData, SOLVER_INFO* solverInfo);
 extern int freeSolverData(DATA* data, SOLVER_INFO* solverInfo);
 
-extern int freeSolverData(DATA* data, SOLVER_INFO* solverInfo);
+extern int initializeModel(DATA* data, threadData_t *threadData, const char* init_initMethod,
+    const char* init_file, double init_time);
 
-extern int initializeModel(DATA* data, const char* init_initMethod,
-    const char* init_file, double init_time, int lambda_steps);
+extern int finishSimulation(DATA* data, threadData_t *threadData, SOLVER_INFO* solverInfo, const char* outputVariablesAtEnd);
 
-extern int finishSimulation(DATA* data, SOLVER_INFO* solverInfo, const char* outputVariablesAtEnd);
-
-extern int solver_main_step(DATA* data, SOLVER_INFO* solverInfo);
+extern int solver_main_step(DATA* data, threadData_t *threadData, SOLVER_INFO* solverInfo);
 
 void checkTermination(DATA* data);
 
-extern int stateSelection(DATA *data, char reportError, int switchStates);
+extern int stateSelection(DATA *data, threadData_t *threadData, char reportError, int switchStates);
 
 #ifdef __cplusplus
   }

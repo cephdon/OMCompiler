@@ -33,7 +33,6 @@ encapsulated package HpcOmBenchmark
   package:     HpcOmBenchmark
   description: HpcOmBenchmark contains the whole logic to measure the communication and processing time.
 
-  RCS: $Id: HpcOmBenchmark.mo 15486 2013-06-10 11:12:35Z marcusw $
 "
 
 protected import HpcOmBenchmarkExt;
@@ -98,7 +97,7 @@ algorithm
   end matchcontinue;
 end readCalcTimesFromFile;
 
-public function readCalcTimesFromXml "author: marcusw
+protected function readCalcTimesFromXml "author: marcusw
   Reads the calculation times of the different simCode-equations out of the given xml-file (fileName). Make sure that the file exists before invoking this
   method, otherwise it will return an misleading error-message.
   Deprecated since commit r20267. Use the generated *.json-file instead."
@@ -111,7 +110,7 @@ algorithm
   calcTimes := expandCalcTimes(tmpResult,{});
 end readCalcTimesFromXml;
 
-public function readCalcTimesFromJson "author: marcusw
+protected function readCalcTimesFromJson "author: marcusw
   Reads the calculation times of the different simCode-equations out of the given json-file (fileName). Make sure that the file exists before invoking this
   method, otherwise it will return an misleading error-message."
   input String fileName;

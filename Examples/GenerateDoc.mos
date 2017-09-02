@@ -41,14 +41,6 @@
 
 setDebugFlags("nogen") /* Don't generate dll/so-files when instantiating classes (performance) */;
 
-loadModel(Modelica);
-
-writeFile("loadModel.mos",sum("if loadModel(" + lib + ") then true else if loadModel(" + lib + ",languageStandard=\"2.x\") then true else loadModel(" + lib + ",languageStandard=\"1.x\");getErrorString();\n" for lib in getAvailableLibraries()));
-getErrorString();
-runScript("loadModel.mos");
-getErrorString();
-getClassNames();
-
 // rmSymlinks
 // (false) should we keep readable names (nice online, if the server handles symbolic links), or
 // (true) use the hashed names in the links (nice if you want a zipped version to work on Windows). This removes the readable names, keeping only the hashed and de-duped images.
@@ -58,12 +50,41 @@ genBuiltin := true;
 // should we generate MetaModelica documentation?
 genMetaModelica := true and genBuiltin;
 
+shouldEcho := true;
+if getEnvironmentVar("GenerateDocTest") == "YES"
+then
+  writeFile("loadModel.mos","
+  loadString(\"
+  package TestGenerateDoc
+    annotation(Documentation(info=\\\"<html>TestGenerateDoc HTML</html>\\\"));
+  end TestGenerateDoc;\");"); getErrorString();
+  // should we generate documentation for OM built-in functions?
+  genBuiltin := false;
+  // should we generate MetaModelica documentation?
+  genMetaModelica := false;
+  // should we echo?
+  shouldEcho := false;
+else
+  loadModel(Modelica); getErrorString();
+  writeFile("loadModel.mos",sum("if loadModel(" + lib + ") then true else if loadModel(" + lib + ",languageStandard=\"2.x\") then true else loadModel(" + lib + ",languageStandard=\"1.x\");getErrorString();\n" for lib in getAvailableLibraries())); getErrorString();
+end if;
+getErrorString();
+runScript("loadModel.mos");
+getErrorString();
+getClassNames();
+
 echo(false);
 self:=getInstallationDirectoryPath() + "/share/doc/omc/testmodels/GenerateDoc.mos";getErrorString();
 py:=getInstallationDirectoryPath() + "/share/doc/omc/testmodels/generate_icons.py";getErrorString();
-commands:={"(ulimit -t 600 ; python "+py+" --quiet --output-dir Icons "+typeNameString(cl)+" )" for cl in getClassNames(builtin=false)};getErrorString();
-res:=system_parallel(commands);getErrorString();
-system("rm -f *.json");getErrorString();
+
+// adrpo: do not run the python stuff when running the testsuite
+if getEnvironmentVar("GenerateDocTest") == "YES" then
+  system("mkdir -p Icons");
+else
+  commands:={"(ulimit -t 600 ; python "+py+" --quiet --output-dir Icons "+typeNameString(cl)+" )" for cl in getClassNames(builtin=false)};getErrorString();
+  res:=system_parallel(commands);getErrorString();
+  system("rm -f *.json");getErrorString();
+end if;
 /* if max(res) <> 0 then
   exit(1);
 end if; */
@@ -74,12 +95,15 @@ if genMetaModelica then
   setCommandLineOptions("+g=Modelica");
 end if;
 
+genTimeStamp := "2016";
 allClassNames:=getClassNames(builtin=genBuiltin,recursive=true,sort=true);
+if not getEnvironmentVar("GenerateDocTest") == "YES" then
 system("date -u +%FT%TZ > tmp");
 genTimeStamp := readFile("tmp");
+end if;
 version := "<hr />Generated at " + genTimeStamp + " by <a href=\"http://openmodelica.org\">OpenModelica</a>" + getVersion() + " using <a href=\"GenerateDoc.mos\">GenerateDoc.mos</a>";
 
-echo(true);
+echo(shouldEcho);
 "classNames";
 classNames := getClassNames(builtin=genBuiltin,sort=true);
 
@@ -87,10 +111,14 @@ classNames := getClassNames(builtin=genBuiltin,sort=true);
 loadString("
 function filename \"Replace characters that mess with filesystems and shell expansions\"
   input String str;
-  output String ostr :=
+  output String ostr =
         OpenModelica.Scripting.stringReplace(
-          OpenModelica.Scripting.stringReplace(str,\"/\",\"Division\"),
-          \"*\",\"Multiplication\")
+        OpenModelica.Scripting.stringReplace(
+        OpenModelica.Scripting.stringReplace(
+        OpenModelica.Scripting.stringReplace(str,\"/\",\"Division\"),
+        \"*\",\"Multiplication\"),
+        \"<\",\"x3C\"),
+        \">\",\"x3E\")
 ;
 end filename;
 
@@ -100,23 +128,25 @@ function uriEncode
 algorithm
   uri := OpenModelica.Scripting.stringReplace(str,\"'\",\"%27\");
   uri := OpenModelica.Scripting.stringReplace(uri,\" \",\"%20\");
+  uri := OpenModelica.Scripting.stringReplace(uri,\"<\",\"x3C\");
+  uri := OpenModelica.Scripting.stringReplace(uri,\">\",\"x3E\");
 end uriEncode;
 
 function notLast
   input String str[:];
-  output String ostr[:] := str[1:end];
+  output String ostr[:] = str[1:end];
 end notLast;
 
 function last
   input String str[:];
-  output String ostr := str[end];
+  output String ostr = str[end];
 end last;
 
 function preSuffixIfNotEmpty
   input String prefix;
   input String str;
   input String suffix;
-  output String out := if str <> \"\" then prefix + str + suffix else \"\";
+  output String out = if str <> \"\" then prefix + str + suffix else \"\";
 end preSuffixIfNotEmpty;
 
 function svgIcon
@@ -142,7 +172,7 @@ function head
   input Boolean rmSymlinks;
   output String head;
 protected
-  String compound := \"\", file;
+  String compound = \"\", file;
 algorithm
   head :=
 \"<head>
@@ -163,7 +193,7 @@ end head;
 record Item
   String file;
   String head;
-  String docInfo[2];
+  String docInfo[3];
   String contents;
   String comment;
   String interface;
@@ -224,7 +254,8 @@ items:={Item(
       preSuffixIfNotEmpty("\n<h4><a name=\"interface\">Interface</a></h4>\n<blockquote><pre>",toHtml(OpenModelica.Scripting.list(c,interfaceOnly=true)),"</pre></blockquote>"),
       preSuffixIfNotEmpty("\n<h4><a name=\"definition\">Definition</a></h4>\n<blockquote><pre>",toHtml(OpenModelica.Scripting.list(c,shortOnly=true)),"</pre></blockquote>")
     ) for c in allClassNames};
-echo(true);
+
+echo(shouldEcho);
 "Start writing items to file";
 writeFile(itemFile(items) /* Vector of filenames */,itemString(items,version) /* Vector of file contents */);
 getErrorString();
@@ -323,11 +354,16 @@ for filepath in sorted(glob.glob('*.html')):
           a['href'] = linkreplace(a['href'],filepath)
         except:
           pass
-        for img in soup.findAll('img'):
-          try:
-            img['src'] = linkreplace(img['src'],filepath)
-          except:
-            pass
+      for a in soup.findAll('link'):
+        try:
+          a['href'] = linkreplace(a['href'],filepath)
+        except:
+          pass
+      for img in soup.findAll('img'):
+        try:
+          img['src'] = linkreplace(img['src'],filepath)
+        except:
+          pass
     with open(filepath,'w') as html_file:
       html_file.write(str(soup))
   else:
@@ -335,8 +371,8 @@ for filepath in sorted(glob.glob('*.html')):
 ");
 
 writeFile("FindFiles.sh","#!/bin/bash
-rm -f *.png *.pdf FindFiles.log
-touch FindFiles.log
+rm -f *.png *.pdf FindFiles.log*
+touch FindFiles.log.tmp
 OMLIBRARY=\""+getInstallationDirectoryPath()+"/lib/omlibrary\"
 for f in `sort -u tidy.links`; do
   link=`echo $f | cut '-d!' -f2-`
@@ -349,10 +385,13 @@ for f in `sort -u tidy.links`; do
     true
   else
     inFile=`echo $f | cut '-d!' -f1`
-    echo \"$inFile: Not found: $link\" | tee -a FindFiles.log
+    inLib=`echo $inFile | cut '-d.' -f1`
+    echo \"$inLib $inFile: Not found: $link\" | tee -a FindFiles.log.tmp
   fi
 done
-rm -f tmp
+# Sort on library, then remove the library
+sort FindFiles.log.tmp | cut -d' ' -f2- > FindFiles.log
+rm -f tmp FindFiles.log.tmp
 ");
 
 writeFile("style.css",".omc-h1
@@ -411,7 +450,7 @@ writeFile("FilterTidy.sh","#!/bin/bash
 grep -v DOCTYPE tidy.err | grep -v \"<body>\" |grep -v \"<html>\\|</html>\" |grep -v lacks |grep -v apos | grep -B1 Warning > tidy.filtered
 ");
 
-echo(true);
+echo(shouldEcho);
 "Removing previous generation output files...";
 system("rm -f tidy.links tidy.out tidy.err tidy.filtered");
 
@@ -478,7 +517,7 @@ system("mkdir -p " + dirs);
 system("cp '" + py + "' '" + self + "' .");
 "tar";
 dirs;
-cmd := "tar cJf ModelicaDocumentation.tar.xz --dereference style.css *.html Icons " + dirs + " GenerateDoc.mos generate_icons.py fix-case-sensitive.py FindFiles.log tidy.filtered tidy.links";
+cmd := "find . -maxdepth 1 -name '*.html' -print0 | tar cJf ModelicaDocumentation.tar.xz --dereference --null style.css " + dirs + " GenerateDoc.mos generate_icons.py fix-case-sensitive.py FindFiles.log tidy.filtered tidy.links";
 system(cmd);
 getErrorString();
 
@@ -491,6 +530,6 @@ system("mkdir -p " + dirs);
 system("cp '" + py + "' '" + self + "' .");
 "tar";
 dirs;
-cmd := "zip -qr ModelicaDocumentation.zip style.css *.html Icons " + dirs + " GenerateDoc.mos generate_icons.py fix-case-sensitive.py FindFiles.log tidy.filtered tidy.links";
+cmd := "find . -maxdepth 1 -name '*.html' -print | zip -qr ModelicaDocumentation.zip style.css -@ Icons " + dirs + " GenerateDoc.mos generate_icons.py fix-case-sensitive.py FindFiles.log tidy.filtered tidy.links";
 system(cmd);
 getErrorString();

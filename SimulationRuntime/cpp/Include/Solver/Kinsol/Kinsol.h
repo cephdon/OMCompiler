@@ -3,24 +3,16 @@
  *
  *  @{
  */
-#include "FactoryExport.h"
-#include <nvector/nvector_serial.h>
-#include <kinsol/kinsol.h>
-#ifdef USE_SUNDIALS_LAPACK
-  #include <kinsol/kinsol_lapack.h>
+#if defined(__vxworks)
+//#include <klu.h>
 #else
-  #include <kinsol/kinsol_spgmr.h>
-  #include <kinsol/kinsol_dense.h>
-#endif //USE_SUNDIALS_LAPACK
-#include <kinsol/kinsol_spbcgs.h>
-#include <kinsol/kinsol_sptfqmr.h>
-#include <boost/math/special_functions/fpclassify.hpp>
-//#include<kinsol_lapack.h>
- int kin_fCallback(N_Vector y, N_Vector fval, void *user_data);
+//#include <Solver/KLU/klu.h>
+#endif
+
 class Kinsol : public IAlgLoopSolver
 {
 public:
-  Kinsol(IAlgLoop* algLoop, INonLinSolverSettings* settings);
+  Kinsol(INonLinearAlgLoop* algLoop, INonLinSolverSettings* settings);
   virtual ~Kinsol();
 
   /// (Re-) initialize the solver
@@ -32,17 +24,22 @@ public:
   /// Returns the status of iteration
   virtual ITERATIONSTATUS getIterationStatus();
   virtual void stepCompleted(double time);
+  virtual void restoreOldValues();
+  virtual void restoreNewValues();
   int kin_f(N_Vector y, N_Vector fval, void *user_data);
+
+ /*will be used with new sundials version
+  int kin_JacSparse(N_Vector u, N_Vector fu,SlsMat J, void *user_data,N_Vector tmp1, N_Vector tmp2);
+ int kin_JacDense(long int N, N_Vector u, N_Vector fu,DlsMat J, void *user_data,N_Vector tmp1, N_Vector tmp2);
+ */
 private:
   /// Encapsulation of determination of residuals to given unknowns
   void calcFunction(const double* y, double* residual);
-  /// Encapsulation of determination of Jacobian
-  void calcJacobian(double* f, double* y);
+
 
   int check_flag(void *flagvalue, char *funcname, int opt);
 
   void solveNLS();
-  bool isfinite(double* u, int dim);
   void check4EventRetry(double* y);
 
   // Member variables
@@ -50,7 +47,7 @@ private:
   INonLinSolverSettings
     *_kinsolSettings;     ///< Settings for the solver
 
-  IAlgLoop
+  INonLinearAlgLoop
     *_algLoop;            ///< Algebraic loop to be solved
 
   ITERATIONSTATUS
@@ -58,23 +55,23 @@ private:
 
   long int
     _dimSys;              ///< Temp   - Number of unknowns (=dimension of system of equations)
-
+  int _dim;
   bool
     _firstCall;           ///< Temp   - Denotes the first call to the solver, init() is called
-  long int * _ihelpArray;
-  double
-    *_y,                  ///< Temp   - Unknowns
-    *_f,                  ///< Temp   - Residuals
-    *_helpArray,
-    *_y0,                 ///< Temp   - Auxillary variables
-    *_yScale,             ///< Temp   - Auxillary variables
-    *_fScale,             ///< Temp   - Auxillary variables
-    *_jac,
-    *_yHelp,              ///< Temp   - Auxillary variables
-    *_fHelp,              ///< Temp   - Auxillary variables
-    *_zeroVec,
-    *_currentIterate;
 
+  double
+	  *_y,                  ///< Temp   - Unknowns
+	  *_f,                  ///< Temp   - Residuals
+	  *_helpArray,
+	  *_y0,                 ///< Temp   - Auxillary variables
+	  *_yScale,             ///< Temp   - Auxillary variables
+	  *_fScale,             ///< Temp   - Auxillary variables
+	  *_jac,
+	  *_yHelp,              ///< Temp   - Auxillary variables
+	  *_fHelp,              ///< Temp   - Auxillary variables
+	  *_currentIterate,
+      *_y_old,
+      *_y_new;
   double
     _fnormtol,
     _scsteptol;
@@ -91,11 +88,28 @@ private:
 
   bool
     _eventRetry,
-    _fValid;
+    _fValid,
+
+	_usedCompletePivoting,
+	_usedIterativeSolver,
+
+    _solverErrorNotificationGiven;
+
 
   realtype _fnorm,
     _currentIterateNorm;
 
    int _counter;
+   //required for klu linear solver
+   bool _sparse;
+/*
+   klu_symbolic* _kluSymbolic ;
+   klu_numeric* _kluNumeric ;
+   klu_common* _kluCommon ;
+   int* _Ai;
+   int* _Ap;
+   double* _Ax;
+   int _nonzeros;
+*/
 };
 /** @} */ // end of solverKinsol

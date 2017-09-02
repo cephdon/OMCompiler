@@ -90,11 +90,12 @@ static void make_key()
 
 static print_members* getMembers(threadData_t *threadData)
 {
+  print_members *res;
   if (threadData && threadData->localRoots[LOCAL_ROOT_PRINT_MO]) {
     return threadData->localRoots[LOCAL_ROOT_PRINT_MO];
   }
   pthread_once(&printimpl_once_create_key,make_key);
-  print_members *res = (print_members*) pthread_getspecific(printimplKey);
+  res = (print_members*) pthread_getspecific(printimplKey);
   if (res != NULL) return res;
   res = (print_members*) calloc(1,sizeof(print_members));
   pthread_setspecific(printimplKey,res);
@@ -331,6 +332,9 @@ static int PrintImpl__writeBuf(threadData_t *threadData,const char* filename)
   /* check if we have something to write */
   /* open the file */
   /* adrpo: 2010-09-22 open the file in BINARY mode as otherwise \r\n becomes \r\r\n! */
+#if defined(__APPLE_CC__)||defined(__MINGW32__)||defined(__MINGW64__)
+  unlink(filename);
+#endif
   file = fopen(filename,fileOpenMode);
   if (file == NULL) {
     const char *c_tokens[1]={filename};
@@ -386,8 +390,7 @@ static int PrintImpl__writeBufConvertLines(threadData_t *threadData,const char *
   FILE * file = NULL;
   regex_t re_begin,re_end;
   regmatch_t matches[3];
-  int i;
-  long nlines=6 /* We start at 6 because we write 6 lines before the first line */, modelicaLine = 0;
+  mmc_uint_t nlines = 6 /* We start at 6 because we write 6 lines before the first line */, modelicaLine = 0;
   /* What we try to match: */
   /*#modelicaLine [/path/to/a.mo:4:3-4:12]*/
   /*#endModelicaLine*/
@@ -401,22 +404,28 @@ static int PrintImpl__writeBufConvertLines(threadData_t *threadData,const char *
 #endif
   char *modelicaFileName = NULL;
   char* strtmp = NULL;
-  str[nfilled] = '\0';
 
-  /* First, compile the regular expressions */
-  if (regcomp(&re_begin, re_str[0], REG_EXTENDED) || regcomp(&re_end, re_str[1], 0)) {
-    c_add_message(NULL,21, /* WRITING_FILE_ERROR */
-      ErrorType_scripting,
-      ErrorLevel_error,
-      gettext("Error compiling regular expression: %s or %s."),
-      re_str,
-      2);
-    return 1;
+  if (str!=NULL && nfilled!=0) {
+    str[nfilled] = '\0';
+
+    /* First, compile the regular expressions */
+    if (regcomp(&re_begin, re_str[0], REG_EXTENDED) || regcomp(&re_end, re_str[1], 0)) {
+      c_add_message(NULL,21, /* WRITING_FILE_ERROR */
+        ErrorType_scripting,
+        ErrorLevel_error,
+        gettext("Error compiling regular expression: %s or %s."),
+        re_str,
+        2);
+      return 1;
+    }
   }
 
   /* check if we have something to write */
   /* open the file */
   /* adrpo: 2010-09-22 open the file in BINARY mode as otherwise \r\n becomes \r\r\n! */
+#if defined(__APPLE_CC__)||defined(__MINGW32__)||defined(__MINGW64__)
+  unlink(filename);
+#endif
   file = fopen(filename,fileOpenMode);
   if (file == NULL) {
     const char *c_tokens[1]={filename};
@@ -432,8 +441,6 @@ static int PrintImpl__writeBufConvertLines(threadData_t *threadData,const char *
   }
   if (str == NULL || str[0]=='\0') {
     /* nothing to write to file, just close it and return ! */
-    regfree(&re_begin);
-    regfree(&re_end);
     fclose(file);
     return 1;
   }

@@ -34,7 +34,6 @@ encapsulated package Global
   package:     Global
   description: Global contains structures that are available globally.
 
-  RCS: $Id$
 
   The Global package contains structures that are available globally."
 
@@ -45,10 +44,9 @@ constant Integer maxFunctionFileLength = 50;
 // Thread-local roots
 constant Integer instOnlyForcedFunctions = 0;
 constant Integer codegenTryThrowIndex = 1;
+constant Integer codegenFunctionList = 2;
 // Global roots start at index=9
 constant Integer instHashIndex = 9;
-constant Integer typesIndex = 10;
-constant Integer crefIndex = 11;
 constant Integer builtinIndex = 12;
 constant Integer builtinEnvIndex = 13;
 constant Integer profilerTime1Index = 14;
@@ -56,6 +54,13 @@ constant Integer profilerTime2Index = 15;
 constant Integer flagsIndex = 16;
 constant Integer builtinGraphIndex = 17;
 constant Integer rewriteRulesIndex = 18;
+constant Integer stackoverFlowIndex = 19;
+constant Integer gcProfilingIndex = 20;
+constant Integer inlineHashTable = 21; // TODO: Should be a local root?
+constant Integer currentInstVar = 22;
+constant Integer operatorOverloadingCache = 23;
+constant Integer optionSimCode = 24;
+constant Integer interactiveCache = 25;
 
 // indexes in System.tick
 // ----------------------
@@ -67,12 +72,23 @@ constant Integer backendDAE_fileSequence = 20;
 constant Integer backendDAE_jacobianSeq = 21;
 // nodeId
 constant Integer fgraph_nextId = 22;
+// csevar name
+constant Integer backendDAE_cseIndex = 23;
+// strong component index
+constant Integer strongComponent_index = 24;
+// class extends
+constant Integer classExtends_index = 25;
+
 // ----------------------
 
 public function initialize "Called to initialize global roots (when needed)"
 algorithm
   setGlobalRoot(instOnlyForcedFunctions,  NONE());
   setGlobalRoot(rewriteRulesIndex,  NONE());
+  setGlobalRoot(stackoverFlowIndex, NONE());
+  setGlobalRoot(inlineHashTable, NONE());
+  setGlobalRoot(currentInstVar, NONE());
+  setGlobalRoot(interactiveCache, NONE());
 end initialize;
 
 annotation(__OpenModelica_Interface="util");

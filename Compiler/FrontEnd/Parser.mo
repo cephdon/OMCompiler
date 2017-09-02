@@ -84,13 +84,15 @@ end parsestring;
 function parsebuiltin "Like parse, but skips the SCode check to avoid infinite loops for ModelicaBuiltin.mo."
   input String filename;
   input String encoding;
+  input Integer acceptedGram=Config.acceptedGrammar();
+  input Integer languageStandardInt=Flags.getConfigEnum(Flags.LANGUAGE_STANDARD);
   output Absyn.Program outProgram;
   annotation(__OpenModelica_EarlyInline = true);
 protected
   String realpath;
 algorithm
   realpath := Util.replaceWindowsBackSlashWithPathDelimiter(System.realpath(filename));
-  outProgram := ParserExt.parse(realpath, Util.testsuiteFriendly(realpath), Config.acceptedGrammar(), encoding, Flags.getConfigEnum(Flags.LANGUAGE_STANDARD), Config.getRunningTestsuite());
+  outProgram := ParserExt.parse(realpath, Util.testsuiteFriendly(realpath), acceptedGram, encoding, languageStandardInt, Config.getRunningTestsuite());
 end parsebuiltin;
 
 function parsestringexp "Parse a string as if it was a sequence of statements"
@@ -169,7 +171,7 @@ function parallelParseFilesWork
 protected
   list<tuple<String,String>> workList = list((file,encoding) for file in filenames);
 algorithm
-  if Config.getRunningTestsuiteFile()<>"" or Config.noProc()==1 or numThreads == 1 or listLength(filenames)<2 then
+  if Config.getRunningTestsuite() or Config.noProc()==1 or numThreads == 1 or listLength(filenames)<2 then
     partialResults := list(loadFileThread(t) for t in workList);
   else
     // GC.disable(); // Seems to sometimes break building nightly omc

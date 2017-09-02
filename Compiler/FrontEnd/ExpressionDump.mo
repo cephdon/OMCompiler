@@ -34,7 +34,6 @@ encapsulated package ExpressionDump
   package:     ExpressionDump
   description: ExpressionDump
 
-  RCS: $Id$
 
   This file contains the module ExpressionDump, which contains functions
   to dump and print DAE.Expression."
@@ -599,9 +598,9 @@ algorithm
         s2 = printExp2Str(e2, stringDelimiter, opcreffunc, opcallfunc);
         p = expPriority(e);
         p1 = expPriority(e1);
-        _ = expPriority(e2);
+        p2 = expPriority(e2);
         s1_1 = parenthesize(s1, p1, p,false);
-        s2_1 = parenthesize(s2, p1, p,true);
+        s2_1 = parenthesize(s2, p2, p,true);
         s = stringAppendList({s1_1, sym, s2_1});
       then
         s;
@@ -1104,9 +1103,8 @@ algorithm
       then
         Graphviz.LNODE("CALL",{fs},{},argnodes);
 
-    case(DAE.PARTEVALFUNCTION(path = fcn,expList = args))
+    case(DAE.PARTEVALFUNCTION(path = _,expList = args))
       equation
-        _ = Absyn.pathString(fcn);
         argnodes = List.map(args, dumpExpGraphviz);
       then
         Graphviz.NODE("PARTEVALFUNCTION",{},argnodes);
@@ -1422,11 +1420,10 @@ algorithm
       then
         res_str;
 
-    case (DAE.CAST(ty = ty,exp = e),level)
+    case (DAE.CAST(exp = e),level)
       equation
         gen_str = genStringNTime("   |", level);
         new_level1 = level + 1;
-        _ = Types.unparseType(ty);
         ct = dumpExpStr(e, new_level1);
         res_str = stringAppendList({gen_str,"CAST ","\n",ct,""});
       then
@@ -1472,12 +1469,11 @@ algorithm
       then
         res_str;
 
-    case (DAE.REDUCTION(reductionInfo=DAE.REDUCTIONINFO(path = fcn),expr = exp,iterators={DAE.REDUCTIONITER(exp=iterexp)}),level)
+    case (DAE.REDUCTION(reductionInfo=DAE.REDUCTIONINFO(path = _),expr = exp,iterators={DAE.REDUCTIONITER(exp=iterexp)}),level)
       equation
         gen_str = genStringNTime("   |", level);
         new_level1 = level + 1;
         new_level2 = level + 1;
-        _ = Absyn.pathString(fcn);
         expt = dumpExpStr(exp, new_level1);
         itert = dumpExpStr(iterexp, new_level2);
         res_str = stringAppendList({gen_str,"REDUCTION ","\n",expt,itert,""});
@@ -1525,7 +1521,7 @@ algorithm
     case (_,level)
       equation
         gen_str = genStringNTime("   |", level);
-        res_str = stringAppendList({gen_str," UNKNOWN EXPRESSION ","\n"});
+        res_str = stringAppendList({gen_str," UNKNOWN EXPRESSION (" + printExpTypeStr(inExp) + ")","\n"});
       then
         res_str;
   end matchcontinue;
@@ -1787,28 +1783,56 @@ Return textual representation of a ClockKind."
 algorithm
   outString := match inClockKind
     local
-      Real startInterval;
-      Integer resolution;
-      DAE.Exp intervalCounter, interval, condition;
-      String solverMethod;
-      DAE.Exp c;
+      DAE.Exp c, intervalCounter, interval, condition, resolution, startInterval, solverMethod;
 
     case DAE.INFERRED_CLOCK()
     then "Clock()";
 
     case DAE.INTEGER_CLOCK(intervalCounter=intervalCounter, resolution=resolution)
-    then "Clock(" + dumpExpStr(intervalCounter,0) + ", " + intString(resolution) + ")";
+    then "Clock(" + dumpExpStr(intervalCounter,0) + ", " + dumpExpStr(resolution,0) + ")";
 
     case DAE.REAL_CLOCK(interval=interval)
     then "Clock(" + dumpExpStr(interval,0) + ")";
 
     case DAE.BOOLEAN_CLOCK(condition=condition, startInterval=startInterval)
-    then "Clock(" + dumpExpStr(condition,0) + ", " + realString(startInterval) + ")";
+    then "Clock(" + dumpExpStr(condition,0) + ", " + dumpExpStr(startInterval,0) + ")";
 
     case DAE.SOLVER_CLOCK(c=c, solverMethod=solverMethod)
-    then "Clock(" + dumpExpStr(c,0) + ", \"" + solverMethod + "\")";
+    then "Clock(" + dumpExpStr(c,0) + ", " + dumpExpStr(solverMethod,0) + ")";
   end match;
 end clockKindString;
+
+
+public function constraintDTtoString "
+author: ptaeuber
+Converts DAE.CONSTRAINT_DT to string."
+  input DAE.Constraint con;
+  output String str;
+protected
+  DAE.Exp c;
+  Boolean localCon;
+algorithm
+  DAE.CONSTRAINT_DT(constraint = c, localCon = localCon) := con;
+  str := printExpStr(c);
+  str := if localCon then str + " (local)" else str + " (global)";
+end constraintDTtoString;
+
+
+public function constraintDTlistToString "
+author: ptaeuber
+Converts list of DAE.CONSTRAINT_DT to string."
+  input list<DAE.Constraint> cons;
+  input String delim;
+  output String str="";
+protected
+  DAE.Exp c;
+  Boolean localCon;
+  DAE.Constraint con;
+algorithm
+  for con in cons loop
+    str := str + delim + constraintDTtoString(con);
+  end for;
+end constraintDTlistToString;
 
 annotation(__OpenModelica_Interface="frontend");
 end ExpressionDump;

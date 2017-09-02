@@ -34,7 +34,6 @@ encapsulated package CevalScript
   package:     CevalScript
   description: Constant propagation of expressions
 
-  RCS: $Id$
 
   This module handles scripting.
 
@@ -63,7 +62,6 @@ import SimCode;
 // protected imports
 protected
 import BaseHashSet;
-import Builtin;
 import CevalScriptBackend;
 import CevalFunction;
 import ClassInf;
@@ -77,14 +75,17 @@ import Dump;
 import DynLoad;
 import Expression;
 import ExpressionDump;
+import FBuiltin;
 import Flags;
 import FGraph;
+import FNode;
 import GC;
 import GenerateAPIFunctionsTpl;
 import Global;
 import GlobalScriptUtil;
 import Graph;
 import HashSetString;
+import Inst;
 import InstFunction;
 import List;
 import Lookup;
@@ -94,6 +95,8 @@ import Parser;
 import Print;
 import SCodeDump;
 import SimCodeFunction;
+import ExecStat.{execStat,execStatReset};
+import StackOverflow;
 import System;
 import Static;
 import SCode;
@@ -191,7 +194,7 @@ algorithm
    // external functions are complete :)
    case (cache, env, fpath)
      equation
-       (_, SCode.CLASS(classDef = SCode.PARTS(externalDecl = SOME(_))), _) = Lookup.lookupClass(cache, env, fpath, false);
+       (_, SCode.CLASS(classDef = SCode.PARTS(externalDecl = SOME(_))), _) = Lookup.lookupClass(cache, env, fpath);
      then
        true;
 
@@ -205,7 +208,7 @@ algorithm
    // partial functions are not complete!
    case (cache, env, fpath)
      equation
-       (_, SCode.CLASS(partialPrefix = SCode.PARTIAL()), _) = Lookup.lookupClass(cache, env, fpath, false);
+       (_, SCode.CLASS(partialPrefix = SCode.PARTIAL()), _) = Lookup.lookupClass(cache, env, fpath);
      then
        false;
 
@@ -217,16 +220,22 @@ end isCompleteFunction;
 public function compileModel "Compiles a model given a file-prefix, helper function to buildModel."
   input String fileprefix;
   input list<String> libs;
+  input String workingDir = "";
+  input list<String> makeVars = {};
 protected
   String omhome = Settings.getInstallationDirectoryPath(),omhome_1 = System.stringReplace(omhome, "\"", "");
   String pd = System.pathDelimiter();
-  String libsfilename,libs_str,s_call,filename,winCompileMode;
-  String fileDLL = fileprefix + System.getDllExt(),fileEXE = fileprefix + System.getExeExt(),fileLOG = fileprefix + ".log";
+  String cdWorkingDir,setMakeVars,libsfilename,libs_str,s_call,filename,winCompileMode,workDir = (if stringEq(workingDir, "") then "" else workingDir + pd);
+  String fileDLL = workDir + fileprefix + System.getDllExt(),
+         fileEXE = workDir + fileprefix + System.getExeExt(),
+         fileLOG = workDir + fileprefix + ".log";
   Integer numParallel,res;
   Boolean isWindows = System.os() == "Windows_NT";
+  list<String> makeVarsNoBinding;
 algorithm
   libsfilename := fileprefix + ".libs";
   libs_str := stringDelimitList(libs, " ");
+  makeVarsNoBinding := makeVars; // OMC is stupid and wants to constant evaluate inputs with bindings for iterator variables...
 
   System.writeFile(libsfilename, libs_str);
   if isWindows then
@@ -237,11 +246,15 @@ algorithm
     //        set OPENMODELICAHOME=DIR && actually adds the space between the DIR and &&
     //        to the environment variable! Don't ask me why, ask Microsoft.
     omhome := "set OPENMODELICAHOME=\"" + System.stringReplace(omhome_1, "/", "\\") + "\"&& ";
+    setMakeVars := sum("set "+var+"&& " for var in makeVarsNoBinding);
+    cdWorkingDir := if stringLength(workingDir) == 0 then "" else ("cd \"" + workingDir + "\"&& ");
     winCompileMode := if Config.getRunningTestsuite() then "serial" else "parallel";
-    s_call := stringAppendList({omhome,"\"",omhome_1,pd,"share",pd,"omc",pd,"scripts",pd,"Compile","\""," ",fileprefix," ",Config.simulationCodeTarget()," ", winCompileMode});
+    s_call := stringAppendList({omhome,cdWorkingDir,setMakeVars,"\"",omhome_1,pd,"share",pd,"omc",pd,"scripts",pd,"Compile","\""," ",fileprefix," ",Config.simulationCodeTarget()," ", System.openModelicaPlatform(), " ", winCompileMode});
   else
     numParallel := if Config.getRunningTestsuite() then 1 else Config.noProc();
-    s_call := stringAppendList({System.getMakeCommand()," -j",intString(numParallel)," -f ",fileprefix,".makefile"});
+    cdWorkingDir := if stringLength(workingDir) == 0 then "" else (" -C \"" + workingDir + "\"");
+    setMakeVars := sum(" "+var for var in makeVarsNoBinding);
+    s_call := stringAppendList({System.getMakeCommand()," -j",intString(numParallel),cdWorkingDir," -f ",fileprefix,".makefile",setMakeVars});
   end if;
   if Flags.isSet(Flags.DYN_LOAD) then
     Debug.traceln("compileModel: running " + s_call);
@@ -333,6 +346,10 @@ algorithm
   end matchcontinue;
 end loadFile;
 
+
+protected type LoadModelFoldArg =
+  tuple<String /*modelicaPath*/, Boolean /*forceLoad*/, Boolean /*notifyLoad*/, Boolean /*checkUses*/, Boolean /*requireExactVersion*/>;
+
 public function loadModel
   input list<tuple<Absyn.Path,list<String>>> imodelsToLoad;
   input String modelicaPath;
@@ -343,43 +360,62 @@ public function loadModel
   input Boolean requireExactVersion;
   output Absyn.Program pnew;
   output Boolean success;
+protected
+  LoadModelFoldArg arg = (modelicaPath, forceLoad, notifyLoad, checkUses, requireExactVersion);
 algorithm
-  (pnew,success) := matchcontinue (imodelsToLoad,modelicaPath,ip,forceLoad,notifyLoad,checkUses)
-    local
-      Absyn.Path path;
-      String pathStr,versions,className,version;
-      list<String> strings;
-      Boolean b,b1,b2;
-      Absyn.Program p;
-      list<tuple<Absyn.Path,list<String>>> modelsToLoad;
-
-    case ({},_,p,_,_,_) then (p,true);
-    case ((path,strings)::modelsToLoad,_,p,_,_,_)
-      equation
-        b = checkModelLoaded((path,strings),p,forceLoad,NONE());
-        pnew = if not b then ClassLoader.loadClass(path, strings, modelicaPath, NONE(), requireExactVersion) else Absyn.PROGRAM({},Absyn.TOP());
-        className = Absyn.pathString(path);
-        version = if not b then getPackageVersion(path, pnew) else "";
-        Error.assertionOrAddSourceMessage(b or not notifyLoad or forceLoad,Error.NOTIFY_NOT_LOADED,{className,version},Absyn.dummyInfo);
-        p = Interactive.updateProgram(pnew, p);
-        (p,b1) = loadModel(if checkUses then Interactive.getUsesAnnotationOrDefault(pnew, requireExactVersion) else {}, modelicaPath, p, false, notifyLoad, checkUses, requireExactVersion);
-        (p,b2) = loadModel(modelsToLoad, modelicaPath, p, forceLoad, notifyLoad, checkUses, requireExactVersion);
-      then (p,b1 and b2);
-    case ((path,strings)::_,_,p,true,_,_)
-      equation
-        pathStr = Absyn.pathString(path);
-        versions = stringDelimitList(strings,",");
-        Error.addMessage(Error.LOAD_MODEL,{pathStr,versions,modelicaPath});
-      then (p,false);
-    case ((path,strings)::modelsToLoad,_,p,false,_,_)
-      equation
-        pathStr = Absyn.pathString(path);
-        versions = stringDelimitList(strings,",");
-        Error.addMessage(Error.NOTIFY_LOAD_MODEL_FAILED,{pathStr,versions,modelicaPath});
-        (p,b) = loadModel(modelsToLoad, modelicaPath, p, forceLoad, notifyLoad, checkUses, requireExactVersion);
-      then (p,b);
-  end matchcontinue;
+  (pnew, success) := List.fold1(imodelsToLoad, loadModel1, arg, (ip, true));
 end loadModel;
+
+protected function loadModel1
+  input tuple<Absyn.Path,list<String>> modelToLoad;
+  input LoadModelFoldArg inArg;
+  input tuple<Absyn.Program, Boolean> inTpl;
+  output tuple<Absyn.Program, Boolean> outTpl;
+protected
+  list<tuple<Absyn.Path,list<String>>> modelsToLoad;
+  Boolean b, b1, success, forceLoad, notifyLoad, checkUses, requireExactVersion;
+  Absyn.Path path;
+  list<String> versionsLst;
+  String pathStr, versions, className, version, modelicaPath;
+  Absyn.Program p, pnew;
+  Error.MessageTokens msgTokens;
+algorithm
+  (path, versionsLst) := modelToLoad;
+  (modelicaPath, forceLoad, notifyLoad, checkUses, requireExactVersion) := inArg;
+  try
+    (p, success) := inTpl;
+    if checkModelLoaded(modelToLoad, p, forceLoad, NONE()) then
+      pnew := Absyn.PROGRAM({}, Absyn.TOP());
+      version := "";
+    else
+      pnew := ClassLoader.loadClass(path, versionsLst, modelicaPath, NONE(), requireExactVersion);
+      version := getPackageVersion(path, pnew);
+      b := not notifyLoad or forceLoad;
+      msgTokens := {Absyn.pathString(path), version};
+      Error.assertionOrAddSourceMessage(b, Error.NOTIFY_NOT_LOADED, msgTokens, Absyn.dummyInfo);
+    end if;
+    p := Interactive.updateProgram(pnew, p);
+
+    b := true;
+    if checkUses then
+      modelsToLoad := Interactive.getUsesAnnotationOrDefault(pnew, requireExactVersion);
+      (p, b) := loadModel(modelsToLoad, modelicaPath, p, false, notifyLoad, checkUses, requireExactVersion);
+    end if;
+    outTpl := (p, success and b);
+  else
+    (p, _) := inTpl;
+    pathStr := Absyn.pathString(path);
+    versions := stringDelimitList(versionsLst, ",");
+    msgTokens := {pathStr, versions, modelicaPath};
+    if forceLoad then
+      Error.addMessage(Error.LOAD_MODEL, msgTokens);
+      outTpl := (p, false);
+    else
+      Error.addMessage(Error.NOTIFY_LOAD_MODEL_FAILED, msgTokens);
+      outTpl := inTpl;
+    end if;
+  end try;
+end loadModel1;
 
 protected function checkModelLoaded
   input tuple<Absyn.Path,list<String>> tpl;
@@ -534,7 +570,7 @@ algorithm
       Real timeTotal,timeSimulation,timeStamp,val,x1,x2,y1,y2,r,r1,r2,linearizeTime,curveWidth,offset,offset1,offset2,scaleFactor,scaleFactor1,scaleFactor2;
       GlobalScript.Statements istmts;
       list<GlobalScript.Statements> istmtss;
-      Boolean have_corba, bval, anyCode, b, b1, b2, externalWindow, logX, logY, autoScale, forceOMPlot, gcc_res, omcfound, rm_res, touch_res, uname_res,  ifcpp, ifmsvc,sort, builtin, showProtected, inputConnectors, outputConnectors;
+      Boolean have_corba, bval, anyCode, b, b1, b2, externalWindow, logX, logY, autoScale, forceOMPlot, gcc_res, omcfound, rm_res, touch_res, uname_res,  ifcpp, ifmsvc,sort, builtin, showProtected, includeConstants, inputConnectors, outputConnectors, mergeAST;
       FCore.Cache cache;
       list<GlobalScript.LoadedFile> lf;
       Absyn.ComponentRef  crefCName;
@@ -907,6 +943,12 @@ algorithm
     case (cache,_,"setCommandLineOptions",_,st,_)
       then (cache,Values.BOOL(false),st);
 
+    case (cache, _, "getCommandLineOptions", {}, st, _)
+      then (cache, ValuesUtil.makeStringArray(Flags.unparseFlags()), st);
+
+    case (cache, _, "getCommandLineOptions", _, st, _)
+      then (cache, Values.META_FAIL(), st);
+
     case (cache,_,"clearCommandLineOptions",{},st,_)
       equation
         Flags.resetDebugFlags();
@@ -1269,7 +1311,7 @@ algorithm
         name = getTypeNameIdent(v);
         setGlobalRoot(Global.instOnlyForcedFunctions,SOME(true));
         cl = List.getMemberOnTrue(name, sp, SCode.isClassNamed);
-        (cache,env) = generateFunctions(cache,env,p,{cl},b);
+        (cache,env) = generateFunctions(cache,env,p,sp,{cl},b);
         setGlobalRoot(Global.instOnlyForcedFunctions,NONE());
       then (cache,Values.BOOL(true),st);
 
@@ -1293,6 +1335,7 @@ algorithm
             GlobalScript.SYMBOLTABLE(p,sp,ic,iv,(path,t)::cf),
             but where to get t? */
       equation
+        execStatReset();
         mp = Settings.getModelicaPath(Config.getRunningTestsuite());
         strings = List.map(cvars, ValuesUtil.extractValueString);
         /* If the user requests a custom version to parse as, set it up */
@@ -1307,6 +1350,7 @@ algorithm
         end if;
         Print.clearBuf();
         newst = GlobalScript.SYMBOLTABLE(p,NONE(),{},iv,cf,lf);
+        execStat("loadModel("+Absyn.pathString(path)+")");
       then
         (FCore.emptyCache(),Values.BOOL(b),newst);
 
@@ -1317,21 +1361,23 @@ algorithm
       then
         (cache,Values.BOOL(false),st);
 
-    case (_,_,"loadFile",{Values.STRING(name),Values.STRING(encoding),Values.BOOL(b)},
+    case (_,_,"loadFile",Values.STRING(name)::Values.STRING(encoding)::Values.BOOL(b)::_,
           (GlobalScript.SYMBOLTABLE(
             ast = p,instClsLst = ic,
             lstVarVal = iv,compiledFunctions = cf,
             loadedFiles = lf)),_)
       equation
+        execStatReset();
         name = Util.testsuiteFriendlyPath(name);
         newp = loadFile(name, encoding, p, b);
+        execStat("loadFile("+name+")");
       then
         (FCore.emptyCache(),Values.BOOL(true),GlobalScript.SYMBOLTABLE(newp,NONE(),ic,iv,cf,lf));
 
     case (cache,_,"loadFile",_,st,_)
       then (cache,Values.BOOL(false),st);
 
-    case (_,_,"loadFiles",{Values.ARRAY(valueLst=vals),Values.STRING(encoding),Values.INTEGER(i)},
+    case (_,_,"loadFiles",Values.ARRAY(valueLst=vals)::Values.STRING(encoding)::Values.INTEGER(i)::_,
           (GlobalScript.SYMBOLTABLE(
             ast = p,instClsLst = ic,
             lstVarVal = iv,compiledFunctions = cf,
@@ -1339,7 +1385,7 @@ algorithm
       equation
         strs = List.mapMap(vals,ValuesUtil.extractValueString,Util.testsuiteFriendlyPath);
         newps = Parser.parallelParseFilesToProgramList(strs,encoding,numThreads=i);
-        newp = List.fold(newps, Interactive.updateProgram, p);
+        newp = List.fold(newps, function Interactive.updateProgram(mergeAST = false), p);
       then
         (FCore.emptyCache(),Values.BOOL(true),GlobalScript.SYMBOLTABLE(newp,NONE(),ic,iv,cf,lf));
 
@@ -1353,9 +1399,9 @@ algorithm
         i = System.alarm(i);
       then (cache,Values.INTEGER(i),st);
 
-    case (cache,_,"getClassNames",{Values.CODE(Absyn.C_TYPENAME(Absyn.IDENT("AllLoadedClasses"))),Values.BOOL(false),_,Values.BOOL(sort),Values.BOOL(builtin),Values.BOOL(_)},st as GlobalScript.SYMBOLTABLE(ast = p),_)
+    case (cache,_,"getClassNames",{Values.CODE(Absyn.C_TYPENAME(Absyn.IDENT("AllLoadedClasses"))),Values.BOOL(false),_,Values.BOOL(sort),Values.BOOL(builtin),Values.BOOL(_),_},st as GlobalScript.SYMBOLTABLE(ast = p),_)
       equation
-        (ip,_) = Builtin.getInitialFunctions();
+        (ip,_) = FBuiltin.getInitialFunctions();
         p = if builtin then Interactive.updateProgram(p,ip) else p;
         paths = Interactive.getTopClassnames(p);
         paths = if sort then List.sort(paths, Absyn.pathGe) else paths;
@@ -1363,33 +1409,33 @@ algorithm
       then
         (cache,ValuesUtil.makeArray(vals),st);
 
-    case (cache,_,"getClassNames",{Values.CODE(Absyn.C_TYPENAME(path)),Values.BOOL(false),Values.BOOL(b),Values.BOOL(sort),Values.BOOL(builtin),Values.BOOL(showProtected)},st as GlobalScript.SYMBOLTABLE(ast = p),_)
+    case (cache,_,"getClassNames",{Values.CODE(Absyn.C_TYPENAME(path)),Values.BOOL(false),Values.BOOL(b),Values.BOOL(sort),Values.BOOL(builtin),Values.BOOL(showProtected),Values.BOOL(includeConstants)},st as GlobalScript.SYMBOLTABLE(ast = p),_)
       equation
-        (ip,_) = Builtin.getInitialFunctions();
+        (ip,_) = FBuiltin.getInitialFunctions();
         p = if builtin then Interactive.updateProgram(p,ip) else p;
-        paths = Interactive.getClassnamesInPath(path, p, showProtected);
+        paths = Interactive.getClassnamesInPath(path, p, showProtected, includeConstants);
         paths = if b then List.map1r(paths,Absyn.joinPaths,path) else paths;
         paths = if sort then List.sort(paths, Absyn.pathGe) else paths;
         vals = List.map(paths,ValuesUtil.makeCodeTypeName);
       then
         (cache,ValuesUtil.makeArray(vals),st);
 
-    case (cache,_,"getClassNames",{Values.CODE(Absyn.C_TYPENAME(Absyn.IDENT("AllLoadedClasses"))),Values.BOOL(true),_,Values.BOOL(sort),Values.BOOL(builtin),Values.BOOL(showProtected)},st as GlobalScript.SYMBOLTABLE(ast = p),_)
+    case (cache,_,"getClassNames",{Values.CODE(Absyn.C_TYPENAME(Absyn.IDENT("AllLoadedClasses"))),Values.BOOL(true),_,Values.BOOL(sort),Values.BOOL(builtin),Values.BOOL(showProtected),Values.BOOL(includeConstants)},st as GlobalScript.SYMBOLTABLE(ast = p),_)
       equation
-        (ip,_) = Builtin.getInitialFunctions();
+        (ip,_) = FBuiltin.getInitialFunctions();
         p = if builtin then Interactive.updateProgram(p,ip) else p;
-        (_,paths) = Interactive.getClassNamesRecursive(NONE(),p,showProtected,{});
+        (_,paths) = Interactive.getClassNamesRecursive(NONE(),p,showProtected,includeConstants,{});
         paths = listReverse(paths);
         paths = if sort then List.sort(paths, Absyn.pathGe) else paths;
         vals = List.map(paths,ValuesUtil.makeCodeTypeName);
       then
         (cache,ValuesUtil.makeArray(vals),st);
 
-    case (cache,_,"getClassNames",{Values.CODE(Absyn.C_TYPENAME(path)),Values.BOOL(true),_,Values.BOOL(sort),Values.BOOL(builtin),Values.BOOL(showProtected)},st as GlobalScript.SYMBOLTABLE(ast = p),_)
+    case (cache,_,"getClassNames",{Values.CODE(Absyn.C_TYPENAME(path)),Values.BOOL(true),_,Values.BOOL(sort),Values.BOOL(builtin),Values.BOOL(showProtected),Values.BOOL(includeConstants)},st as GlobalScript.SYMBOLTABLE(ast = p),_)
       equation
-        (ip,_) = Builtin.getInitialFunctions();
+        (ip,_) = FBuiltin.getInitialFunctions();
         p = if builtin then Interactive.updateProgram(p,ip) else p;
-        (_,paths) = Interactive.getClassNamesRecursive(SOME(path),p,showProtected,{});
+        (_,paths) = Interactive.getClassNamesRecursive(SOME(path),p,showProtected,includeConstants,{});
         paths = listReverse(paths);
         paths = if sort then List.sort(paths, Absyn.pathGe) else paths;
         vals = List.map(paths,ValuesUtil.makeCodeTypeName);
@@ -1414,7 +1460,7 @@ algorithm
     case (cache,_,"reloadClass",_,st,_)
       then (cache,Values.BOOL(false),st);
 
-    case (_,_,"loadString",{Values.STRING(str),Values.STRING(name),Values.STRING(encoding)},
+    case (_,_,"loadString",Values.STRING(str)::Values.STRING(name)::Values.STRING(encoding)::Values.BOOL(mergeAST)::_,
           (GlobalScript.SYMBOLTABLE(
             ast = p,instClsLst = ic,
             lstVarVal = iv,compiledFunctions = cf,
@@ -1422,7 +1468,7 @@ algorithm
       equation
         str = if not (encoding == "UTF-8") then System.iconv(str, encoding, "UTF-8") else str;
         newp = Parser.parsestring(str,name);
-        newp = Interactive.updateProgram(newp, p);
+        newp = Interactive.updateProgram(newp, p, mergeAST);
       then
         (FCore.emptyCache(),Values.BOOL(true),GlobalScript.SYMBOLTABLE(newp,NONE(),ic,iv,cf,lf));
 
@@ -1651,20 +1697,21 @@ algorithm
   end match;
 end getVariableNames;
 
-protected function getPackageVersion
+public function getPackageVersion
   input Absyn.Path path;
   input Absyn.Program p;
-  output String version;
+  output String version = "";
+protected
+  Boolean evalParamAnn;
 algorithm
-  version := matchcontinue (path,p)
-    case (_,_)
-      equation
-        Config.setEvaluateParametersInAnnotations(true);
-        Absyn.STRING(version) = Interactive.getNamedAnnotation(path, p, Absyn.IDENT("version"), SOME(Absyn.STRING("")), Interactive.getAnnotationExp);
-        Config.setEvaluateParametersInAnnotations(false);
-      then version;
-    else "";
-  end matchcontinue;
+  evalParamAnn := Config.getEvaluateParametersInAnnotations();
+  Config.setEvaluateParametersInAnnotations(true);
+  try
+    Absyn.STRING(version) := Interactive.getNamedAnnotation(path, p, Absyn.IDENT("version"), SOME(Absyn.STRING("")), Interactive.getAnnotationExp);
+  else
+    version := "";
+  end try;
+  Config.setEvaluateParametersInAnnotations(evalParamAnn);
 end getPackageVersion;
 
 protected function errorToValue
@@ -1896,25 +1943,30 @@ end cevalGenerateFunction;
 
 protected function matchQualifiedCalls
 "Collects the packages used by the functions"
-  input DAE.Exp e;
-  input list<String> acc;
-  output DAE.Exp outExp;
+  input DAE.Exp inExp;
+  input list<String> inAcc;
+  output DAE.Exp outExp = inExp;
   output list<String> outAcc;
 algorithm
-  (outExp,outAcc) := match (e,acc)
+  outAcc := match inExp
     local
       String name;
-      DAE.ComponentRef cr;
-    case (DAE.CALL(path = Absyn.FULLYQUALIFIED(Absyn.QUALIFIED(name=name)), attr = DAE.CALL_ATTR(builtin = false)),_)
-      equation
-        outAcc = List.consOnTrue(not listMember(name,acc),name,acc);
-      then (e,outAcc);
-    case (DAE.CREF(componentRef=cr,ty=DAE.T_FUNCTION_REFERENCE_FUNC(builtin=false)),_)
-      equation
-        Absyn.QUALIFIED(name,Absyn.IDENT(_)) = ComponentReference.crefToPath(cr);
-        outAcc = List.consOnTrue(not listMember(name,acc),name,acc);
-      then (e,outAcc);
-    else (e,acc);
+
+    case DAE.REDUCTION(reductionInfo = DAE.REDUCTIONINFO(path = Absyn.FULLYQUALIFIED(Absyn.QUALIFIED(name = name))))
+      then List.consOnTrue(not listMember(name, inAcc), name, inAcc);
+
+    case DAE.CALL(path = Absyn.FULLYQUALIFIED(Absyn.QUALIFIED(name = name)),
+                  attr = DAE.CALL_ATTR(builtin = false))
+      then List.consOnTrue(not listMember(name, inAcc), name, inAcc);
+
+    case DAE.CREF(componentRef = DAE.CREF_QUAL(ident = name),
+                  ty = DAE.T_FUNCTION_REFERENCE_FUNC(builtin = false))
+      then List.consOnTrue(not listMember(name, inAcc), name, inAcc);
+
+    case DAE.PARTEVALFUNCTION(path = Absyn.FULLYQUALIFIED(Absyn.QUALIFIED(name = name)))
+      then List.consOnTrue(not listMember(name, inAcc), name, inAcc);
+
+    else inAcc;
   end match;
 end matchQualifiedCalls;
 
@@ -1940,10 +1992,11 @@ algorithm
   end match;
 end instantiateDaeFunctions;
 
-protected function generateFunctions
+function generateFunctions
   input FCore.Cache icache;
   input FCore.Graph ienv;
   input Absyn.Program p;
+  input SCode.Program fullScodeProgram;
   input list<SCode.Element> isp;
   input Boolean cleanCache;
   output FCore.Cache cache;
@@ -1963,14 +2016,23 @@ algorithm
       Integer n;
       SourceInfo info;
       SCode.Element cl;
+      SCode.Restriction restr;
 
     case (cache,env,_,{},_) then (cache,env);
-    case (cache,env,_,(cl as SCode.CLASS(name=name,encapsulatedPrefix=SCode.ENCAPSULATED(),restriction=SCode.R_PACKAGE(),classDef=SCode.PARTS(elementLst=elementLst),info=info))::sp,_)
-      equation
-        (cache,env) = generateFunctions2(cache,env,p,cl,name,elementLst,info,cleanCache);
-        (cache,env) = generateFunctions(cache,env,p,sp,cleanCache);
+    case (cache,env,_,(cl as SCode.CLASS(name=name,encapsulatedPrefix=SCode.ENCAPSULATED(),restriction=restr,info=info))::sp,_)
+      algorithm
+        _ := match restr
+          case SCode.R_PACKAGE() then ();
+          case SCode.R_UNIONTYPE() then ();
+          else
+            algorithm
+              Error.addSourceMessage(Error.INTERNAL_ERROR, {"Only package and uniontype is supported as top-level classes in OpenModelica."}, info);
+            then fail();
+        end match;
+        (cache,env) := generateFunctions2(cache,env,p,fullScodeProgram,cl,name,info,cleanCache);
+        (cache,env) := generateFunctions(cache,env,p,fullScodeProgram,sp,cleanCache);
       then (cache,env);
-    case (cache,env,_,SCode.CLASS(encapsulatedPrefix=SCode.NOT_ENCAPSULATED(),name=name,info=info as SOURCEINFO(fileName=file))::_,_)
+    case (_,_,_,SCode.CLASS(encapsulatedPrefix=SCode.NOT_ENCAPSULATED(),name=name,info=info as SOURCEINFO(fileName=file))::_,_)
       equation
         (n,_) = System.regex(file, "ModelicaBuiltin.mo$", 1, false, false);
         Error.assertion(n > 0, "Not an encapsulated class (required for separate compilation): " + name, info);
@@ -1978,54 +2040,76 @@ algorithm
   end match;
 end generateFunctions;
 
-protected function generateFunctions2
+function generateFunctions2
   input FCore.Cache icache;
   input FCore.Graph ienv;
   input Absyn.Program p;
+  input SCode.Program sp;
   input SCode.Element cl;
   input String name;
-  input list<SCode.Element> elementLst;
   input SourceInfo info;
   input Boolean cleanCache;
   output FCore.Cache cache;
   output FCore.Graph env;
 algorithm
-  (cache,env) := matchcontinue (icache,ienv,p,cl,name,elementLst,info,cleanCache)
+  (cache,env) := matchcontinue (icache,ienv,p,cl,name,info,cleanCache)
     local
       list<String> names,dependencies,strs;
-      list<Absyn.Path> paths;
+      list<Absyn.Path> paths, pathsMetarecord;
       DAE.FunctionTree funcs;
       list<DAE.Function> d;
       list<tuple<String,list<String>>> acc;
-      list<SCode.Element> sp;
       String file,nameHeader,str;
       Integer n;
+      FCore.Graph env2;
+      FCore.Ref ref;
+      FCore.Cache lookupCache;
+      FCore.Children children;
+      Absyn.Path path;
+      list<SCode.Element> elements;
+      list<DAE.Type> metarecords;
+      DAE.Type t;
 
-    case (cache,env,_,_,_,_,SOURCEINFO(fileName=file),_)
+    case (cache,env,_,_,_,SOURCEINFO(fileName=file),_)
       equation
         (1,_) = System.regex(file, "ModelicaBuiltin.mo$", 1, false, false);
       then (cache,env);
 
-    case (cache,env,_,_,_,_,_,_)
-      equation
-        cache = if cleanCache then FCore.emptyCache() else cache;
-        paths = List.fold1(elementLst, findFunctionsToCompile, Absyn.FULLYQUALIFIED(Absyn.IDENT(name)), {});
-        cache = instantiateDaeFunctions(cache, env, paths);
-        funcs = FCore.getFunctionTree(cache);
-        d = List.map2(paths, DAEUtil.getNamedFunctionWithError, funcs, info);
-        (_,(_,dependencies)) = DAEUtil.traverseDAEFunctions(d,Expression.traverseSubexpressionsHelper,(matchQualifiedCalls,{}),{});
+    case (cache,env,_,_,_,_,_)
+      algorithm
+        cache := if cleanCache then FCore.emptyCache() else cache;
+
+        if SCode.isPartial(cl) then
+          paths := {};
+          pathsMetarecord := {};
+        else
+          path := Absyn.FULLYQUALIFIED(Absyn.IDENT(name));
+          elements := getNonPartialElementsForInstantiatedClass(sp, cl, path);
+          (paths, pathsMetarecord) := List.fold22(elements, findFunctionsToCompile, path, sp, {}, {});
+        end if;
+
+        metarecords := {};
+        for mr in pathsMetarecord loop
+          (cache,t) := Lookup.lookupType(cache, env, mr, SOME(info));
+          metarecords := t::metarecords;
+        end for;
+
+        cache := instantiateDaeFunctions(cache, env, paths);
+        funcs := FCore.getFunctionTree(cache);
+        d := List.map2(paths, DAEUtil.getNamedFunctionWithError, funcs, info);
+        (_,(_,dependencies)) := DAEUtil.traverseDAEFunctions(d,Expression.traverseSubexpressionsHelper,(matchQualifiedCalls,{}));
         // print(name + " has dependencies: " + stringDelimitList(dependencies,",") + "\n");
-        dependencies = List.sort(dependencies,Util.strcmpBool);
-        dependencies = List.map1(dependencies,stringAppend,".h");
-        nameHeader = name + ".h";
-        strs = List.map1r(nameHeader::dependencies, stringAppend, "$(GEN_DIR)");
+        dependencies := List.sort(dependencies,Util.strcmpBool);
+        dependencies := List.map1(dependencies,stringAppend,".h");
+        nameHeader := name + ".h";
+        strs := List.map1r(nameHeader::dependencies, stringAppend, "$(GEN_DIR)");
         System.writeFile(name + ".deps", "$(GEN_DIR)" + name + ".o: $(GEN_DIR)" + name + ".c" + " " + stringDelimitList(strs," "));
-        dependencies = List.map1(dependencies,stringAppend,"\"");
-        dependencies = List.map1r(dependencies,stringAppend,"#include \"");
+        dependencies := List.map1(dependencies,stringAppend,"\"");
+        dependencies := List.map1r(dependencies,stringAppend,"#include \"");
         SimCodeFunction.translateFunctions(p, name, NONE(), d, {}, dependencies);
-        str = Tpl.tplString(Unparsing.programExternalHeader, {cl});
+        str := Tpl.tplString(Unparsing.programExternalHeaderFromTypes, metarecords);
         System.writeFile(name + "_records.c","#include <meta/meta_modelica.h>\n" + str);
-        cache = if cleanCache then icache else cache;
+        cache := if cleanCache then icache else cache;
       then (cache,env);
     else
       equation
@@ -2034,34 +2118,81 @@ algorithm
   end matchcontinue;
 end generateFunctions2;
 
-protected function findFunctionsToCompile
+function findFunctionsToCompile
   input SCode.Element elt;
   input Absyn.Path pathPrefix;
+  input SCode.Program sp;
   input list<Absyn.Path> acc;
+  input list<Absyn.Path> accMetarecord;
   output list<Absyn.Path> paths;
+  output list<Absyn.Path> pathsMetarecord;
+protected
+  String name;
+  Absyn.Path path;
+  list<SCode.Element> elements;
 algorithm
-  paths := match (elt,pathPrefix,acc)
-    local
-      Absyn.Path p;
-      String name;
-      list<SCode.Element> elts;
-    case (SCode.CLASS(name=name, partialPrefix=SCode.NOT_PARTIAL(), restriction=SCode.R_FUNCTION(_), classDef=SCode.PARTS(elementLst=elts)),_,_)
-      equation
-         p = Absyn.joinPaths(pathPrefix,Absyn.IDENT(name));
-         paths = List.fold1(elts,findFunctionsToCompile,Absyn.joinPaths(pathPrefix,Absyn.IDENT(name)),acc);
-      then p::paths;
-    case (SCode.CLASS(name=name, partialPrefix=SCode.NOT_PARTIAL(), classDef=SCode.PARTS(elementLst=elts)),_,_)
-      equation
-         paths = List.fold1(elts,findFunctionsToCompile,Absyn.joinPaths(pathPrefix,Absyn.IDENT(name)),acc);
-      then paths;
-      // Derived classes, class extends
-    case (SCode.CLASS(name=name, partialPrefix=SCode.NOT_PARTIAL(), restriction=SCode.R_FUNCTION(_)),_,_)
-      equation
-         p = Absyn.joinPaths(pathPrefix,Absyn.IDENT(name));
-      then p::acc;
-    else acc;
+  SCode.CLASS(name=name) := elt;
+  path := Absyn.joinPaths(pathPrefix, Absyn.IDENT(name));
+  paths := if SCode.isFunction(elt) then path::acc else acc;
+  pathsMetarecord := match elt
+    case SCode.CLASS(restriction=SCode.R_METARECORD()) then path::accMetarecord;
+    else accMetarecord;
   end match;
+  elements := getNonPartialElementsForInstantiatedClass(sp, elt, path);
+  (paths,pathsMetarecord) := List.fold22(elements, findFunctionsToCompile, path, sp, paths, pathsMetarecord);
 end findFunctionsToCompile;
+
+function getNonPartialElementsForInstantiatedClass "Gets the non-partial elements returned by instantiating the given path"
+  input SCode.Program sp;
+  input SCode.Element cl;
+  input Absyn.Path p;
+  output list<SCode.Element> elts;
+protected
+  FCore.Graph env;
+  SCode.Element elt;
+  Boolean skip;
+  list<SCode.Element> eltsTmp;
+algorithm
+  skip := match cl
+    case SCode.CLASS(classDef=SCode.CLASS_EXTENDS()) then false;
+    case SCode.CLASS(classDef=SCode.PARTS(elementLst=eltsTmp)) then not List.exist(eltsTmp, SCode.isElementExtendsOrClassExtends);
+    else true;
+  end match;
+  if not skip then
+  try
+    ErrorExt.setCheckpoint("getNonPartialElementsForInstantiatedClass");
+    (, env) := Inst.instantiateClass(FCore.emptyCache(), InnerOuter.emptyInstHierarchy, sp, Absyn.makeNotFullyQualified(p), doSCodeDep=false);
+    elts := FCore.RefTree.fold(FNode.children(FNode.fromRef(FGraph.lastScopeRef(env))),
+      addNonPartialClassRef, {});
+    ErrorExt.rollBack("getNonPartialElementsForInstantiatedClass");
+    return;
+  else
+  end try;
+  ErrorExt.rollBack("getNonPartialElementsForInstantiatedClass");
+  end if;
+  // Failed to instantiate the class; perhaps due to being a function
+  // that cannot be instantiated using model restrictions.
+  elts := match cl
+    case SCode.CLASS(classDef=SCode.PARTS(elementLst=elts)) then list(e for e guard (not SCode.isPartial(e)) and SCode.isClass(e) in elts);
+    else {};
+  end match;
+end getNonPartialElementsForInstantiatedClass;
+
+protected function addNonPartialClassRef
+  input FCore.Name name;
+  input FCore.Ref ref;
+  input list<SCode.Element> accum;
+  output list<SCode.Element> classes;
+protected
+  SCode.Element e;
+algorithm
+  classes := match FNode.fromRef(ref)
+    case FCore.N(data = FCore.CL(e = e as SCode.CLASS(partialPrefix = SCode.NOT_PARTIAL())))
+      then e :: accum;
+
+    else accum;
+  end match;
+end addNonPartialClassRef;
 
 public function cevalCallFunction "This function evaluates CALL expressions, i.e. function calls.
   They are currently evaluated by generating code for the function and
@@ -2191,6 +2322,47 @@ function cevalCallFunctionEvaluateOrGenerate
   output FCore.Cache outCache;
   output Values.Value outValue;
   output Option<GlobalScript.SymbolTable> outSymTab;
+protected
+  Integer numCheckpoints;
+algorithm
+  // Only add a stack overflow checkpoint for the top-most cevalCallFunctionEvaluateOrGenerate
+  if isNone(getGlobalRoot(Global.stackoverFlowIndex)) then
+    setGlobalRoot(Global.stackoverFlowIndex, SOME(1));
+    numCheckpoints:=ErrorExt.getNumCheckpoints();
+    try
+      StackOverflow.clearStacktraceMessages();
+      (outCache,outValue,outSymTab) := cevalCallFunctionEvaluateOrGenerate2(inCache,inEnv,inExp,inValuesValueLst,impl,inSymTab,inMsg,bIsCompleteFunction);
+    else
+      setGlobalRoot(Global.stackoverFlowIndex, NONE());
+      ErrorExt.rollbackNumCheckpoints(ErrorExt.getNumCheckpoints()-numCheckpoints);
+      Error.addInternalError("Stack overflow when evaluating function call: "+ExpressionDump.printExpStr(inExp)+"...\n"+stringDelimitList(StackOverflow.readableStacktraceMessages(), "\n"), match inMsg local SourceInfo info; case Absyn.MSG(info) then info; else sourceInfo(); end match);
+      /* Do not fail or we can loop too much */
+      StackOverflow.clearStacktraceMessages();
+      outCache := inCache;
+      outSymTab := inSymTab;
+      outValue := Values.META_FAIL();
+    end try annotation(__OpenModelica_stackOverflowCheckpoint=true);
+    setGlobalRoot(Global.stackoverFlowIndex, NONE());
+  else
+    (outCache,outValue,outSymTab) := cevalCallFunctionEvaluateOrGenerate2(inCache,inEnv,inExp,inValuesValueLst,impl,inSymTab,inMsg,bIsCompleteFunction);
+  end if;
+end cevalCallFunctionEvaluateOrGenerate;
+
+function cevalCallFunctionEvaluateOrGenerate2
+"This function evaluates CALL expressions, i.e. function calls.
+  They are currently evaluated by generating code for the function and
+  then dynamicly load the function and call it."
+  input FCore.Cache inCache;
+  input FCore.Graph inEnv;
+  input DAE.Exp inExp;
+  input list<Values.Value> inValuesValueLst;
+  input Boolean impl;
+  input Option<GlobalScript.SymbolTable> inSymTab;
+  input Absyn.Msg inMsg;
+  input Boolean bIsCompleteFunction;
+  output FCore.Cache outCache;
+  output Values.Value outValue;
+  output Option<GlobalScript.SymbolTable> outSymTab;
 algorithm
   (outCache,outValue,outSymTab) := matchcontinue (inCache,inEnv,inExp,inValuesValueLst,impl,inSymTab,inMsg,bIsCompleteFunction)
     local
@@ -2239,7 +2411,7 @@ algorithm
         // bcall1(Flags.isSet(Flags.DYN_LOAD), print,"[dynload]: try constant evaluation: " + Absyn.pathString(funcpath) + "\n");
         (cache,
          sc as SCode.CLASS(partialPrefix = SCode.NOT_PARTIAL()),
-         env) = Lookup.lookupClass(cache, env, funcpath, false);
+         env) = Lookup.lookupClass(cache, env, funcpath);
         isCevaluableFunction(sc);
         (cache, env, _) = InstFunction.implicitFunctionInstantiation(
           cache,
@@ -2262,8 +2434,8 @@ algorithm
         true = bIsCompleteFunction;
         true = Flags.isSet(Flags.GEN);
         failure(cevalIsExternalObjectConstructor(cache,funcpath,env,msg));
-        if Flags.isSet(Flags.DYN_LOAD) then
-          Debug.traceln("[dynload]: [func from file] check if is in CF list: " + Absyn.pathString(funcpath));
+        if Flags.isSet(Flags.DYN_LOAD) and Flags.isSet(Flags.FAILTRACE) then
+          print("[dynload]: [func from file] check if is in CF list: " + Absyn.pathString(funcpath));
         end if;
 
         (true, funcHandle, buildTime, fOld) = Static.isFunctionInCflist(cflist, funcpath);
@@ -2272,13 +2444,15 @@ algorithm
         false = stringEq(fNew,""); // see if the WE have a file or not!
         false = Static.needToRebuild(fNew,fOld,buildTime); // we don't need to rebuild!
 
-        if Flags.isSet(Flags.DYN_LOAD) then
+        if Flags.isSet(Flags.DYN_LOAD) and Flags.isSet(Flags.FAILTRACE) then
           print("[dynload]: [func from file] About to execute function present in CF list: " + Absyn.pathString(funcpath) + "\n");
         end if;
 
         print_debug = Flags.isSet(Flags.DYN_LOAD);
         newval = DynLoad.executeFunction(funcHandle, vallst, print_debug);
-        //print("CALL: [func from file] CF LIST:\n\t" + stringDelimitList(List.map(cflist, Interactive.dumpCompiledFunction), "\n\t") + "\n");
+        if Flags.isSet(Flags.DYN_LOAD) and Flags.isSet(Flags.FAILTRACE) then
+          print("CALL: [func from file] CF LIST:\n\t" + stringDelimitList(List.map(cflist, Interactive.dumpCompiledFunction), "\n\t") + "\n");
+        end if;
       then
         (cache,newval,st);
 
@@ -2311,11 +2485,9 @@ algorithm
         (cache,newval,st);
 
     // not in CF list, we have a symbol table, generate function and update symtab
-    case (cache,env,(DAE.CALL(path = funcpath,attr = DAE.CALL_ATTR(builtin = false))),vallst,_,
-          SOME(syt as GlobalScript.SYMBOLTABLE(p as Absyn.PROGRAM(),a,b,c,cf,lf)), msg, _) // yeha! we have a symboltable!
-      equation
-        true = bIsCompleteFunction;
-        true = Flags.isSet(Flags.GEN);
+    case (cache,env,(DAE.CALL(path = funcpath,attr = DAE.CALL_ATTR(ty=ty, builtin = false))),vallst,_,
+          SOME(syt as GlobalScript.SYMBOLTABLE(p as Absyn.PROGRAM(),a,b,c,cf,lf)), msg, _) guard (bIsCompleteFunction and Flags.isSet(Flags.GEN)) // yeha! we have a symboltable!
+      algorithm
         failure(cevalIsExternalObjectConstructor(cache,funcpath,env,msg));
 
         if Flags.isSet(Flags.DYN_LOAD) then
@@ -2324,42 +2496,43 @@ algorithm
 
         // remove it and all its dependencies as it might be there with an older build time.
         // get dependencies!
-        (_, functionDependencies, _) = getFunctionDependencies(cache, funcpath);
+        (_, functionDependencies, _) := getFunctionDependencies(cache, funcpath);
         //print("\nFunctions before:\n\t" + stringDelimitList(List.map(cf, Interactive.dumpCompiledFunction), "\n\t") + "\n");
-        newCF = Interactive.removeCfAndDependencies(cf, funcpath::functionDependencies);
+        newCF := Interactive.removeCfAndDependencies(cf, funcpath::functionDependencies);
         //print("\nFunctions after remove:\n\t" + stringDelimitList(List.map(newCF, Interactive.dumpCompiledFunction), "\n\t") + "\n");
 
         if Flags.isSet(Flags.DYN_LOAD) then
           print("[dynload]: [SOME SYMTAB] not in in CF list: removed deps:" +
-          stringDelimitList(List.map(functionDependencies, Absyn.pathString) ,", ") + "\n");
+          stringDelimitList(list(Absyn.pathString(fdep) for fdep in functionDependencies) ,", ") + "\n");
         end if;
         //print("\nfunctions in SYMTAB: " + Interactive.dumpCompiledFunctions(syt)
 
         // now is safe to generate code
-        (cache, funcstr, fileName) = cevalGenerateFunction(cache, env, p, funcpath);
-        print_debug = Flags.isSet(Flags.DYN_LOAD);
-        libHandle = System.loadLibrary(fileName, print_debug);
-        funcHandle = System.lookupFunction(libHandle, stringAppend("in_", funcstr));
-        newval = DynLoad.executeFunction(funcHandle, vallst, print_debug);
+        (cache, funcstr, fileName) := cevalGenerateFunction(cache, env, p, funcpath);
+        print_debug := Flags.isSet(Flags.DYN_LOAD);
+        libHandle := System.loadLibrary(fileName, print_debug);
+        funcHandle := System.lookupFunction(libHandle, stringAppend("in_", funcstr));
+        newval := DynLoad.executeFunction(funcHandle, vallst, print_debug);
+
         System.freeLibrary(libHandle, print_debug);
-        buildTime = System.getCurrentTime();
+        buildTime := System.getCurrentTime();
         // update the build time in the class!
-        Absyn.CLASS(_,_,_,_,Absyn.R_FUNCTION(_),_,info) = Interactive.getPathedClassInProgram(funcpath, p);
+        Absyn.CLASS(_,_,_,_,Absyn.R_FUNCTION(_),_,info) := Interactive.getPathedClassInProgram(funcpath, p);
 
         /* info = Absyn.setBuildTimeInInfo(buildTime,info);
         ts = Absyn.setTimeStampBuild(ts, buildTime); */
-        w = Interactive.buildWithin(funcpath);
+        w := Interactive.buildWithin(funcpath);
 
         if Flags.isSet(Flags.DYN_LOAD) then
           print("[dynload]: Updating build time for function path: " + Absyn.pathString(funcpath) + " within: " + Dump.unparseWithin(w) + "\n");
         end if;
 
         // p = Interactive.updateProgram(Absyn.PROGRAM({Absyn.CLASS(name,ppref,fpref,epref,Absyn.R_FUNCTION(funcRest),body,info)},w,ts), p);
-        f = Absyn.getFileNameFromInfo(info);
+        f := Absyn.getFileNameFromInfo(info);
 
-        syt = GlobalScript.SYMBOLTABLE(
+        syt := GlobalScript.SYMBOLTABLE(
                 p, a, b, c,
-                GlobalScript.CFunction(funcpath,DAE.T_UNKNOWN({funcpath}),funcHandle,buildTime,f)::newCF,
+                GlobalScript.CFunction(funcpath,ty,funcHandle,buildTime,f)::newCF,
                 lf);
 
         if Flags.isSet(Flags.DYN_LOAD) then
@@ -2371,12 +2544,9 @@ algorithm
         (cache,newval,SOME(syt));
 
     // no symtab, WE SHOULD NOT EVALUATE! but we do anyway with suppressed error messages!
-    case (cache,env,(DAE.CALL(path = funcpath,attr = DAE.CALL_ATTR(builtin = false))),vallst,_,NONE(), msg, _) // crap! we have no symboltable!
-      equation
-        true = bIsCompleteFunction;
-        true = Flags.isSet(Flags.GEN);
+    case (cache,env,(DAE.CALL(path = funcpath,attr = DAE.CALL_ATTR(builtin = false))),vallst,_,NONE(), msg, _) guard (bIsCompleteFunction and Flags.isSet(Flags.GEN)) // crap! we have no symboltable!
+      algorithm
         failure(cevalIsExternalObjectConstructor(cache,funcpath,env,msg));
-        ErrorExt.setCheckpoint("cevalCallFunctionEvaluateOrGenerate_NO_SYMTAB");
 
         if Flags.isSet(Flags.DYN_LOAD) then
           print("[dynload]: [NO SYMTAB] not in in CF list: " + Absyn.pathString(funcpath) + "\n");
@@ -2384,35 +2554,36 @@ algorithm
 
         // we might actually have a function loaded here already!
         // we need to unload all functions to not get conflicts!
-        p = FCore.getProgramFromCache(cache);
-        (cache,funcstr,fileName) = cevalGenerateFunction(cache, env, p, funcpath);
+        p := FCore.getProgramFromCache(cache);
+
+        ErrorExt.setCheckpoint("cevalCallFunctionEvaluateOrGenerate_NO_SYMTAB");
+
+        try
+          (cache,funcstr,fileName) := cevalGenerateFunction(cache, env, p, funcpath);
+          ErrorExt.rollBack("cevalCallFunctionEvaluateOrGenerate_NO_SYMTAB"); // Should be delete?
+        else
+          ErrorExt.rollBack("cevalCallFunctionEvaluateOrGenerate_NO_SYMTAB");
+          fail();
+        end try;
+
         // generate a uniquely named dll!
         if Flags.isSet(Flags.DYN_LOAD) then
           print("[dynload]: cevalCallFunction: about to execute " + funcstr + "\n");
         end if;
-        print_debug = Flags.isSet(Flags.DYN_LOAD);
-        libHandle = System.loadLibrary(fileName, print_debug);
-        funcHandle = System.lookupFunction(libHandle, stringAppend("in_", funcstr));
-        newval = DynLoad.executeFunction(funcHandle, vallst, print_debug);
+        print_debug := Flags.isSet(Flags.DYN_LOAD);
+        libHandle := System.loadLibrary(fileName, print_debug);
+        funcHandle := System.lookupFunction(libHandle, stringAppend("in_", funcstr));
+        newval := DynLoad.executeFunction(funcHandle, vallst, print_debug);
+
         System.freeFunction(funcHandle, print_debug);
         System.freeLibrary(libHandle, print_debug);
 
         if Flags.isSet(Flags.DYN_LOAD) then
-          Debug.traceln("CALL: [NO SYMTAB] not in in CF list [finished]: " + Absyn.pathString(funcpath));
+          print("CALL: [NO SYMTAB] not in in CF list [finished]: " + Absyn.pathString(funcpath));
         end if;
-        ErrorExt.rollBack("cevalCallFunctionEvaluateOrGenerate_NO_SYMTAB");
+
       then
         (cache,newval,NONE());
-
-    // cleanup the case below when we failed. we should delete generated files too
-    case (cache,env,(DAE.CALL(path = funcpath,attr = DAE.CALL_ATTR(builtin = false))),_,_,NONE(),msg, _) // crap! we have no symboltable!
-      equation
-        true = bIsCompleteFunction;
-        true = Flags.isSet(Flags.GEN);
-        failure(cevalIsExternalObjectConstructor(cache,funcpath,env,msg));
-        ErrorExt.rollBack("cevalCallFunctionEvaluateOrGenerate_NO_SYMTAB");
-      then
-        fail();
 
     case (_,_,(DAE.CALL(path = funcpath)),_,_,_, _, _)
       equation
@@ -2428,7 +2599,7 @@ algorithm
         fail();
 
   end matchcontinue;
-end cevalCallFunctionEvaluateOrGenerate;
+end cevalCallFunctionEvaluateOrGenerate2;
 
 function cevalIsExternalObjectConstructor
   input FCore.Cache cache;
@@ -2561,6 +2732,7 @@ algorithm
       String str,name;
       SCode.Annotation ann;
       SourceInfo info;
+    case (SCode.CLASS(restriction=SCode.R_METARECORD(moved=true)),_) then ();
     case (SCode.CLASS(cmt=SCode.COMMENT(annotation_=SOME(ann))),name::_)
       equation
         (Absyn.STRING(str),info) = SCode.getNamedAnnotation(ann,"__OpenModelica_Interface");
@@ -2568,6 +2740,7 @@ algorithm
       then ();
     else
       equation
+        print(SCodeDump.unparseElementStr(elt)+"\n");
         Error.addSourceMessage(Error.MISSING_INTERFACE_TYPE,{},SCode.elementInfo(elt));
       then fail();
   end matchcontinue;
@@ -2952,7 +3125,7 @@ algorithm
       Boolean isDir;
       list<String> mps,names;
       String gd,mp,bp,str,name,version,fileName;
-    case ("modelica://",name,_,mp,_)
+    case ("modelica://",name,_,_,_)
       equation
         (name::names) = System.strtok(name,".");
         Absyn.CLASS(info=SOURCEINFO(fileName=fileName)) = Interactive.getPathedClassInProgram(Absyn.IDENT(name),program);

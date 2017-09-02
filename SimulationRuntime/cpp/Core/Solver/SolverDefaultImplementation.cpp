@@ -9,6 +9,8 @@
 #include <Core/Solver/SolverSettings.h>
 #include <Core/SimulationSettings/IGlobalSettings.h>
 #include <Core/Math/Constants.h>
+#include <Core/System/FactoryExport.h>
+#include <Core/Utils/extension/logger.hpp>
 
 SolverDefaultImplementation::SolverDefaultImplementation(IMixedSystem* system, ISolverSettings* settings)
     : SimulationMonitor()
@@ -23,7 +25,7 @@ SolverDefaultImplementation::SolverDefaultImplementation(IMixedSystem* system, I
     , _tLargeStep           (0.0)
     , _h                    (0.0)
 
-    //, _firstCall            (true)
+    , _firstCall            (false)
     , _firstStep            (true)
 
     , _totStps              (0)
@@ -31,27 +33,33 @@ SolverDefaultImplementation::SolverDefaultImplementation(IMixedSystem* system, I
     , _rejStps              (0)
     , _zeroStps             (0)
     , _zeros                (0)
-
+    , _dimSys               (0)
     , _zeroStatus           (ISolver::UNCHANGED_SIGN)
     , _zeroValInit          (NULL)
     , _dimZeroFunc          (0)
     , _zeroVal              (NULL)
     , _zeroValLastSuccess   (NULL)
     , _events               (NULL)
-
+    , _solverStatus         (ISolver::UNDEF_STATUS)
     , _outputCommand        (IWriteOutput::WRITEOUT)
 {
-  _state_selection = boost::shared_ptr<SystemStateSelection>(new SystemStateSelection(system));
+  _state_selection = shared_ptr<SystemStateSelection>(new SystemStateSelection(system));
 
     #ifdef RUNTIME_PROFILING
     if(MeasureTime::getInstance() != NULL)
     {
-        measureTimeFunctionsArray = std::vector<MeasureTimeData>(1); //0 write output
-        MeasureTime::addResultContentBlock(system->getModelName(),"solver",&measureTimeFunctionsArray);
+        measureTimeFunctionsArray = new std::vector<MeasureTimeData*>(1, NULL); //0 write output
+        (*measureTimeFunctionsArray)[0] = new MeasureTimeData("writeOutput");
+
+        MeasureTime::addResultContentBlock(system->getModelName(),"solver",measureTimeFunctionsArray);
         writeFunctionStartValues = MeasureTime::getZeroValues();
         writeFunctionEndValues = MeasureTime::getZeroValues();
-
-        measureTimeFunctionsArray[0] = MeasureTimeData("writeOutput");
+    }
+    else
+    {
+      measureTimeFunctionsArray = new std::vector<MeasureTimeData*>();
+      writeFunctionStartValues = NULL;
+      writeFunctionEndValues = NULL;
     }
     #endif
 }
@@ -111,7 +119,7 @@ void SolverDefaultImplementation::initialize()
   timeevent_system->setTime(_tCurrent);
 
 
-  if(_settings->getGlobalSettings()->getOutputPointType() != OPT_EMPTY && _settings->getGlobalSettings()->getOutputFormat() != OF_EMPTY)
+  if(_settings->getGlobalSettings()->getOutputPointType() != OPT_NONE)
     writeoutput_system->writeOutput(IWriteOutput::HEAD_LINE);
 
   // Allocate array with values of zero functions
@@ -192,7 +200,9 @@ void SolverDefaultImplementation::writeToFile(const int& stp, const double& t, c
   }
   #endif
 
-  if(_settings->getGlobalSettings()->getOutputFormat()!= OF_EMPTY)
+  LOGGER_STATUS("Running", t, h);
+
+  if(_settings->getGlobalSettings()->getOutputPointType()!= OPT_NONE)
   {
     IWriteOutput* writeoutput_system = dynamic_cast<IWriteOutput*>(_system);
 
@@ -207,7 +217,7 @@ void SolverDefaultImplementation::writeToFile(const int& stp, const double& t, c
   #ifdef RUNTIME_PROFILING
   if(MeasureTime::getInstance() != NULL)
   {
-      MEASURETIME_END(writeFunctionStartValues, writeFunctionEndValues, measureTimeFunctionsArray[0], solverWriteOutputHandler);
+      MEASURETIME_END(writeFunctionStartValues, writeFunctionEndValues, (*measureTimeFunctionsArray)[0], solverWriteOutputHandler);
   }
   #endif
 }

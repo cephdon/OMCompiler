@@ -37,14 +37,12 @@ encapsulated package OpenTURNS "
   2. Generation and compilation of wrapper that calls the standard OpenModelica simulator and retrieves the final values
   (after simulation has stopped at endTime)
 
-  RCS: $Id: OpenTURNS.mo 10958 2012-01-25 01:12:35Z wbraun $
   "
 
 public
 import Absyn;
 import BackendDAE;
 import DAE;
-import FCore;
 
 protected
 import Array;
@@ -77,21 +75,19 @@ constant String cStrWrapperCompileCmd       = "wrapper_template.compile.cmd";
 constant String cStrInvokeOpenTurnsCmd      = "invoke.cmd";
 
 public function generateOpenTURNSInterface "generates the dll and the python script for connections with OpenTURNS"
-  input FCore.Cache cache;
-  input FCore.Graph graph;
   input BackendDAE.BackendDAE inDaelow;
-  input DAE.FunctionTree inFunctionTree;
   input Absyn.Path inPath;
   input Absyn.Program inProgram;
-  input DAE.DAElist inDAElist;
   input String templateFile "the filename to the template file (python script)";
   output String scriptFile "the name of the generated file";
-
-  protected
+protected
   String cname_str,fileNamePrefix,fileDir,cname_last_str;
   list<String> libs;
   BackendDAE.BackendDAE dae,strippedDae;
   SimCode.SimulationSettings simSettings;
+  BackendDAE.BackendDAE initDAE;
+  Option<BackendDAE.BackendDAE> initDAE_lambda0;
+  list<BackendDAE.Equation> removedInitialEquationLst;
 algorithm
   cname_str := Absyn.pathString(inPath);
   cname_last_str := Absyn.pathLastIdent(inPath);
@@ -112,12 +108,13 @@ algorithm
  // Strip correlation vector from dae to be able to compile (bug in OpenModelica with vectors of records )
   strippedDae := stripCorrelationFromDae(inDaelow);
 
-  strippedDae := BackendDAEUtil.getSolvedSystem(strippedDae,"");
+  (strippedDae, initDAE, initDAE_lambda0, _, removedInitialEquationLst) := BackendDAEUtil.getSolvedSystem(strippedDae,"");
 
   //print("strippedDae :");
   //BackendDump.dump(strippedDae);
   _ := System.realtimeTock(ClockIndexes.RT_CLOCK_BACKEND); // Is this necessary?
-  (_,libs,fileDir,_,_) := SimCodeMain.generateModelCode(strippedDae,inProgram,inDAElist,inPath,cname_str,SOME(simSettings),Absyn.FUNCTIONARGS({},{}));
+
+  (libs, fileDir, _, _) := SimCodeMain.generateModelCode(strippedDae, initDAE, initDAE_lambda0, NONE(), removedInitialEquationLst,inProgram, inPath, cname_str, SOME(simSettings), Absyn.FUNCTIONARGS({}, {}));
 
   //print("..compiling, fileNamePrefix = "+fileNamePrefix+"\n");
   CevalScript.compileModel(fileNamePrefix , libs);
@@ -509,7 +506,7 @@ protected
   BackendDAE.Variables vars;
 algorithm
   BackendDAE.EQSYSTEM(orderedVars = vars, orderedEqs=eqns) := eqs;
-  notZero := BackendVariable.varsSize(vars) > 0 and BackendDAEUtil.equationArraySize(eqns) > 0;
+  notZero := BackendVariable.varsSize(vars) > 0 and BackendEquation.getNumberOfEquations(eqns) > 0;
 end eqnSystemNotZero;
 
 protected function stripCorrelationVarsAndEqns " help function "

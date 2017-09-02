@@ -34,7 +34,6 @@ encapsulated package GlobalScriptUtil
   package:     GlobalScriptUtil
   description: Utility functions for the scripting types.
 
-  RCS: $Id: GlobalScript.mo 22496 2014-09-30 04:33:44Z adrpo $
 "
 
 public import Absyn;
@@ -291,7 +290,7 @@ algorithm
     case (st as GlobalScript.SYMBOLTABLE(lstVarVal = vars))
       equation
         (p_1,st) = symbolTableToSCode(st);
-        (_,env) = Inst.makeEnvFromProgram(FCore.emptyCache(), p_1, Absyn.IDENT(""));
+        (_,env) = Inst.makeEnvFromProgram(p_1);
         // Reverse the variable list to make sure iterators overwrite other
         // variables (iterators are appended to the front of the list).
         vars = listReverse(vars);
@@ -374,7 +373,7 @@ algorithm
                   SCode.COMPONENT(
                     id,
                     SCode.defaultPrefixes,
-                    SCode.ATTR({}, SCode.POTENTIAL(), SCode.NON_PARALLEL(), SCode.VAR(), Absyn.BIDIR()),
+                    SCode.ATTR({}, SCode.POTENTIAL(), SCode.NON_PARALLEL(), SCode.VAR(), Absyn.BIDIR(), Absyn.NONFIELD()),
                     Absyn.TPATH(Absyn.IDENT(""), NONE()), SCode.NOMOD(),
                     SCode.noComment, NONE(), Absyn.dummyInfo),
                   DAE.NOMOD(),

@@ -34,7 +34,6 @@ encapsulated package FBuiltin
   package:     FBuiltin
   description: Builting tyepes and variables
 
-  RCS: $Id: FBuiltin.mo 22324 2014-09-16 13:32:28Z adrpo $
 
   This module defines the builtin types, variables and functions in Modelica.
 
@@ -54,6 +53,7 @@ protected import Flags;
 protected import FGraphBuild;
 protected import Global;
 protected import List;
+protected import MetaUtil;
 protected import Parser;
 protected import SCodeUtil;
 protected import Settings;
@@ -70,51 +70,11 @@ protected import Util;
 
 // Predefined DAE.Types
 // Real arrays
-protected constant DAE.Type T_REAL_ARRAY_DEFAULT   = DAE.T_ARRAY(DAE.T_REAL_DEFAULT, {DAE.DIM_UNKNOWN()},   DAE.emptyTypeSource);
-protected constant DAE.Type T_REAL_ARRAY_1_DEFAULT = DAE.T_ARRAY(DAE.T_REAL_DEFAULT, {DAE.DIM_INTEGER(1)}, DAE.emptyTypeSource);
-protected constant DAE.Type T_REAL_ARRAY_2_DEFAULT = DAE.T_ARRAY(DAE.T_REAL_DEFAULT, {DAE.DIM_INTEGER(2)}, DAE.emptyTypeSource);
-protected constant DAE.Type T_REAL_ARRAY_3_DEFAULT = DAE.T_ARRAY(DAE.T_REAL_DEFAULT, {DAE.DIM_INTEGER(3)}, DAE.emptyTypeSource);
-protected constant DAE.Type T_REAL_ARRAY_4_DEFAULT = DAE.T_ARRAY(DAE.T_REAL_DEFAULT, {DAE.DIM_INTEGER(4)}, DAE.emptyTypeSource);
-protected constant DAE.Type T_REAL_ARRAY_5_DEFAULT = DAE.T_ARRAY(DAE.T_REAL_DEFAULT, {DAE.DIM_INTEGER(5)}, DAE.emptyTypeSource);
-protected constant DAE.Type T_REAL_ARRAY_6_DEFAULT = DAE.T_ARRAY(DAE.T_REAL_DEFAULT, {DAE.DIM_INTEGER(6)}, DAE.emptyTypeSource);
-protected constant DAE.Type T_REAL_ARRAY_7_DEFAULT = DAE.T_ARRAY(DAE.T_REAL_DEFAULT, {DAE.DIM_INTEGER(7)}, DAE.emptyTypeSource);
-protected constant DAE.Type T_REAL_ARRAY_8_DEFAULT = DAE.T_ARRAY(DAE.T_REAL_DEFAULT, {DAE.DIM_INTEGER(8)}, DAE.emptyTypeSource);
-protected constant DAE.Type T_REAL_ARRAY_9_DEFAULT = DAE.T_ARRAY(DAE.T_REAL_DEFAULT, {DAE.DIM_INTEGER(9)}, DAE.emptyTypeSource);
+protected constant DAE.Type T_REAL_ARRAY_DEFAULT   = DAE.T_ARRAY(DAE.T_REAL_DEFAULT, {DAE.DIM_UNKNOWN()});
+protected constant DAE.Type T_REAL_ARRAY_1_DEFAULT = DAE.T_ARRAY(DAE.T_REAL_DEFAULT, {DAE.DIM_INTEGER(1)});
 
 // Integer arrays
-protected constant DAE.Type T_INT_ARRAY_1_DEFAULT = DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT, {DAE.DIM_INTEGER(1)}, DAE.emptyTypeSource);
-protected constant DAE.Type T_INT_ARRAY_2_DEFAULT = DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT, {DAE.DIM_INTEGER(2)}, DAE.emptyTypeSource);
-protected constant DAE.Type T_INT_ARRAY_3_DEFAULT = DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT, {DAE.DIM_INTEGER(3)}, DAE.emptyTypeSource);
-protected constant DAE.Type T_INT_ARRAY_4_DEFAULT = DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT, {DAE.DIM_INTEGER(4)}, DAE.emptyTypeSource);
-protected constant DAE.Type T_INT_ARRAY_5_DEFAULT = DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT, {DAE.DIM_INTEGER(5)}, DAE.emptyTypeSource);
-protected constant DAE.Type T_INT_ARRAY_6_DEFAULT = DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT, {DAE.DIM_INTEGER(6)}, DAE.emptyTypeSource);
-protected constant DAE.Type T_INT_ARRAY_7_DEFAULT = DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT, {DAE.DIM_INTEGER(7)}, DAE.emptyTypeSource);
-protected constant DAE.Type T_INT_ARRAY_8_DEFAULT = DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT, {DAE.DIM_INTEGER(8)}, DAE.emptyTypeSource);
-protected constant DAE.Type T_INT_ARRAY_9_DEFAULT = DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT, {DAE.DIM_INTEGER(9)}, DAE.emptyTypeSource);
-
-// Boolean array
-protected constant DAE.Type T_BOOL_ARRAY_1_DEFAULT = DAE.T_ARRAY(DAE.T_BOOL_DEFAULT, {DAE.DIM_INTEGER(1)}, DAE.emptyTypeSource);
-protected constant DAE.Type T_BOOL_ARRAY_2_DEFAULT = DAE.T_ARRAY(DAE.T_BOOL_DEFAULT, {DAE.DIM_INTEGER(2)}, DAE.emptyTypeSource);
-protected constant DAE.Type T_BOOL_ARRAY_3_DEFAULT = DAE.T_ARRAY(DAE.T_BOOL_DEFAULT, {DAE.DIM_INTEGER(3)}, DAE.emptyTypeSource);
-protected constant DAE.Type T_BOOL_ARRAY_4_DEFAULT = DAE.T_ARRAY(DAE.T_BOOL_DEFAULT, {DAE.DIM_INTEGER(4)}, DAE.emptyTypeSource);
-protected constant DAE.Type T_BOOL_ARRAY_5_DEFAULT = DAE.T_ARRAY(DAE.T_BOOL_DEFAULT, {DAE.DIM_INTEGER(5)}, DAE.emptyTypeSource);
-protected constant DAE.Type T_BOOL_ARRAY_6_DEFAULT = DAE.T_ARRAY(DAE.T_BOOL_DEFAULT, {DAE.DIM_INTEGER(6)}, DAE.emptyTypeSource);
-protected constant DAE.Type T_BOOL_ARRAY_7_DEFAULT = DAE.T_ARRAY(DAE.T_BOOL_DEFAULT, {DAE.DIM_INTEGER(7)}, DAE.emptyTypeSource);
-protected constant DAE.Type T_BOOL_ARRAY_8_DEFAULT = DAE.T_ARRAY(DAE.T_BOOL_DEFAULT, {DAE.DIM_INTEGER(8)}, DAE.emptyTypeSource);
-protected constant DAE.Type T_BOOL_ARRAY_9_DEFAULT = DAE.T_ARRAY(DAE.T_BOOL_DEFAULT, {DAE.DIM_INTEGER(9)}, DAE.emptyTypeSource);
-
-// String arrays
-protected constant DAE.Type T_STRING_ARRAY_1_DEFAULT = DAE.T_ARRAY(DAE.T_STRING_DEFAULT, {DAE.DIM_INTEGER(1)}, DAE.emptyTypeSource);
-protected constant DAE.Type T_STRING_ARRAY_2_DEFAULT = DAE.T_ARRAY(DAE.T_STRING_DEFAULT, {DAE.DIM_INTEGER(2)}, DAE.emptyTypeSource);
-protected constant DAE.Type T_STRING_ARRAY_3_DEFAULT = DAE.T_ARRAY(DAE.T_STRING_DEFAULT, {DAE.DIM_INTEGER(3)}, DAE.emptyTypeSource);
-protected constant DAE.Type T_STRING_ARRAY_4_DEFAULT = DAE.T_ARRAY(DAE.T_STRING_DEFAULT, {DAE.DIM_INTEGER(4)}, DAE.emptyTypeSource);
-protected constant DAE.Type T_STRING_ARRAY_5_DEFAULT = DAE.T_ARRAY(DAE.T_STRING_DEFAULT, {DAE.DIM_INTEGER(5)}, DAE.emptyTypeSource);
-protected constant DAE.Type T_STRING_ARRAY_6_DEFAULT = DAE.T_ARRAY(DAE.T_STRING_DEFAULT, {DAE.DIM_INTEGER(6)}, DAE.emptyTypeSource);
-protected constant DAE.Type T_STRING_ARRAY_7_DEFAULT = DAE.T_ARRAY(DAE.T_STRING_DEFAULT, {DAE.DIM_INTEGER(7)}, DAE.emptyTypeSource);
-protected constant DAE.Type T_STRING_ARRAY_8_DEFAULT = DAE.T_ARRAY(DAE.T_STRING_DEFAULT, {DAE.DIM_INTEGER(8)}, DAE.emptyTypeSource);
-protected constant DAE.Type T_STRING_ARRAY_9_DEFAULT = DAE.T_ARRAY(DAE.T_STRING_DEFAULT, {DAE.DIM_INTEGER(9)}, DAE.emptyTypeSource);
-
-protected constant DAE.Type T_UNKNOWN_ARRAY_1_DEFAULT = DAE.T_ARRAY(DAE.T_UNKNOWN_DEFAULT, {DAE.DIM_INTEGER(1)}, DAE.emptyTypeSource);
+protected constant DAE.Type T_INT_ARRAY_1_DEFAULT = DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT, {DAE.DIM_INTEGER(1)});
 
 protected constant SCode.Prefixes commonPrefixes =
   SCode.PREFIXES(
@@ -133,9 +93,9 @@ protected constant SCode.Prefixes commonPrefixesNotFinal =
     SCode.NOT_REPLACEABLE());
 
 protected
-constant SCode.Attributes attrConst = SCode.ATTR({},SCode.POTENTIAL(),SCode.NON_PARALLEL(),SCode.CONST(),Absyn.BIDIR());
-constant SCode.Attributes attrParam = SCode.ATTR({},SCode.POTENTIAL(),SCode.NON_PARALLEL(),SCode.PARAM(),Absyn.BIDIR());
-constant SCode.Attributes attrParamVectorNoDim = SCode.ATTR({Absyn.NOSUB()},SCode.POTENTIAL(),SCode.NON_PARALLEL(),SCode.PARAM(),Absyn.BIDIR());
+constant SCode.Attributes attrConst = SCode.ATTR({},SCode.POTENTIAL(),SCode.NON_PARALLEL(),SCode.CONST(),Absyn.BIDIR(),Absyn.NONFIELD());
+constant SCode.Attributes attrParam = SCode.ATTR({},SCode.POTENTIAL(),SCode.NON_PARALLEL(),SCode.PARAM(),Absyn.BIDIR(),Absyn.NONFIELD());
+constant SCode.Attributes attrParamVectorNoDim = SCode.ATTR({Absyn.NOSUB()},SCode.POTENTIAL(),SCode.NON_PARALLEL(),SCode.PARAM(),Absyn.BIDIR(),Absyn.NONFIELD());
 
 //
 // The primitive types
@@ -298,196 +258,19 @@ protected constant DAE.Var objectiveVar = DAE.TYPES_VAR("objective",
           DAE.dummyAttrInput,
           DAE.T_REAL_DEFAULT,DAE.UNBOUND(),NONE()) "- The `objective\' variable" ;
 
+protected constant DAE.FuncArg argRealX = DAE.FUNCARG("x",DAE.T_REAL_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE());
+protected constant DAE.FuncArg argRealY = DAE.FUNCARG("y",DAE.T_REAL_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE());
+protected constant DAE.FuncArg argRealZ = DAE.FUNCARG("z",DAE.T_REAL_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE());
 
-protected constant DAE.Type stringIntInt2string =
-          DAE.T_FUNCTION(
-              {
-              DAE.FUNCARG("x",DAE.T_STRING_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE()),
-              DAE.FUNCARG("y",DAE.T_INTEGER_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE()),
-              DAE.FUNCARG("z",DAE.T_INTEGER_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE())
-              },
-              DAE.T_STRING_DEFAULT,
-              DAE.FUNCTION_ATTRIBUTES_BUILTIN,
-              DAE.emptyTypeSource);
-
-protected constant DAE.Type real2real =
-          DAE.T_FUNCTION(
-            {DAE.FUNCARG("x",DAE.T_REAL_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE())},
-            DAE.T_REAL_DEFAULT,
-            DAE.FUNCTION_ATTRIBUTES_BUILTIN,
-            DAE.emptyTypeSource);
-
-protected constant DAE.Type realReal2real =
-          DAE.T_FUNCTION(
-            {DAE.FUNCARG("x",DAE.T_REAL_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE()),
-             DAE.FUNCARG("y",DAE.T_REAL_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE())},
-            DAE.T_REAL_DEFAULT,
-            DAE.FUNCTION_ATTRIBUTES_BUILTIN,
-            DAE.emptyTypeSource);
-
-protected constant DAE.Type int2int =
-          DAE.T_FUNCTION(
-            {DAE.FUNCARG("x",DAE.T_INTEGER_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE())},
-            DAE.T_INTEGER_DEFAULT,
-            DAE.FUNCTION_ATTRIBUTES_BUILTIN,
-            DAE.emptyTypeSource);
-
-protected constant DAE.Type int2bool =
-          DAE.T_FUNCTION(
-            {DAE.FUNCARG("x",DAE.T_INTEGER_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE())},
-            DAE.T_BOOL_DEFAULT,
-            DAE.FUNCTION_ATTRIBUTES_BUILTIN,
-            DAE.emptyTypeSource);
-
-protected constant DAE.Type enumeration2int =
-          DAE.T_FUNCTION(
-            {DAE.FUNCARG("x",DAE.T_ENUMERATION(NONE(), Absyn.IDENT(""), {}, {}, {}, DAE.emptyTypeSource),DAE.C_VAR(),DAE.NON_PARALLEL(),NONE())},
-            DAE.T_INTEGER_DEFAULT,
-            DAE.FUNCTION_ATTRIBUTES_BUILTIN,
-            DAE.emptyTypeSource);
-
-protected constant DAE.Type intInt2int =
-          DAE.T_FUNCTION(
-            {DAE.FUNCARG("x",DAE.T_INTEGER_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE()),
-             DAE.FUNCARG("y",DAE.T_INTEGER_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE())},
-            DAE.T_INTEGER_DEFAULT,
-            DAE.FUNCTION_ATTRIBUTES_BUILTIN,
-            DAE.emptyTypeSource);
-
-protected constant DAE.Type intInt2bool =
-          DAE.T_FUNCTION(
-            {DAE.FUNCARG("x",DAE.T_INTEGER_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE()),
-             DAE.FUNCARG("y",DAE.T_INTEGER_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE())},
-            DAE.T_BOOL_DEFAULT,
-            DAE.FUNCTION_ATTRIBUTES_BUILTIN,
-            DAE.emptyTypeSource);
-
-protected constant DAE.Type bool2bool =
-          DAE.T_FUNCTION(
-            {DAE.FUNCARG("x",DAE.T_BOOL_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE())},
-            DAE.T_BOOL_DEFAULT,
-            DAE.FUNCTION_ATTRIBUTES_BUILTIN,
-            DAE.emptyTypeSource);
-
-protected constant DAE.Type real2bool =
-          DAE.T_FUNCTION(
-            {DAE.FUNCARG("x",DAE.T_REAL_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE())},
-            DAE.T_BOOL_DEFAULT,
-            DAE.FUNCTION_ATTRIBUTES_BUILTIN,
-            DAE.emptyTypeSource);
-
-protected constant DAE.Type realReal2bool =
-          DAE.T_FUNCTION(
-            {DAE.FUNCARG("x",DAE.T_REAL_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE()),
-             DAE.FUNCARG("y",DAE.T_REAL_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE())},
-            DAE.T_BOOL_DEFAULT,
-            DAE.FUNCTION_ATTRIBUTES_BUILTIN,
-            DAE.emptyTypeSource);
-
-protected constant DAE.Type realRealReal2Real =
-          DAE.T_FUNCTION(
-            {DAE.FUNCARG("x",DAE.T_REAL_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE()),
-             DAE.FUNCARG("y",DAE.T_REAL_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE()),
-             DAE.FUNCARG("z",DAE.T_REAL_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE())},
-            DAE.T_REAL_DEFAULT,
-            DAE.FUNCTION_ATTRIBUTES_BUILTIN,
-            DAE.emptyTypeSource);
-
-protected constant DAE.Type anyNonExpandableConnector2int =
-          DAE.T_FUNCTION(
-            {DAE.FUNCARG("x", DAE.T_ANYTYPE(SOME(ClassInf.CONNECTOR(Absyn.IDENT("$dummy$"),false)),DAE.emptyTypeSource),DAE.C_VAR(),DAE.NON_PARALLEL(),NONE())},
-            DAE.T_INTEGER_DEFAULT,
-            DAE.FUNCTION_ATTRIBUTES_BUILTIN,
-            DAE.emptyTypeSource);
-
-protected constant DAE.Type anyExpandableConnector2int =
-          DAE.T_FUNCTION(
-            {DAE.FUNCARG("x",DAE.T_ANYTYPE(SOME(ClassInf.CONNECTOR(Absyn.IDENT("$dummy$"),true)),DAE.emptyTypeSource),DAE.C_VAR(),DAE.NON_PARALLEL(),NONE())},
-            DAE.T_INTEGER_DEFAULT,
-            DAE.FUNCTION_ATTRIBUTES_BUILTIN,
-            DAE.emptyTypeSource);
-
-protected constant DAE.Type vectorVector2int =
-          DAE.T_FUNCTION(
-            {DAE.FUNCARG("x",T_INT_ARRAY_1_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE()),
-             DAE.FUNCARG("y",T_INT_ARRAY_1_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE())},
-            DAE.T_INTEGER_DEFAULT,
-            DAE.FUNCTION_ATTRIBUTES_BUILTIN,
-            DAE.emptyTypeSource);
-
-protected constant DAE.Type vectorVector2real =
-          DAE.T_FUNCTION(
-            {DAE.FUNCARG("x", T_REAL_ARRAY_1_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE()),
-             DAE.FUNCARG("y", T_REAL_ARRAY_1_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE())},
-            DAE.T_REAL_DEFAULT,
-            DAE.FUNCTION_ATTRIBUTES_BUILTIN,
-            DAE.emptyTypeSource);
-
-protected constant DAE.Type intInt2vectorreal =
-          DAE.T_FUNCTION(
-            {DAE.FUNCARG("x",DAE.T_INTEGER_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE()),
-             DAE.FUNCARG("y",DAE.T_INTEGER_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE())},
-            T_REAL_ARRAY_1_DEFAULT,
-            DAE.FUNCTION_ATTRIBUTES_BUILTIN,
-            DAE.emptyTypeSource);
-
-protected constant DAE.Type realRealInt2vectorreal =
-          DAE.T_FUNCTION(
-            {DAE.FUNCARG("x",DAE.T_REAL_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE()),
-             DAE.FUNCARG("y",DAE.T_REAL_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE()),
-             DAE.FUNCARG("n",DAE.T_INTEGER_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE())},
-            T_REAL_ARRAY_DEFAULT,
-            DAE.FUNCTION_ATTRIBUTES_BUILTIN,
-            DAE.emptyTypeSource);
-
-protected constant DAE.Type array2real =
-          DAE.T_FUNCTION(
-            {DAE.FUNCARG("x",T_INT_ARRAY_1_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE())},
-            DAE.T_INTEGER_DEFAULT,
-            DAE.FUNCTION_ATTRIBUTES_BUILTIN,
-            DAE.emptyTypeSource) "T_ARRAY is appearently not constant. To bad!" ;
-
-protected constant DAE.Type int2boxed =
-          DAE.T_FUNCTION(
-            {DAE.FUNCARG("index",DAE.T_INTEGER_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE())},
-            DAE.T_METABOXED_DEFAULT,
-            DAE.FUNCTION_ATTRIBUTES_BUILTIN,
-            DAE.emptyTypeSource);
-
-protected constant DAE.Type string2string =
-          DAE.T_FUNCTION(
-            {DAE.FUNCARG("x",DAE.T_STRING_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE())},
-            DAE.T_STRING_DEFAULT,
-            DAE.FUNCTION_ATTRIBUTES_BUILTIN,
-            DAE.emptyTypeSource);
-
-protected constant DAE.Type array1dimrealarray1dimrealarray1dimreal2array1dimreal =
-          DAE.T_FUNCTION(
-            {
-            DAE.FUNCARG("x",T_REAL_ARRAY_1_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE()),
-            DAE.FUNCARG("y",T_REAL_ARRAY_1_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE()),
-            DAE.FUNCARG("z",T_REAL_ARRAY_1_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE())
-            },
-            T_REAL_ARRAY_1_DEFAULT,
-            DAE.FUNCTION_ATTRIBUTES_BUILTIN,
-            DAE.emptyTypeSource);
-
-protected constant DAE.Type realrealreal2real =
-          DAE.T_FUNCTION(
-            {
-            DAE.FUNCARG("x",DAE.T_REAL_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE()),
-            DAE.FUNCARG("y",DAE.T_REAL_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE()),
-            DAE.FUNCARG("z",DAE.T_REAL_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE())
-            },
-            DAE.T_REAL_DEFAULT,
-            DAE.FUNCTION_ATTRIBUTES_BUILTIN,
-            DAE.emptyTypeSource);
+protected constant list<DAE.FuncArg> argsRealX = {argRealX};
+protected constant list<DAE.FuncArg> argsRealXY = {argRealX, argRealY};
+protected constant list<DAE.FuncArg> argsRealXYZ = {argRealX, argRealY, argRealZ};
 
 protected constant SCode.Element timeComp =
           SCode.COMPONENT(
             "time",
             SCode.defaultPrefixes,
-            SCode.ATTR({}, SCode.POTENTIAL(), SCode.NON_PARALLEL(), SCode.VAR(), Absyn.INPUT()),
+            SCode.ATTR({}, SCode.POTENTIAL(), SCode.NON_PARALLEL(), SCode.VAR(), Absyn.INPUT(),Absyn.NONFIELD()),
             Absyn.TPATH(Absyn.IDENT("Real"), NONE()), SCode.NOMOD(),
             SCode.noComment, NONE(), Absyn.dummyInfo);
 
@@ -495,7 +278,7 @@ protected constant SCode.Element startTimeComp =
           SCode.COMPONENT(
             "startTime",
             SCode.defaultPrefixes,
-            SCode.ATTR({}, SCode.POTENTIAL(), SCode.NON_PARALLEL(), SCode.VAR(), Absyn.INPUT()),
+            SCode.ATTR({}, SCode.POTENTIAL(), SCode.NON_PARALLEL(), SCode.VAR(), Absyn.INPUT(),Absyn.NONFIELD()),
             Absyn.TPATH(Absyn.IDENT("Real"), NONE()), SCode.NOMOD(),
             SCode.noComment, NONE(), Absyn.dummyInfo);
 
@@ -503,7 +286,7 @@ protected constant SCode.Element finalTimeComp =
           SCode.COMPONENT(
             "finalTime",
             SCode.defaultPrefixes,
-            SCode.ATTR({}, SCode.POTENTIAL(), SCode.NON_PARALLEL(), SCode.VAR(), Absyn.INPUT()),
+            SCode.ATTR({}, SCode.POTENTIAL(), SCode.NON_PARALLEL(), SCode.VAR(), Absyn.INPUT(),Absyn.NONFIELD()),
             Absyn.TPATH(Absyn.IDENT("Real"), NONE()), SCode.NOMOD(),
             SCode.noComment, NONE(), Absyn.dummyInfo);
 
@@ -511,7 +294,7 @@ protected constant SCode.Element objectiveIntegrandComp =
           SCode.COMPONENT(
             "objectiveIntegrand",
             SCode.defaultPrefixes,
-            SCode.ATTR({}, SCode.POTENTIAL(), SCode.NON_PARALLEL(), SCode.VAR(), Absyn.INPUT()),
+            SCode.ATTR({}, SCode.POTENTIAL(), SCode.NON_PARALLEL(), SCode.VAR(), Absyn.INPUT(),Absyn.NONFIELD()),
             Absyn.TPATH(Absyn.IDENT("Real"), NONE()), SCode.NOMOD(),
             SCode.noComment, NONE(), Absyn.dummyInfo);
 
@@ -519,11 +302,17 @@ protected constant SCode.Element objectiveVarComp =
           SCode.COMPONENT(
             "objectiveVar",
             SCode.defaultPrefixes,
-            SCode.ATTR({}, SCode.POTENTIAL(), SCode.NON_PARALLEL(), SCode.VAR(), Absyn.INPUT()),
+            SCode.ATTR({}, SCode.POTENTIAL(), SCode.NON_PARALLEL(), SCode.VAR(), Absyn.INPUT(),Absyn.NONFIELD()),
             Absyn.TPATH(Absyn.IDENT("Real"), NONE()), SCode.NOMOD(),
             SCode.noComment, NONE(), Absyn.dummyInfo);
 
-protected constant list<SCode.Element> basicTypes = {clockType, rlType, intType, strType, boolType, enumType, ExternalObjectType, realType, integerType, stringType, booleanType, stateSelectType, uncertaintyType};
+protected constant list<SCode.Element> basicTypes = {clockType, rlType, intType, strType, boolType, enumType, ExternalObjectType, realType, integerType, stringType, booleanType, uncertaintyType};
+
+public function getBasicTypes
+  output list<SCode.Element> tys;
+algorithm
+  tys := basicTypes;
+end getBasicTypes;
 
 public function variableIsBuiltin
  "Returns true if cref is a builtin variable.
@@ -561,10 +350,16 @@ public function getInitialFunctions
 "Fetches the Absyn.Program representation of the functions (and other classes) in the initial environment"
   output Absyn.Program initialProgram;
   output SCode.Program initialSCodeProgram;
+protected
+  String fileModelica,fileMetaModelica,fileParModelica,filePDEModelica;
 algorithm
+  fileModelica := Settings.getInstallationDirectoryPath() + "/lib/omc/ModelicaBuiltin.mo";
+  fileMetaModelica := Settings.getInstallationDirectoryPath() + "/lib/omc/MetaModelicaBuiltin.mo";
+  fileParModelica := Settings.getInstallationDirectoryPath() + "/lib/omc/ParModelicaBuiltin.mo";
+  filePDEModelica := Settings.getInstallationDirectoryPath() + "/lib/omc/PDEModelicaBuiltin.mo";
+
   (initialProgram,initialSCodeProgram) := matchcontinue ()
     local
-      String fileModelica,fileMetaModelica,fileParModelica;
       list<tuple<Integer,tuple<Absyn.Program,SCode.Program>>> assocLst;
       list<Absyn.Class> classes,classes1,classes2;
       Absyn.Program p;
@@ -582,14 +377,13 @@ algorithm
     case ()
       equation
         true = intEq(Flags.getConfigEnum(Flags.GRAMMAR), Flags.METAMODELICA);
-        fileModelica = Settings.getInstallationDirectoryPath() + "/lib/omc/ModelicaBuiltin.mo";
-        fileMetaModelica = Settings.getInstallationDirectoryPath() + "/lib/omc/MetaModelicaBuiltin.mo";
         Error.assertionOrAddSourceMessage(System.regularFileExists(fileModelica),Error.FILE_NOT_FOUND_ERROR,{fileModelica},Absyn.dummyInfo);
         Error.assertionOrAddSourceMessage(System.regularFileExists(fileMetaModelica),Error.FILE_NOT_FOUND_ERROR,{fileMetaModelica},Absyn.dummyInfo);
-        Absyn.PROGRAM(classes=classes1,within_=Absyn.TOP()) = Parser.parsebuiltin(fileModelica,"UTF-8");
-        Absyn.PROGRAM(classes=classes2,within_=Absyn.TOP()) = Parser.parsebuiltin(fileMetaModelica,"UTF-8");
+        Absyn.PROGRAM(classes=classes1,within_=Absyn.TOP()) = Parser.parsebuiltin(fileModelica,"UTF-8",acceptedGram=Flags.METAMODELICA);
+        Absyn.PROGRAM(classes=classes2,within_=Absyn.TOP()) = Parser.parsebuiltin(fileMetaModelica,"UTF-8",acceptedGram=Flags.METAMODELICA);
         classes = listAppend(classes1,classes2);
         p = Absyn.PROGRAM(classes,Absyn.TOP());
+        (p as Absyn.PROGRAM(classes=classes)) = MetaUtil.createMetaClassesInProgram(p);
         sp = List.map(classes, SCodeUtil.translateClass);
         assocLst = getGlobalRoot(Global.builtinIndex);
         setGlobalRoot(Global.builtinIndex, (Flags.METAMODELICA,(p,sp))::assocLst);
@@ -597,12 +391,10 @@ algorithm
     case ()
       equation
         true = intEq(Flags.getConfigEnum(Flags.GRAMMAR), Flags.PARMODELICA);
-        fileModelica = Settings.getInstallationDirectoryPath() + "/lib/omc/ModelicaBuiltin.mo";
-        fileParModelica = Settings.getInstallationDirectoryPath() + "/lib/omc/ParModelicaBuiltin.mo";
         Error.assertionOrAddSourceMessage(System.regularFileExists(fileModelica),Error.FILE_NOT_FOUND_ERROR,{fileModelica},Absyn.dummyInfo);
         Error.assertionOrAddSourceMessage(System.regularFileExists(fileParModelica),Error.FILE_NOT_FOUND_ERROR,{fileParModelica},Absyn.dummyInfo);
-        Absyn.PROGRAM(classes=classes1,within_=Absyn.TOP()) = Parser.parsebuiltin(fileModelica,"UTF-8");
-        Absyn.PROGRAM(classes=classes2,within_=Absyn.TOP()) = Parser.parsebuiltin(fileParModelica,"UTF-8");
+        Absyn.PROGRAM(classes=classes1,within_=Absyn.TOP()) = Parser.parsebuiltin(fileModelica,"UTF-8",acceptedGram=Flags.METAMODELICA);
+        Absyn.PROGRAM(classes=classes2,within_=Absyn.TOP()) = Parser.parsebuiltin(fileParModelica,"UTF-8",acceptedGram=Flags.METAMODELICA);
         classes = listAppend(classes1,classes2);
         p = Absyn.PROGRAM(classes,Absyn.TOP());
         sp = List.map(classes, SCodeUtil.translateClass);
@@ -612,16 +404,29 @@ algorithm
     case ()
       equation
         true = intEq(Flags.getConfigEnum(Flags.GRAMMAR), Flags.MODELICA) or intEq(Flags.getConfigEnum(Flags.GRAMMAR), Flags.OPTIMICA);
-        fileModelica = Settings.getInstallationDirectoryPath() + "/lib/omc/ModelicaBuiltin.mo";
         Error.assertionOrAddSourceMessage(System.regularFileExists(fileModelica),Error.FILE_NOT_FOUND_ERROR,{fileModelica},Absyn.dummyInfo);
-        (p as Absyn.PROGRAM(classes=classes)) = Parser.parsebuiltin(fileModelica,"UTF-8");
+        (p as Absyn.PROGRAM(classes=classes)) = Parser.parsebuiltin(fileModelica,"UTF-8",acceptedGram=Flags.METAMODELICA);
         sp = List.map(classes, SCodeUtil.translateClass);
         assocLst = getGlobalRoot(Global.builtinIndex);
         setGlobalRoot(Global.builtinIndex, (Flags.MODELICA,(p,sp))::assocLst);
       then (p,sp);
+    case ()
+      equation
+        true = intEq(Flags.getConfigEnum(Flags.GRAMMAR), Flags.PDEMODELICA);
+        Error.assertionOrAddSourceMessage(System.regularFileExists(fileModelica),Error.FILE_NOT_FOUND_ERROR,{fileModelica},Absyn.dummyInfo);
+        Error.assertionOrAddSourceMessage(System.regularFileExists(filePDEModelica),Error.FILE_NOT_FOUND_ERROR,{filePDEModelica},Absyn.dummyInfo);
+        Absyn.PROGRAM(classes=classes1,within_=Absyn.TOP()) = Parser.parsebuiltin(fileModelica,"UTF-8",acceptedGram=Flags.METAMODELICA);
+        Absyn.PROGRAM(classes=classes2,within_=Absyn.TOP()) = Parser.parsebuiltin(filePDEModelica,"UTF-8",acceptedGram=Flags.METAMODELICA);
+        classes = listAppend(classes1,classes2);
+        p = Absyn.PROGRAM(classes,Absyn.TOP());
+        sp = List.map(classes, SCodeUtil.translateClass);
+        assocLst = getGlobalRoot(Global.builtinIndex);
+        setGlobalRoot(Global.builtinIndex, (Flags.PDEMODELICA,(p,sp))::assocLst);
+      then (p,sp);
+
     else
       equation
-        Error.addMessage(Error.INTERNAL_ERROR, {"FBuiltin.getInitialFunctions failed."});
+        Error.addInternalError("FBuiltin.getInitialFunctions failed.", sourceInfo());
       then fail();
   end matchcontinue;
 end getInitialFunctions;
@@ -667,28 +472,9 @@ algorithm
         graph = FGraph.new("graph", FCore.dummyTopModel);
         graph = FGraphBuild.mkProgramGraph(basicTypes, FCore.BASIC_TYPE(), graph);
 
-
-        graph = FGraphBuild.mkCompNode(timeComp, FGraph.top(graph), FCore.BUILTIN(), graph);
-        graph = FGraph.updateComp(graph, timeVar, FCore.VAR_UNTYPED(), FGraph.empty());
-
-        graph = initialGraphOptimica(graph);
-
-        graph = initialGraphMetaModelica(graph);
-
-        graph = FGraphBuild.mkTypeNode(
-                 {anyNonExpandableConnector2int,
-                  anyExpandableConnector2int},
-                 FGraph.top(graph),
-                 "cardinality", graph);
-        graph = FGraphBuild.mkTypeNode({enumeration2int}, FGraph.top(graph), "Integer", graph);
-        graph = FGraphBuild.mkTypeNode({enumeration2int}, FGraph.top(graph), "EnumToInteger", graph);
-        graph = FGraphBuild.mkTypeNode({real2real}, FGraph.top(graph), "noEvent", graph);
-        graph = FGraphBuild.mkTypeNode({real2real}, FGraph.top(graph), "actualStream", graph);
-        graph = FGraphBuild.mkTypeNode({real2real}, FGraph.top(graph), "inStream", graph);
-        graph = FGraphBuild.mkTypeNode({realrealreal2real,
-                                 array1dimrealarray1dimrealarray1dimreal2array1dimreal,
-                                 array1dimrealarray1dimrealarray1dimreal2array1dimreal},
-                                 FGraph.top(graph), "constrain", graph);
+        graph = initialGraphOptimica(graph, FGraphBuild.mkCompNode);
+        graph = initialGraphMetaModelica(graph, FGraphBuild.mkTypeNode);
+        graph = initialGraphModelica(graph, FGraphBuild.mkTypeNode, FGraphBuild.mkCompNode);
 
         (_, initialProgram) = getInitialFunctions();
         // add the ModelicaBuiltin/MetaModelicaBuiltin classes in the initial graph
@@ -753,56 +539,110 @@ algorithm
   end matchcontinue;
 end getSetInitialGraph;
 
-protected function initialGraphMetaModelica
-  input FGraph.Graph inEnv;
-  output FGraph.Graph outEnv;
+public
+
+partial function MakeTypeNode
+  input list<DAE.Type> inTypes "the types to add";
+  input FCore.Ref inParentRef;
+  input FCore.Name inName "name to search for";
+  input FCore.Graph inGraph;
+  output FCore.Graph outGraph;
+end MakeTypeNode;
+
+partial function MakeCompNode
+  input SCode.Element inComp;
+  input FCore.Ref inParentRef;
+  input FCore.Kind inKind;
+  input FCore.Graph inGraph;
+  output FCore.Graph outGraph;
+end MakeCompNode;
+
+function initialGraphModelica
+  input output FGraph.Graph graph;
+  input MakeTypeNode mkTypeNode;
+  input MakeCompNode mkCompNode;
+protected
+  constant DAE.Type enumeration2int =
+          DAE.T_FUNCTION(
+            {DAE.FUNCARG("x",DAE.T_ENUMERATION(NONE(), Absyn.IDENT(""), {}, {}, {}),DAE.C_VAR(),DAE.NON_PARALLEL(),NONE())},
+            DAE.T_INTEGER_DEFAULT,
+            DAE.FUNCTION_ATTRIBUTES_BUILTIN,
+            Absyn.IDENT("Integer"));
 algorithm
-  outEnv := matchcontinue(inEnv)
-    local
-      FGraph.Graph graph;
+  graph := mkCompNode(timeComp, FGraph.top(graph), FCore.BUILTIN(), graph);
+  graph := FGraph.updateComp(graph, timeVar, FCore.VAR_UNTYPED(), FGraph.empty());
 
-    case (graph)
-      equation
-        true = Config.acceptMetaModelicaGrammar();
-        // getGlobalRoot can not be represented by a regular function...
-        graph = FGraphBuild.mkTypeNode({int2boxed}, FGraph.top(graph), "getGlobalRoot", graph);
-      then
-        graph;
+  graph := mkTypeNode({
+            DAE.T_FUNCTION(
+              {DAE.FUNCARG("x", DAE.T_ANYTYPE(SOME(ClassInf.CONNECTOR(Absyn.IDENT("$dummy$"),false))),DAE.C_VAR(),DAE.NON_PARALLEL(),NONE())},
+              DAE.T_INTEGER_DEFAULT,
+              DAE.FUNCTION_ATTRIBUTES_BUILTIN,
+              Absyn.IDENT("cardinality")),
+            DAE.T_FUNCTION(
+              {DAE.FUNCARG("x",DAE.T_ANYTYPE(SOME(ClassInf.CONNECTOR(Absyn.IDENT("$dummy$"),true))),DAE.C_VAR(),DAE.NON_PARALLEL(),NONE())},
+              DAE.T_INTEGER_DEFAULT,
+              DAE.FUNCTION_ATTRIBUTES_BUILTIN,
+              Absyn.IDENT("cardinality"))},
+           FGraph.top(graph),
+           "cardinality", graph);
+  graph := mkTypeNode({enumeration2int}, FGraph.top(graph), "Integer", graph);
+  graph := mkTypeNode({enumeration2int}, FGraph.top(graph), "EnumToInteger", graph);
+  graph := mkTypeNode({DAE.T_FUNCTION(argsRealX,DAE.T_REAL_DEFAULT,DAE.FUNCTION_ATTRIBUTES_BUILTIN,Absyn.IDENT("noEvent"))},
+                                 FGraph.top(graph), "noEvent", graph);
+  graph := mkTypeNode({DAE.T_FUNCTION(argsRealX,DAE.T_REAL_DEFAULT,DAE.FUNCTION_ATTRIBUTES_BUILTIN,Absyn.IDENT("actualStream"))},
+                                 FGraph.top(graph), "actualStream", graph);
+  graph := mkTypeNode({DAE.T_FUNCTION(argsRealX,DAE.T_REAL_DEFAULT,DAE.FUNCTION_ATTRIBUTES_BUILTIN,Absyn.IDENT("inStream"))},
+                                 FGraph.top(graph), "inStream", graph);
+  graph := mkTypeNode({
+      DAE.T_FUNCTION(argsRealXYZ,DAE.T_REAL_DEFAULT,DAE.FUNCTION_ATTRIBUTES_BUILTIN,Absyn.IDENT("constrain")),
+      DAE.T_FUNCTION({
+        DAE.FUNCARG("x",T_REAL_ARRAY_1_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE()),
+        DAE.FUNCARG("y",T_REAL_ARRAY_1_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE()),
+        DAE.FUNCARG("z",T_REAL_ARRAY_1_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE())},
+        T_REAL_ARRAY_1_DEFAULT,
+        DAE.FUNCTION_ATTRIBUTES_BUILTIN,
+        Absyn.IDENT("constrain"))
+      },
+      FGraph.top(graph), "constrain", graph);
+end initialGraphModelica;
 
-    case graph then graph;
+function initialGraphMetaModelica
+  input output FGraph.Graph graph;
+  input MakeTypeNode mkTypeNode;
+algorithm
+  if not Config.acceptMetaModelicaGrammar() then
+    return;
+  end if;
 
-  end matchcontinue;
+  // getGlobalRoot can not be represented by a regular function...
+  graph := mkTypeNode({DAE.T_FUNCTION(
+      {DAE.FUNCARG("index",DAE.T_INTEGER_DEFAULT,DAE.C_VAR(),DAE.NON_PARALLEL(),NONE())},
+      DAE.T_METABOXED_DEFAULT,
+      DAE.FUNCTION_ATTRIBUTES_BUILTIN,
+      Absyn.IDENT("getGlobalRoot"))}, FGraph.top(graph), "getGlobalRoot", graph);
 end initialGraphMetaModelica;
 
-protected function initialGraphOptimica
-  input FGraph.Graph inEnv;
-  output FGraph.Graph outEnv;
+function initialGraphOptimica
+  input output FGraph.Graph graph;
+  input MakeCompNode mkCompNode;
 algorithm
-  outEnv := matchcontinue(inEnv)
-    local
-      FGraph.Graph graph;
+  if not Config.acceptOptimicaGrammar() then
+    return;
+  end if;
 
-    case (graph)
-      equation
-        //If Optimica add the startTime,finalTime,objectiveIntegrand and objective "builtin" variables.
-        true = Config.acceptOptimicaGrammar();
-        graph = FGraphBuild.mkCompNode(objectiveVarComp, FGraph.top(graph), FCore.BUILTIN(), graph);
-        graph = FGraph.updateComp(graph, objectiveVar, FCore.VAR_UNTYPED(), FGraph.empty());
+  //If Optimica add the startTime,finalTime,objectiveIntegrand and objective "builtin" variables.
+  graph := mkCompNode(objectiveVarComp, FGraph.top(graph), FCore.BUILTIN(), graph);
+  graph := FGraph.updateComp(graph, objectiveVar, FCore.VAR_UNTYPED(), FGraph.empty());
 
-        graph = FGraphBuild.mkCompNode(objectiveIntegrandComp, FGraph.top(graph), FCore.BUILTIN(), graph);
-        graph = FGraph.updateComp(graph, objectiveIntegrandVar, FCore.VAR_UNTYPED(), FGraph.empty());
+  graph := mkCompNode(objectiveIntegrandComp, FGraph.top(graph), FCore.BUILTIN(), graph);
+  graph := FGraph.updateComp(graph, objectiveIntegrandVar, FCore.VAR_UNTYPED(), FGraph.empty());
 
-        graph = FGraphBuild.mkCompNode(startTimeComp, FGraph.top(graph), FCore.BUILTIN(), graph);
-        graph = FGraph.updateComp(graph, startTimeVar, FCore.VAR_UNTYPED(), FGraph.empty());
+  graph := mkCompNode(startTimeComp, FGraph.top(graph), FCore.BUILTIN(), graph);
+  graph := FGraph.updateComp(graph, startTimeVar, FCore.VAR_UNTYPED(), FGraph.empty());
 
-        graph = FGraphBuild.mkCompNode(finalTimeComp, FGraph.top(graph), FCore.BUILTIN(), graph);
-        graph = FGraph.updateComp(graph, finalTimeVar, FCore.VAR_UNTYPED(), FGraph.empty());
-      then
-        graph;
+  graph := mkCompNode(finalTimeComp, FGraph.top(graph), FCore.BUILTIN(), graph);
+  graph := FGraph.updateComp(graph, finalTimeVar, FCore.VAR_UNTYPED(), FGraph.empty());
 
-    case graph then graph;
-
-  end matchcontinue;
 end initialGraphOptimica;
 
 annotation(__OpenModelica_Interface="frontend");

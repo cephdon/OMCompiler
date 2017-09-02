@@ -40,7 +40,6 @@ encapsulated package HashTableStringToUnit "
   package:     HashTableStringToUnit
   description: String to Unit.Unit
 
-  RCS: $Id: HashTableStringToUnit.mo 15213 2013-02-18 10:17:07Z petar $
 
   "
 
@@ -66,7 +65,6 @@ public type HashTableCrefFunctionsType = tuple<FuncHashKey,FuncKeyEqual,FuncKeyS
 public type HashTable = tuple<
   array<list<tuple<Key,Integer>>>,
   tuple<Integer,Integer,array<Option<tuple<Key,Value>>>>,
-  Integer,
   Integer,
   HashTableCrefFunctionsType
 >;

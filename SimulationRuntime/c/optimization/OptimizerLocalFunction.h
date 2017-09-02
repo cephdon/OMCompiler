@@ -37,7 +37,7 @@
 
 #include "OptimizerData.h"
 
-int pickUpModelData(DATA* data, SOLVER_INFO* solverInfo);
+int pickUpModelData(DATA* data, threadData_t *threadData, SOLVER_INFO* solverInfo);
 void allocate_der_struct(OptDataStructure *s, OptDataDim * dim, DATA* data, OptData *optData);
 void initial_guess_optimizer(OptData *optData, SOLVER_INFO* solverInfo);
 
@@ -46,6 +46,8 @@ void optData2ModelData(OptData *optData, double *vopt, const int index);
 
 void diffSynColoredOptimizerSystem(OptData *optData, modelica_real **J, const int i, const int j, const int index);
 void diffSynColoredOptimizerSystemF(OptData *optData, modelica_real **J);
+void debugeJac(OptData * optData,Number* vopt);
+void debugeSteps(OptData * optData, modelica_real*vopt, modelica_real * lambda);
 
 /*ipopt*/
 

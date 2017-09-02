@@ -34,13 +34,14 @@ encapsulated package Array
   package:     Array
   description: Array functions
 
-  RCS: $Id$
 "
 
 protected
-import MetaModelica.Dangerous.{arrayGetNoBoundsChecking, arrayCreateNoInit};
+import MetaModelica.Dangerous.{arrayGetNoBoundsChecking, arrayUpdateNoBoundsChecking, arrayCreateNoInit};
+import Error;
 
-public function mapNoCopy<T>
+public
+function mapNoCopy<T>
   "Takes an array and a function over the elements of the array, which is
    applied for each element.  Since it will update the array values the returned
    array must have the same type, and thus the applied function must also return
@@ -59,7 +60,7 @@ algorithm
   end for;
 end mapNoCopy;
 
-public function mapNoCopy_1<T, ArgT>
+function mapNoCopy_1<T, ArgT>
   "Same as arrayMapNoCopy, but with an additional arguments that's updated for
    each call."
   input array<T> inArray;
@@ -81,7 +82,7 @@ algorithm
   end for;
 end mapNoCopy_1;
 
-public function findFirstOnTrue<T>
+function findFirstOnTrue<T>
   input array<T> inArray;
   input FuncType inPredicate;
   output Option<T> outElement;
@@ -100,7 +101,31 @@ algorithm
   end for;
 end findFirstOnTrue;
 
-public function select<T>
+function findFirstOnTrueWithIdx<T>
+  input array<T> inArray;
+  input FuncType inPredicate;
+  output Option<T> outElement;
+  output Integer idxOut = -1;
+
+  partial function FuncType
+    input T inElement;
+    output Boolean outMatch;
+  end FuncType;
+protected
+  Integer idx=1;
+algorithm
+  outElement := NONE();
+  for e in inArray loop
+    if inPredicate(e) then
+      idxOut := idx;
+      outElement := SOME(e);
+      break;
+    end if;
+    idx := idx+1;
+  end for;
+end findFirstOnTrueWithIdx;
+
+function select<T>
   "Takes an array and a list of indices, and returns a new array with the
    indexed elements. Will fail if any index is out of bounds."
   input array<T> inArray;
@@ -117,7 +142,7 @@ algorithm
   end for;
 end select;
 
-public function map<TI, TO>
+function map<TI, TO>
   "Takes an array and a function over the elements of the array, which is
    applied to each element. The updated elements will form a new array, leaving
    the original array unchanged."
@@ -140,15 +165,15 @@ algorithm
     // If the array isn't empty, use the first element to create the new array.
     res := inFunc(arrayGetNoBoundsChecking(inArray, 1));
     outArray := arrayCreateNoInit(len, res);
-    arrayUpdate(outArray, 1, res);
+    arrayUpdateNoBoundsChecking(outArray, 1, res);
 
     for i in 2:len loop
-      arrayUpdate(outArray, i, inFunc(arrayGetNoBoundsChecking(inArray, i)));
+      arrayUpdateNoBoundsChecking(outArray, i, inFunc(arrayGetNoBoundsChecking(inArray, i)));
     end for;
   end if;
 end map;
 
-public function map1<TI, TO, ArgT>
+function map1<TI, TO, ArgT>
   "Takes an array, an extra arguments, and a function over the elements of the
    array, which is applied to each element. The updated elements will form a new
    array, leaving the original array unchanged."
@@ -181,7 +206,7 @@ algorithm
   end if;
 end map1;
 
-public function map0<T>
+function map0<T>
   "Applies a non-returning function to all elements in an array."
   input array<T> inArray;
   input FuncType inFunc;
@@ -195,7 +220,7 @@ algorithm
   end for;
 end map0;
 
-public function mapList<TI, TO>
+function mapList<TI, TO>
   "As map, but takes a list in and creates an array from the result."
   input list<TI> inList;
   input FuncType inFunc;
@@ -223,7 +248,7 @@ algorithm
   end if;
 end mapList;
 
-public function fold<T, FoldT>
+function fold<T, FoldT>
   "Takes an array, a function, and a start value. The function is applied to
    each array element, and the start value is passed to the function and
    updated."
@@ -243,7 +268,7 @@ algorithm
   end for;
 end fold;
 
-public function fold1<T, FoldT, ArgT>
+function fold1<T, FoldT, ArgT>
   "Takes an array, a function, and a start value. The function is applied to
    each array element, and the start value is passed to the function and
    updated."
@@ -265,7 +290,7 @@ algorithm
   end for;
 end fold1;
 
-public function fold2<T, FoldT, ArgT1, ArgT2>
+function fold2<T, FoldT, ArgT1, ArgT2>
   "Takes an array, a function, a constant parameter, and a start value. The
    function is applied to each array element, and the start value is passed to
    the function and updated."
@@ -289,7 +314,7 @@ algorithm
   end for;
 end fold2;
 
-public function fold3<T, FoldT, ArgT1, ArgT2, ArgT3>
+function fold3<T, FoldT, ArgT1, ArgT2, ArgT3>
   "Takes an array, a function, a constant parameter, and a start value. The
    function is applied to each array element, and the start value is passed to
    the function and updated."
@@ -315,7 +340,7 @@ algorithm
   end for;
 end fold3;
 
-public function fold4<T, FoldT, ArgT1, ArgT2, ArgT3, ArgT4>
+function fold4<T, FoldT, ArgT1, ArgT2, ArgT3, ArgT4>
   "Takes an array, a function, four constant parameters, and a start value. The
    function is applied to each array element, and the start value is passed to
    the function and updated."
@@ -343,7 +368,7 @@ algorithm
   end for;
 end fold4;
 
-public function fold5<T, FoldT, ArgT1, ArgT2, ArgT3, ArgT4, ArgT5>
+function fold5<T, FoldT, ArgT1, ArgT2, ArgT3, ArgT4, ArgT5>
   "Takes an array, a function, four constant parameters, and a start value. The
    function is applied to each array element, and the start value is passed to
    the function and updated."
@@ -373,7 +398,7 @@ algorithm
   end for;
 end fold5;
 
-public function fold6<T, FoldT, ArgT1, ArgT2, ArgT3, ArgT4, ArgT5, ArgT6>
+function fold6<T, FoldT, ArgT1, ArgT2, ArgT3, ArgT4, ArgT5, ArgT6>
   "Takes an array, a function, four constant parameters, and a start value. The
    function is applied to each array element, and the start value is passed to
    the function and updated."
@@ -405,7 +430,7 @@ algorithm
   end for;
 end fold6;
 
-public function foldIndex<T, FoldT>
+function foldIndex<T, FoldT>
 "Takes an array, a function, and a start value. The function is applied to
    each array element, and the start value is passed to the function and
    updated, additional the index of the passed element is also passed to the function."
@@ -429,7 +454,7 @@ algorithm
   end for;
 end foldIndex;
 
-public function reduce<T>
+function reduce<T>
   "Takes a list and a function operating on two elements of the array.
    The function performs a reduction of the array to a single value using the
    function. Example:
@@ -452,7 +477,7 @@ algorithm
   end for;
 end reduce;
 
-public function updateIndexFirst<T>
+function updateIndexFirst<T>
   "Like arrayUpdate, but with the index first so it can be used with List.map."
   input Integer inIndex;
   input T inValue;
@@ -461,14 +486,14 @@ algorithm
   arrayUpdate(inArray, inIndex, inValue);
 end updateIndexFirst;
 
-public function getIndexFirst<T>
+function getIndexFirst<T>
   "Like arrayGet, but with the index first so it can used with List.map."
   input Integer inIndex;
   input array<T> inArray;
   output T outElement = arrayGet(inArray, inIndex);
 end getIndexFirst;
 
-public function updatewithArrayIndexFirst<T>
+function updatewithArrayIndexFirst<T>
   "Replaces the element with the given index in the second array with the value
    of the corresponding element in the first array."
   input Integer inIndex;
@@ -478,7 +503,7 @@ algorithm
   arrayUpdate(inArrayDest, inIndex, inArraySrc[inIndex]);
 end updatewithArrayIndexFirst;
 
-public function updatewithListIndexFirst<T>
+function updatewithListIndexFirst<T>
   input list<Integer> inList;
   input Integer inStartIndex;
   input array<T> inArraySrc;
@@ -489,7 +514,7 @@ algorithm
   end for;
 end updatewithListIndexFirst;
 
-public function updateElementListAppend<T>
+function updateElementListAppend<T>
   input Integer inIndex;
   input list<T> inValue;
   input array<list<T>> inArray;
@@ -497,7 +522,7 @@ algorithm
   arrayUpdate(inArray, inIndex, listAppend(inArray[inIndex], inValue));
 end updateElementListAppend;
 
-public function replaceAtWithFill<T>
+function replaceAtWithFill<T>
   "Takes
    - an element,
    - a position (1..n)
@@ -519,7 +544,7 @@ algorithm
   arrayUpdate(outArray, inPos, inTypeReplace);
 end replaceAtWithFill;
 
-public function expandToSize<T>
+function expandToSize<T>
   "Expands an array to the given size, or does nothing if the array is already
    large enough."
   input Integer inNewSize;
@@ -535,7 +560,7 @@ algorithm
   end if;
 end expandToSize;
 
-public function expand<T>
+function expand<T>
   "Increases the number of elements of an array with inN. Each new element is
    assigned the value inFill."
   input Integer inN;
@@ -555,7 +580,7 @@ algorithm
   end if;
 end expand;
 
-public function expandOnDemand<T>
+function expandOnDemand<T>
   "Resizes an array with the given factor if the array is smaller than the
    requested size."
   input Integer inNewSize "The number of elements that should fit in the array.";
@@ -576,7 +601,7 @@ algorithm
   end if;
 end expandOnDemand;
 
-public function consToElement<T>
+function consToElement<T>
   "Concatenates an element to a list element of an array."
   input Integer inIndex;
   input T inElement;
@@ -586,7 +611,7 @@ algorithm
   outArray := arrayUpdate(inArray, inIndex, inElement :: inArray[inIndex]);
 end consToElement;
 
-public function appendToElement<T>
+function appendToElement<T>
   "Appends a list to a list element of an array."
   input Integer inIndex;
   input list<T> inElements;
@@ -596,7 +621,7 @@ algorithm
   outArray := arrayUpdate(inArray, inIndex, listAppend(inArray[inIndex], inElements));
 end appendToElement;
 
-public function copy<T>
+function copy<T>
   "Copies all values from inArraySrc to inArrayDest. Fails if inArraySrc is
    larger than inArrayDest.
 
@@ -611,11 +636,11 @@ algorithm
   end if;
 
   for i in 1:arrayLength(inArraySrc) loop
-    arrayUpdate(outArray, i, arrayGetNoBoundsChecking(inArraySrc, i));
+    arrayUpdateNoBoundsChecking(outArray, i, arrayGetNoBoundsChecking(inArraySrc, i));
   end for;
 end copy;
 
-public function copyN<T>
+function copyN<T>
   "Copies the first inN values from inArraySrc to inArrayDest. Fails if
    inN is larger than either inArraySrc or inArrayDest."
   input array<T> inArraySrc;
@@ -628,11 +653,44 @@ algorithm
   end if;
 
   for i in 1:inN loop
-    arrayUpdate(outArray, i, arrayGetNoBoundsChecking(inArraySrc, i));
+    arrayUpdateNoBoundsChecking(outArray, i, arrayGetNoBoundsChecking(inArraySrc, i));
   end for;
 end copyN;
 
-public function setRange<T>
+function copyRange<T>
+  "Copies a range of elements from one array to another."
+  input array<T> srcArray "The array to copy from.";
+  input array<T> dstArray "The array to insert into.";
+  input Integer srcFirst "The index of the first element to copy.";
+  input Integer srcLast "The index of the last element to copy.";
+  input Integer dstPos "The index to begin inserting at.";
+protected
+  Integer offset = dstPos - srcFirst;
+algorithm
+  if srcFirst > srcLast or srcLast > arrayLength(srcArray) or
+    offset + srcLast > arrayLength(dstArray) then
+    fail();
+  end if;
+
+  for i in srcFirst:srcLast loop
+    arrayUpdateNoBoundsChecking(dstArray, offset + i,
+      arrayGetNoBoundsChecking(srcArray, i));
+  end for;
+end copyRange;
+
+function createIntRange
+  "Creates an array<Integer> of size inLen with the values set to the range of 1:inLen."
+  input Integer inLen;
+  output array<Integer> outArray;
+algorithm
+  outArray := arrayCreateNoInit(inLen, 0);
+
+  for i in 1:inLen loop
+    arrayUpdateNoBoundsChecking(outArray, i, i);
+  end for;
+end createIntRange;
+
+function setRange<T>
   "Sets the elements in positions inStart to inEnd to inValue."
   input Integer inStart;
   input Integer inEnd;
@@ -649,7 +707,7 @@ algorithm
   end for;
 end setRange;
 
-public function getRange<T>
+function getRange<T>
   "Gets the elements between inStart and inEnd."
   input Integer inStart;
   input Integer inEnd;
@@ -667,7 +725,7 @@ algorithm
   end for;
 end getRange;
 
-public function position<T>
+function position<T>
   "Returns the index of the given element in the array, or 0 if it wasn't found."
   input array<T> inArray;
   input T inElement;
@@ -685,7 +743,7 @@ algorithm
   outIndex := 0;
 end position;
 
-public function getMemberOnTrue<VT, ET>
+function getMemberOnTrue<VT, ET>
   "Takes a value and returns the first element for which the comparison
    function returns true, along with that elements position in the array."
   input VT inValue;
@@ -709,6 +767,81 @@ algorithm
   end for;
   fail();
 end getMemberOnTrue;
+
+function reverse<T>"reverses the elements in an array"
+  input array<T> inArray;
+  output array<T> outArray;
+protected
+  Integer size,i;
+  T elem1,elem2;
+algorithm
+  outArray := inArray;
+  size := arrayLength(inArray);
+  for i in 1:(size/2) loop
+    elem1 := arrayGet(inArray,i);
+    elem2 := arrayGet(inArray,size-i+1);
+    outArray := arrayUpdate(outArray,i,elem2);
+    outArray := arrayUpdate(outArray,size-i+1,elem1);
+  end for;
+end reverse;
+
+function arrayListsEmpty<T>"output true if all lists in the array are empty"
+  input array<list<T>> arr;
+  output Boolean isEmpty;
+algorithm
+  isEmpty := fold(arr,arrayListsEmpty1,true);
+end arrayListsEmpty;
+
+function arrayListsEmpty1<T>
+  input list<T> lst;
+  input Boolean isEmptyIn;
+  output Boolean isEmptyOut;
+algorithm
+  isEmptyOut := listEmpty(lst) and isEmptyIn;
+end arrayListsEmpty1;
+
+function isEqual<T>
+  "Checks if two arrays are equal."
+  input array<T> inArr1;
+  input array<T> inArr2;
+  output Boolean outIsEqual=true;
+protected
+  Integer arrLength;
+algorithm
+  arrLength := arrayLength(inArr1);
+  if not intEq(arrLength,arrayLength(inArr2)) then
+    Error.addMessage(Error.DIFFERENT_DIM_SIZE_IN_ARGUMENTS, {"array","Array.isEqual"});
+    fail();
+  end if;
+  for i in 1:arrLength loop
+    if not valueEq(inArr1[i],inArr2[i]) then
+      outIsEqual := false;
+      break;
+    end if;
+  end for;
+end isEqual;
+
+function exist<T>
+  "Returns true if a certain element exists in the given array as indicated by
+   the given predicate function."
+  input array<T> arr;
+  input PredFunc pred;
+  output Boolean exists;
+
+  partial function PredFunc
+    input T element;
+    output Boolean matches;
+  end PredFunc;
+algorithm
+  for e in arr loop
+    if pred(e) then
+      exists := true;
+      return;
+    end if;
+  end for;
+
+  exists := false;
+end exist;
 
 annotation(__OpenModelica_Interface="util");
 end Array;

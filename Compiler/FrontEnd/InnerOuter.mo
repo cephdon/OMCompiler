@@ -31,9 +31,8 @@
 encapsulated package InnerOuter
 " file:        InnerOuter.mo
   package:     InnerOuter
-  description: Instance hierarchy and functionality to deal with Inner/Outer definitions
+  description: Instance hierarchy and functionality to deal with Inner/Outer definitions"
 
-  RCS: $Id$"
 
 import Absyn;
 import Connect;
@@ -52,6 +51,7 @@ protected import ConnectUtil;
 protected import DAEUtil;
 protected import Debug;
 protected import Dump;
+protected import ElementSource;
 protected import Error;
 protected import ErrorExt;
 protected import Expression;
@@ -184,14 +184,9 @@ end handleInnerOuterEquations;
 
 public function changeInnerOuterInOuterConnect
   "changes inner to outer and outer to inner where needed"
-  input Connect.Sets inSets;
-  output Connect.Sets outSets;
-protected
-  list<Connect.OuterConnect> outerConnects;
+  input output Connect.Sets sets;
 algorithm
-  Connect.SETS(outerConnects = outerConnects) := inSets;
-  outerConnects := List.map(outerConnects, changeInnerOuterInOuterConnect2);
-  outSets := ConnectUtil.setOuterConnects(inSets, outerConnects);
+  sets.outerConnects := List.map(sets.outerConnects, changeInnerOuterInOuterConnect2);
 end changeInnerOuterInOuterConnect;
 
 public function changeInnerOuterInOuterConnect2
@@ -412,12 +407,11 @@ public function retrieveOuterConnections
   output ConnectionGraph.ConnectionGraph outCGraph;
 protected
   list<Connect.OuterConnect> oc;
-  Connect.Sets csets;
 algorithm
   Connect.SETS(outerConnects = oc) := inSets;
-  (oc, csets, outInnerOuterConnects, outCGraph) :=
+  (oc, outSets, outInnerOuterConnects, outCGraph) :=
     retrieveOuterConnections2(inCache, inEnv, inIH, inPrefix, oc, inSets, inTopCall, inCGraph);
-  outSets := ConnectUtil.setOuterConnects(csets, oc);
+  outSets.outerConnects := oc;
 end retrieveOuterConnections;
 
 protected function removeInnerPrefixFromCref
@@ -589,7 +583,7 @@ algorithm
      local
        SCode.Variability vt1,vt2;
        DAE.Type t1,t2;
-       SCode.ConnectorType ct;
+       DAE.ConnectorType ct;
        DAE.DAElist dae;
        InstHierarchy ih;
        Connect.SetTrie sets;
@@ -662,7 +656,7 @@ algorithm
      local
        SCode.Variability vt1,vt2;
        DAE.Type t1,t2;
-       SCode.ConnectorType ct;
+       DAE.ConnectorType ct;
        DAE.DAElist dae;
        InstHierarchy ih;
        Connect.SetTrie sets;
@@ -849,7 +843,7 @@ algorithm
           then
             str2 = Dump.unparseInnerouterStr(io);
             str = ComponentReference.printComponentRefStr(cr);
-            info = DAEUtil.getElementSourceFileInfo(source);
+            info = ElementSource.getElementSourceFileInfo(source);
             Error.addSourceMessage(Error.MISSING_INNER_PREFIX, {str,str2}, info);
             fail();
           end if;
@@ -925,30 +919,6 @@ algorithm
     else false;
   end match;
 end outerConnection;
-
-public function assertDifferentFaces
-"faces, e.g both inside or both outside connectors"
-  input FCore.Graph env;
-  input InstHierarchy inIH;
-  input DAE.ComponentRef inComponentRef1;
-  input DAE.ComponentRef inComponentRef2;
-algorithm
-  _ := match(env,inIH,inComponentRef1,inComponentRef2)
-    local
-      DAE.ComponentRef c1,c2;
-      Connect.Face f1, f2;
-      Boolean b1, b2;
-    case (_,_,c1,_)
-      equation
-        f1 = ConnectUtil.componentFace(env,inIH,c1);
-        f2 = ConnectUtil.componentFace(env,inIH,c1);
-        b1 = valueEq(f1, Connect.INSIDE()) and valueEq(f2, Connect.OUTSIDE());
-        b2 = valueEq(f2, Connect.INSIDE()) and valueEq(f1, Connect.OUTSIDE());
-        true = b1 or b2;
-      then
-        ();
-  end match;
-end assertDifferentFaces;
 
 protected function lookupInnerInIH
 "@author: adrpo
@@ -1249,69 +1219,36 @@ function switchInnerToOuterInFrame
   switches the inner to outer attributes of a component in the Frame."
   input FCore.Node inNode;
   input DAE.ComponentRef inCr;
-  output FCore.Node outNode;
+  output FCore.Node outNode = inNode;
 algorithm
-  outNode := matchcontinue(inNode,inCr)
-    local
-      DAE.ComponentRef cr;
-      FCore.Name n;
-      FCore.Id i;
-      FCore.Parents p;
-      FCore.Children c;
-      FCore.Data d;
-
-    case (FCore.N(n, i, p, c, d), cr)
-      equation
-        SOME(c) = switchInnerToOuterInChildren(SOME(c), cr);
+  _ := match outNode
+    case FCore.N()
+      algorithm
+        outNode.children := FNode.RefTree.map(outNode.children,
+          function switchInnerToOuterInChild(cr = inCr));
       then
-        FCore.N(n, i, p, c, d);
+        ();
 
-    else inNode;
-
-  end matchcontinue;
+    else ();
+  end match;
 end switchInnerToOuterInNode;
 
-protected function switchInnerToOuterInChildren "
-function switchInnerToOuterInChildren
-  switches the inner to outer attributes of a component in the AvlTree."
-  input Option<FCore.Children> inTreeOpt;
-  input DAE.ComponentRef inCr;
-  output Option<FCore.Children> outTreeOpt;
+protected function switchInnerToOuterInChild
+  input FCore.Name name;
+  input DAE.ComponentRef cr;
+  input FCore.Ref inRef;
+  output FCore.Ref ref;
+protected
+  FCore.Node n;
 algorithm
-  outTreeOpt := match(inTreeOpt,inCr)
-    local
-      DAE.ComponentRef cr;
-      FCore.CAvlKey rkey;
-      FCore.CAvlValue rval;
-      FCore.Node n;
-      Option<FCore.Children> l,r;
-      Integer h;
-
-    case (NONE(),_) then NONE();
-
-    case (SOME(FCore.CAVLTREENODE(value = SOME(FCore.CAVLTREEVALUE(rkey,rval)),height = h,left = l,right = r)), cr)
-      equation
-        n = FNode.fromRef(rval);
-        n = switchInnerToOuterInChildrenValue(n, cr);
-        rval = FNode.updateRef(rval, n);
-        l = switchInnerToOuterInChildren(l, cr);
-        r = switchInnerToOuterInChildren(r, cr);
-      then
-        SOME(FCore.CAVLTREENODE(SOME(FCore.CAVLTREEVALUE(rkey,rval)),h,l,r));
-
-    case (SOME(FCore.CAVLTREENODE(value = NONE(),height = h,left = l,right = r)),cr)
-      equation
-        l = switchInnerToOuterInChildren(l, cr);
-        r = switchInnerToOuterInChildren(r, cr);
-      then
-        SOME(FCore.CAVLTREENODE(NONE(),h,l,r));
-
-  end match;
-end switchInnerToOuterInChildren;
+  n := FNode.fromRef(inRef);
+  n := switchInnerToOuterInChildrenValue(n, cr);
+  ref := FNode.updateRef(inRef, n);
+end switchInnerToOuterInChild;
 
 protected function switchInnerToOuterInChildrenValue "
 function switchInnerToOuterInChildrenValue
-  switches the inner to outer attributes of a component in the AvlTree."
+  switches the inner to outer attributes of a component in the RefTree."
   input FCore.Node inNode;
   input DAE.ComponentRef inCr;
   output FCore.Node outNode;
@@ -1328,7 +1265,7 @@ algorithm
       DAE.Type ty;
       DAE.Binding binding;
 
-      SCode.ConnectorType ct;
+      DAE.ConnectorType ct;
       SCode.Parallelism parallelism "parallelism";
       SCode.Variability variability "variability" ;
       Absyn.Direction direction "direction" ;
@@ -1501,11 +1438,10 @@ public function updateSMHierarchy
 "@author: BTH
 Add State Machine state to collection of State Machine states in instance hierarchy."
   input DAE.ComponentRef smState;
-  input Prefix.Prefix inPrefix;
   input InstHierarchy inIH;
   output InstHierarchy outIH;
 algorithm
-  outIH := match (smState, inPrefix, inIH)
+  outIH := match (smState, inIH)
     local
       TopInstance tih;
       InstHierarchy restIH, ih;
@@ -1514,12 +1450,11 @@ algorithm
       InstHierarchyHashTable ht;
       Option<Absyn.Path> pathOpt;
       OuterPrefixes outerPrefixes;
-      DAE.ComponentRef cref_;
       HashSet.HashSet sm;
       HashSet.HashSet sm2;
 
     // no hashtable, create one!
-    case(_,_,{})
+    case(_,{})
       equation
         ht = emptyInstHierarchyHashTable();
         sm = HashSet.emptyHashSet();
@@ -1533,25 +1468,23 @@ algorithm
         ih;
 
     // add to the hierarchy
-    case (cref_,_,TOP_INSTANCE(pathOpt, ht, outerPrefixes, sm)::restIH)
+    case (cref,TOP_INSTANCE(pathOpt, ht, outerPrefixes, sm)::restIH)
       equation
-        // prefix the name!
-        cref = PrefixUtil.prefixCrefNoContext(inPrefix, cref_);
         // add to hashtable!
         sm = BaseHashSet.add(cref, sm); // add((cref,inInstInner), ht);
-
       then
         TOP_INSTANCE(pathOpt, ht, outerPrefixes, sm)::restIH;
 
     // failure
-    case (DAE.CREF_IDENT(ident=name),_,_)
+    case (DAE.CREF_IDENT(ident=name),_)
       equation
         true = Flags.isSet(Flags.INSTANCE);
-        Debug.traceln("InnerOuter.updateSMHierarchy failure for: " + PrefixUtil.printPrefixStr(inPrefix) + "/" + name);
+        Debug.traceln("InnerOuter.updateSMHierarchy failure for: " + name);
       then
         fail();
   end match;
 end updateSMHierarchy;
+
 
 public function addClassIfInner
   input SCode.Element inClass;
@@ -1614,7 +1547,7 @@ algorithm
         // create an empty table and add the crefs to it.
         ht = emptyInstHierarchyHashTable();
         sm = HashSet.emptyHashSet();
-        tih = TOP_INSTANCE(NONE(), ht, {OUTER(inOuterComponentRef, inInnerComponentRef)}, sm);
+        tih = TOP_INSTANCE(NONE(), ht, {OUTER(ComponentReference.crefStripSubs(inOuterComponentRef), inInnerComponentRef)}, sm);
         ih = {tih};
       then
         ih;
@@ -1625,7 +1558,7 @@ algorithm
         // fprintln(Flags.INNER_OUTER, "InnerOuter.addOuterPrefix adding: outer cref: " +
         //   ComponentReference.printComponentRefStr(inOuterComponentRef) + " refers to inner cref: " +
         //   ComponentReference.printComponentRefStr(inInnerComponentRef) + " to IH");
-        outerPrefixes = List.unionElt(OUTER(inOuterComponentRef,inInnerComponentRef), outerPrefixes);
+        outerPrefixes = List.unionElt(OUTER(ComponentReference.crefStripSubs(inOuterComponentRef), inInnerComponentRef), outerPrefixes);
       then
         TOP_INSTANCE(pathOpt, ht, outerPrefixes, sm)::restIH;
 
@@ -1665,7 +1598,7 @@ algorithm
         (_,fullCref) = PrefixUtil.prefixCref(FCore.emptyCache(), FGraph.empty(), emptyInstHierarchy, inPrefix, inOuterComponentRef);
 
         // this will fail if we don't find it so prefixing can happen in the calling function
-        (outerCrefPrefix, innerCrefPrefix) = searchForInnerPrefix(fullCref, outerPrefixes);
+        (outerCrefPrefix, innerCrefPrefix) = searchForInnerPrefix(fullCref, inOuterComponentRef, outerPrefixes);
 
         innerCref = changeOuterReferenceToInnerReference(fullCref, outerCrefPrefix, innerCrefPrefix);
 
@@ -1722,7 +1655,7 @@ algorithm
         (erest, _) = List.splitEqualPrefix(listReverse(erest), listReverse(eicp), ComponentReference.crefFirstIdentEqual);
 
         // Combine the parts into a new cref.
-        erest = listAppend(listReverse(erest), esuffix);
+        erest = List.append_reverse(erest, esuffix);
         eifull = listAppend(epre, erest);
         ic = ComponentReference.implode(eifull);
         // print("C:" + ComponentReference.printComponentRefStr(ic) + "\n");
@@ -1736,14 +1669,27 @@ protected function searchForInnerPrefix
 "@author: adrpo
   search in the outer prefixes and retrieve the outer/inner crefs"
   input DAE.ComponentRef fullCref;
+  input DAE.ComponentRef inOuterCref;
   input OuterPrefixes outerPrefixes;
   output DAE.ComponentRef outerCrefPrefix;
   output DAE.ComponentRef innerCrefPrefix;
+protected
+  DAE.ComponentRef cr, id;
+  Boolean b1 = false, b2 = false;
 algorithm
+  // print("L:" + intString(listLength(outerPrefixes)) + "\n");
   for op in outerPrefixes loop
     OUTER(outerComponentRef = outerCrefPrefix) := op;
+    b1 := ComponentReference.crefPrefixOfIgnoreSubscripts(outerCrefPrefix, fullCref);
+    if not b1
+    then
+      cr := ComponentReference.crefStripLastIdent(outerCrefPrefix);
+      b2 := ComponentReference.crefLastIdent(outerCrefPrefix) == ComponentReference.crefFirstIdent(inOuterCref)
+            and ComponentReference.crefPrefixOfIgnoreSubscripts(cr, fullCref);
+    end if;
 
-    if ComponentReference.crefPrefixOf(outerCrefPrefix, fullCref) then
+    if b1 or b2
+    then
       OUTER(innerComponentRef = innerCrefPrefix) := op;
       return;
     end if;
@@ -1894,7 +1840,6 @@ uniontype ValueArray
  cost of adding elements in a more efficient manner"
   record VALUE_ARRAY
     Integer numberOfElements "number of elements in hashtable" ;
-    Integer arrSize "size of crefArray" ;
     array<Option<tuple<Key,Value>>> valueArray "array of values";
   end VALUE_ARRAY;
 end ValueArray;
@@ -1907,18 +1852,17 @@ output InstHierarchyHashTable outHash;
 algorithm outHash := match(inHash)
   local
     array<list<tuple<Key,Integer>>> arg1,arg1_2;
-    Integer arg3,arg4,arg3_2,arg4_2,arg21,arg21_2,arg22,arg22_2;
-    array<Option<tuple<Key,Value>>> arg23,arg23_2;
-  case(HASHTABLE(arg1,VALUE_ARRAY(arg21,arg22,arg23),arg3,arg4))
+    Integer arg3,arg4,arg3_2,arg4_2,arg21,arg21_2;
+    array<Option<tuple<Key,Value>>> arg22,arg22_2;
+  case(HASHTABLE(arg1,VALUE_ARRAY(arg21,arg22),arg3,arg4))
     equation
       arg1_2 = arrayCopy(arg1);
       arg21_2 = arg21;
-      arg22_2 = arg22;
-      arg23_2 = arrayCopy(arg23);
+      arg22_2 = arrayCopy(arg22);
       arg3_2 = arg3;
       arg4_2 = arg4;
       then
-        HASHTABLE(arg1_2,VALUE_ARRAY(arg21_2,arg22_2,arg23_2),arg3_2,arg4_2);
+        HASHTABLE(arg1_2,VALUE_ARRAY(arg21_2,arg22_2),arg3_2,arg4_2);
 end match;
 end cloneInstHierarchyHashTable;
 
@@ -1934,7 +1878,7 @@ protected
 algorithm
   arr := arrayCreate(1000, {});
   emptyarr := arrayCreate(100, NONE());
-  hashTable := HASHTABLE(arr,VALUE_ARRAY(0,100,emptyarr),1000,0);
+  hashTable := HASHTABLE(arr,VALUE_ARRAY(0,emptyarr),1000,0);
 end emptyInstHierarchyHashTable;
 
 public function isEmpty "Returns true if hashtable is empty"
@@ -2238,27 +2182,27 @@ algorithm
       Integer n_1,n,size,expandsize,expandsize_1,newsize;
       array<Option<tuple<Key,Value>>> arr_1,arr,arr_2;
       Real rsize,rexpandsize;
-    case (VALUE_ARRAY(numberOfElements = n,arrSize = size,valueArray = arr),_)
+    case (VALUE_ARRAY(numberOfElements = n,valueArray = arr),_)
       equation
-        (n < size) = true "Have space to add array elt." ;
+        (n < arrayLength(arr)) = true "Have space to add array elt." ;
         n_1 = n + 1;
         arr_1 = arrayUpdate(arr, n + 1, SOME(entry));
       then
-        VALUE_ARRAY(n_1,size,arr_1);
+        VALUE_ARRAY(n_1,arr_1);
 
-    case (VALUE_ARRAY(numberOfElements = n,arrSize = size,valueArray = arr),_)
+    case (VALUE_ARRAY(numberOfElements = n,valueArray = arr),_)
       equation
+        size = arrayLength(arr);
         (n < size) = false "Do NOT have splace to add array elt. Expand with factor 1.4" ;
         rsize = intReal(size);
         rexpandsize = rsize * 0.4;
         expandsize = realInt(rexpandsize);
         expandsize_1 = intMax(expandsize, 1);
-        newsize = expandsize_1 + size;
         arr_1 = Array.expand(expandsize_1, arr,NONE());
         n_1 = n + 1;
         arr_2 = arrayUpdate(arr_1, n + 1, SOME(entry));
       then
-        VALUE_ARRAY(n_1,newsize,arr_2);
+        VALUE_ARRAY(n_1,arr_2);
     else
       equation
         print("-InstHierarchyHashTable.valueArrayAdd failed\n");
@@ -2277,14 +2221,14 @@ public function valueArraySetnth
 algorithm
   outValueArray := matchcontinue (valueArray,pos,entry)
     local
-      array<Option<tuple<Key,Value>>> arr_1,arr;
+      array<Option<tuple<Key,Value>>> arr;
       Integer n,size;
-    case (VALUE_ARRAY(n,size,arr),_,_)
+    case (VALUE_ARRAY(_,arr),_,_)
       equation
-        (pos < size) = true;
-        arr_1 = arrayUpdate(arr, pos + 1, SOME(entry));
+        (pos < arrayLength(arr)) = true;
+        arrayUpdate(arr, pos + 1, SOME(entry));
       then
-        VALUE_ARRAY(n,size,arr_1);
+        valueArray;
     else
       equation
         print("-InstHierarchyHashTable.valueArraySetnth failed\n");
@@ -2302,14 +2246,14 @@ public function valueArrayClearnth
 algorithm
   outValueArray := matchcontinue (valueArray,pos)
     local
-      array<Option<tuple<Key,Value>>> arr_1,arr;
+      array<Option<tuple<Key,Value>>> arr;
       Integer n,size;
-    case (VALUE_ARRAY(n,size,arr),_)
+    case (VALUE_ARRAY(_,arr),_)
       equation
-        (pos < size) = true;
-        arr_1 = arrayUpdate(arr, pos + 1,NONE());
+        (pos < arrayLength(arr)) = true;
+        arrayUpdate(arr, pos + 1,NONE());
       then
-        VALUE_ARRAY(n,size,arr_1);
+        valueArray;
     else
       equation
         print("-InstHierarchyHashTable.valueArrayClearnth failed\n");

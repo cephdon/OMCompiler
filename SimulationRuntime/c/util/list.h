@@ -51,8 +51,9 @@ extern "C" {
   LIST *allocList(unsigned int itemSize);
   void freeList(LIST *list);
 
-  void listPushFront(LIST *list, void *data);
-  void listPushBack(LIST *list, void *data);
+  void listPushFront(LIST *list, const void *data);
+  void listPushBack(LIST *list, const void *data);
+  void listInsert(LIST *list, LIST_NODE* prevNode, const void *data);
 
   int listLen(LIST *list);
 
@@ -62,11 +63,16 @@ extern "C" {
   void listPopFront(LIST *list);
 
   void listClear(LIST *list);
+  void freeNode(LIST_NODE *node);
 
   LIST_NODE *listFirstNode(LIST *list);
   LIST_NODE *listNextNode(LIST_NODE *node);
 
   void *listNodeData(LIST_NODE *node);
+  void updateNodeData(LIST *list, LIST_NODE *node, const void *data);
+  LIST_NODE* updateNodeNext(LIST *list, LIST_NODE *node, LIST_NODE *newNext);
+  void updatelistFirst(LIST* list, LIST_NODE *node);
+  void updatelistLength(LIST* list, unsigned int newLength);
 
 #ifdef __cplusplus
 }

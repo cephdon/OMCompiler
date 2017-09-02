@@ -4,25 +4,30 @@
 # If you need to add files, etc, you modify Makefile.common - a common file
 # for both UNIX/Linux and Windows platforms.
 
+# Forces the generation of the dgesv sources
+NEED_DGESV=1
 include Makefile.objs
 
 OMC_MINIMAL_RUNTIME=
 
-CPPFLAGS = -I. -I$(top_builddir)/Compiler/runtime -I$(top_builddir)/3rdParty/gc/include -I$(top_builddir)/3rdParty/FMIL/install/include/ -I$(top_builddir)/3rdParty/lis-1.4.12/include/ -I$(top_builddir)/3rdParty/Ipopt/include/ $(CONFIG_CPPFLAGS) -DGC_REDIRECT_TO_LOCAL -I$(builddir_inc)/c
+CPPFLAGS = -I. -I$(top_builddir)/Compiler/runtime -I$(top_builddir)/3rdParty/gc/include -I$(top_builddir)/3rdParty/FMIL/install/include/ -I$(top_builddir)/3rdParty/lis-1.4.12/include/ -I$(top_builddir)/3rdParty/Ipopt/include/ -I$(builddir_inc)/c/sundials/ $(CONFIG_CPPFLAGS) -DGC_REDIRECT_TO_LOCAL -I$(builddir_inc)/c
 override CFLAGS += $(CPPFLAGS) $(CONFIG_CFLAGS) $(EXTRA_CFLAGS)
+override CXXFLAGS += $(CPPFLAGS) $(CONFIG_CFLAGS) $(EXTRA_CFLAGS)
 
 ifeq ($(OMC_MINIMAL_RUNTIME),)
 OPTIONAL_LIBS=$(CDASKRDIR)/libcdaskr.a
 else
 override CFLAGS += -DOMC_MINIMAL_RUNTIME
+override CXXFLAGS += -DOMC_MINIMAL_RUNTIME
 endif
 
-CXXFLAGS = $(CFLAGS)
 FFLAGS  = -O -fexceptions
 # P.A: before, g77 had -O3 or -O2 but that caused a bug in DDASRT, giving infinite loop.
 builddir = ../../build
 
 CDASKRDIR=$(top_builddir)/3rdParty/Cdaskr/solver/
+CMINPACKDIR=$(top_builddir)/3rdParty/CMinpack/
+LAPACKDIR=$(top_builddir)/3rdParty/dgesv/
 
 RUNTIME_HEADERS = \
 ./omc_inline.h \
@@ -39,22 +44,34 @@ RUNTIMEOPTIMZ_HEADERS = ./optimization/OptimizerData.h ./optimization/OptimizerL
 
 RUNTIMESIMULATION_HEADERS = ./simulation/modelinfo.h \
 ./simulation/options.h \
-./simulation/simulation_info_xml.h \
+./simulation/simulation_info_json.h \
 ./simulation/simulation_input_xml.h \
 ./simulation/simulation_runtime.h
 
 RUNTIMESIMRESULTS_HEADERS = ./simulation/results/simulation_result.h
 
 RUNTIMESIMSOLVER_HEADERS = ./simulation/solver/delay.h \
+./simulation/solver/epsilon.h \
 ./simulation/solver/mixedSystem.h \
 ./simulation/solver/linearSystem.h \
+./simulation/solver/linearSolverLapack.h \
+./simulation/solver/linearSolverTotalPivot.h \
 ./simulation/solver/model_help.h \
+./simulation/solver/mixedSearchSolver.h \
 ./simulation/solver/nonlinearSystem.h \
+./simulation/solver/nonlinearValuesList.h \
+./simulation/solver/nonlinearSolverHomotopy.h \
+./simulation/solver/nonlinearSolverHybrd.h \
 ./simulation/solver/stateset.h \
+./simulation/solver/real_time_sync.h \
 ./simulation/solver/perform_simulation.c \
 ./simulation/solver/perform_qss_simulation.c \
 ./simulation/solver/dassl.h \
+./simulation/solver/embedded_server.h \
+./simulation/solver/ida_solver.h \
+./simulation/solver/omc_math.h \
 ./simulation/solver/events.h \
+./simulation/solver/synchronous.h \
 ./simulation/solver/external_input.h\
 ./simulation/solver/solver_main.h
 
@@ -62,11 +79,11 @@ RUNTIMEMETA_HEADERS = ./meta/meta_modelica_builtin_boxptr.h \
 ./meta/meta_modelica_builtin_boxvar.h \
 ./meta/meta_modelica_builtin.h \
 ./meta/meta_modelica.h \
+./meta/meta_modelica_data.h \
 ./meta/meta_modelica_mk_box.h \
-./meta/meta_modelica_segv.h \
-./meta/meta_modelica_string_lit.h
+./meta/meta_modelica_segv.h
 
-RUNTIMEMETAGC_HEADERS = ./meta/gc/mmc_gc.h
+RUNTIMEMETAGC_HEADERS = ./gc/omc_gc.h ./gc/memory_pool.h
 
 RUNTIMEUTIL_HEADERS = \
 ./util/base_array.h \
@@ -76,10 +93,10 @@ RUNTIMEUTIL_HEADERS = \
 ./util/index_spec.h \
 ./util/integer_array.h \
 ./util/java_interface.h \
-./util/memory_pool.h \
 ./util/modelica.h \
 ./util/modelica_string.h \
 ./util/omc_error.h \
+./util/omc_mmap.h \
 ./util/omc_msvc.h \
 ./util/omc_spinlock.h \
 ./util/read_matlab4.c \
@@ -94,9 +111,14 @@ RUNTIMEUTIL_HEADERS = \
 ./util/rtclock.h \
 ./util/simulation_options.h \
 ./util/string_array.h \
+./util/uthash.h \
 ./util/utility.h \
 ./util/varinfo.h \
-./util/list.h
+./util/list.h \
+./util/rational.h \
+./util/modelica_string_lit.h \
+./util/omc_init.h \
+./util/cJSON.h
 
 RUNTIMEINITIALIZATION_HEADERS = \
 ./simulation/solver/initialization/initialization.h
@@ -141,26 +163,29 @@ libOpenModelicaRuntimeC.a: $(BASE_OBJS) Makefile.objs
 	$(AR) $@ $(BASE_OBJS)
 	ranlib $@
 
-libOpenModelicaRuntimeC.so: $(BASE_OBJS) Makefile.objs
+libOpenModelicaRuntimeC.so: $(BASE_OBJS) $(GCOBJPATH_MINIMAL) Makefile.objs
 	@rm -f $@
-	$(CC) -shared -o $@ $(BASE_OBJS) $(LDFLAGS)
+	$(CC) -shared -o $@ $(BASE_OBJS) $(GCOBJPATH_MINIMAL) $(LDFLAGS)
 
-libOpenModelicaRuntimeC.dylib: $(BASE_OBJS) Makefile.objs
+libOpenModelicaRuntimeC.dylib: $(BASE_OBJS) $(GCOBJPATH_MINIMAL) Makefile.objs
 	@rm -f $@
-	$(CC) -shared -o $@ $(BASE_OBJS) $(LDFLAGS) -undefined dynamic_lookup -install_name '@rpath/$@'
+	$(CC) -shared -o $@ $(BASE_OBJS) $(GCOBJPATH_MINIMAL) $(LDFLAGS) -undefined dynamic_lookup -install_name '@rpath/$@'
 
-libOpenModelicaFMIRuntimeC.a: $(FMIOBJSPATH) Makefile.objs
+libOpenModelicaFMIRuntimeC.a: $(FMIOBJSPATH) $(GCOBJPATH_MINIMAL) Makefile.objs
 	@rm -f $@
-	$(AR) $@ $(FMILIB) $(FMIOBJSPATH)
+	$(AR) $@ $(FMILIB) $(FMIOBJSPATH) $(GCOBJPATH_MINIMAL)
 	ranlib $@
 
 libOpenModelicaFMIRuntimeC.so: $(FMIOBJSPATH) Makefile.objs
 	@rm -f $@
 	$(CC) -shared -o $@ $(FMIOBJSPATH) $(LDFLAGS)
 
-libOpenModelicaFMIRuntimeC.dylib: $(FMIOBJSPATH) Makefile.objs
+libOpenModelicaFMIRuntimeC.dylib: $(FMIOBJSPATH) $(GCOBJPATH_MINIMAL) Makefile.objs
 	@rm -f $@
-	$(CC) -shared -o $@ $(FMIOBJSPATH) $(LDFLAGS_SIM) -undefined dynamic_lookup -install_name '@rpath/$@'
+	$(CC) -shared -o $@ $(FMIOBJSPATH) $(GCOBJPATH_MINIMAL) $(LDFLAGS_SIM) -undefined dynamic_lookup -install_name '@rpath/$@'
+
+$(GCOBJSPATH):%$(OBJ_EXT): %.c $(GCHFILESPATH) $(COMMON_HEADERS)
+	$(CC) -c $(CFLAGS) -o $@ $<
 
 $(METAOBJSPATH):%$(OBJ_EXT): %.c $(METAHFILESPATH) $(COMMON_HEADERS)
 	$(CC) -c $(CFLAGS) -o $@ $<
@@ -181,7 +206,7 @@ $(INITIALIZATIONOBJSPATH):%$(OBJ_EXT): %.c $(SOLVERHFILESPATH) $(INITIALIZATIONH
 	$(CC) -c $(CFLAGS) -o $@ $<
 
 $(RESULTSOBJSPATH):%$(OBJ_EXT): %.cpp $(RESULTSFILESPATH) $(COMMON_HEADERS)
-	$(CXX) -c $(CFLAGS) -o $@ $<
+	$(CXX) -c $(CXXFLAGS) -o $@ $<
 
 $(SIMOBJSPATH):%$(OBJ_EXT): %.cpp linearization/linearize.cpp $(SIMHFILESPATH) $(COMMON_HEADERS)
 	$(CXX) -c -Ilinearization/ $(CXXFLAGS) -o $@ $<
@@ -209,24 +234,57 @@ bootstrap-dependencies: $(LIBRUNTIME)
 	cp -p $(RUNTIMESIMSOLVER_HEADERS) $(builddir_inc)/c/simulation/solver/
 	cp -p $(RUNTIMEINITIALIZATION_HEADERS) $(builddir_inc)/c/simulation/solver/initialization/
 	cp -p $(RUNTIMEMETA_HEADERS) $(builddir_inc)/c/meta/
-	cp -p $(RUNTIMEMETAGC_HEADERS) $(builddir_inc)/c/meta/gc/
+	cp -p $(RUNTIMEMETAGC_HEADERS) $(builddir_inc)/c/gc/
 	cp -p $(RUNTIMEUTIL_HEADERS) $(builddir_inc)/c/util/
 
-install: bootstrap-dependencies $(LIBSIMULATION) $(LIBFMIRUNTIME) $(ALL_OBJS)
+install: bootstrap-dependencies $(LIBSIMULATION) $(LIBFMIRUNTIME) $(ALL_OBJS) sourcedist
 	# copy libraries
 	cp -p $(LIBSIMULATION) $(LIBFMIRUNTIME) $(builddir_lib)
 	test ! -f libSimulationRuntimeC.bc || cp libSimulationRuntimeC.bc $(builddir_lib)/emcc/libSimulationRuntimeC.so
+	test ! `uname` = Darwin || install_name_tool -change libsundials_idas.0.dylib @rpath/libsundials_idas.0.dylib $(builddir_lib)/$(LIBFMIRUNTIME)
+	test ! `uname` = Darwin || install_name_tool -change libsundials_ida.2.dylib @rpath/libsundials_ida.2.dylib $(builddir_lib)/$(LIBFMIRUNTIME)
+	test ! `uname` = Darwin || install_name_tool -change libsundials_nvecserial.0.dylib @rpath/libsundials_nvecserial.0.dylib $(builddir_lib)/$(LIBFMIRUNTIME)
+	test ! `uname` = Darwin || install_name_tool -change libsundials_kinsol.1.dylib @rpath/libsundials_kinsol.1.dylib $(builddir_lib)/$(LIBFMIRUNTIME)
+	test ! `uname` = Darwin || install_name_tool -change libsundials_idas.0.dylib @rpath/libsundials_idas.0.dylib $(builddir_lib)/$(LIBSIMULATION)
+	test ! `uname` = Darwin || install_name_tool -change libsundials_ida.2.dylib @rpath/libsundials_ida.2.dylib $(builddir_lib)/$(LIBSIMULATION)
+	test ! `uname` = Darwin || install_name_tool -change libsundials_nvecserial.0.dylib @rpath/libsundials_nvecserial.0.dylib $(builddir_lib)/$(LIBSIMULATION)
+	test ! `uname` = Darwin || install_name_tool -change libsundials_kinsol.1.dylib @rpath/libsundials_kinsol.1.dylib $(builddir_lib)/$(LIBSIMULATION)
 	# copy fmi stuff
 	cp -p $(RUNTIME_HEADERS_FMU) ../fmi/export/fmi1/*.h \
 	   ../fmi/export/fmi1/fmu1_model_interface.c $(builddir_inc)/c/fmi1
 	cp -p ../fmi/export/fmi2/*.h \
 	   ../fmi/export/fmi2/fmu2_model_interface.c $(builddir_inc)/c/fmi2
 	# copy java interface stuff
-	@$(MAKE) -C util/java_interface -f $(LIBMAKEFILE) && \
-	$(MAKE) -C util/java_interface -f $(LIBMAKEFILE) install || \
-	$(MAKE) -C util/java_interface -f $(LIBMAKEFILE) install-nomodelica
+	@$(MAKE) -C ../java_interface -f $(LIBMAKEFILE) && \
+	$(MAKE) -C ../java_interface -f $(LIBMAKEFILE) install || \
+	$(MAKE) -C ../java_interface -f $(LIBMAKEFILE) install-nomodelica
 
 clean:
 	rm -f $(ALL_PATHS_CLEAN_OBJS) fmi/*.o *.a *.so optimization/*/*.o
 	(! test -f $(EXTERNALCBUILDDIR)/Makefile) || make -C $(EXTERNALCBUILDDIR) clean
 	(! test -f $(EXTERNALCBUILDDIR)/Makefile) || make -C $(EXTERNALCBUILDDIR) distclean
+
+sourcedist: sourcedist1 sourcedist2
+sourcedist1:
+	$(MAKE) -f $(LIBMAKEFILE) OMC_MINIMAL_RUNTIME=1 OMC_FMI_RUNTIME=1 sourcedist_internal
+sourcedist2:
+	$(MAKE) -C ../fmi/export/buildproject -f $(defaultMakefileTarget)
+
+sourcedist_internal:
+	mkdir -p $(builddir_inc)/c/external_solvers external_solvers
+	cp \
+	 $(CMINPACK_OBJS:%=$(CMINPACKDIR)/%.c) \
+	 $(LAPACK_OBJS:%=$(LAPACKDIR)/lapack/%.c) \
+	 $(BLAS_OBJS:%=$(LAPACKDIR)/blas/%.c) \
+	 $(LIBF2C_OBJS:%=$(LAPACKDIR)/libf2c/%.c) \
+	 "./external_solvers/"
+	cp \
+	 "$(CMINPACKDIR)/minpack.h" "$(CMINPACKDIR)/cminpack.h" \
+	 "$(LAPACKDIR)/include/blaswrap.h" \
+	 "$(LAPACKDIR)/include/clapack.h" \
+	 "$(LAPACKDIR)/include/f2c.h" \
+	 "$(builddir_inc)/c/external_solvers"
+	cd $(builddir_inc)/c/ && mkdir -p $(ALL_PATHS)
+	(D=`pwd` && cd $(builddir_inc)/c/ $(FMI_ME_OBJS:%.o= && (OMCFILE=% && cp $$D/$$OMCFILE.c $$OMCFILE.c)))
+	cp Makefile.objs $(builddir_inc)/c/
+	rm -r ./external_solvers

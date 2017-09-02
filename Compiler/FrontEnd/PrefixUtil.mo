@@ -34,7 +34,6 @@ encapsulated package PrefixUtil
   package:     PrefixUtil
   description: PrefixUtil management
 
-  RCS: $Id$
 
   When instantiating an expression, there is a prefix that
   has to be added to each variable name to be able to use it in the
@@ -67,6 +66,26 @@ protected import Print;
 //protected import Util;
 protected import System;
 protected import Types;
+protected import MetaModelica.Dangerous;
+
+public function printComponentPrefixStr "Prints a Prefix to a string. Rather slow..."
+  input Prefix.ComponentPrefix pre;
+  output String outString;
+algorithm
+  outString :=  match pre
+    local
+      String str,s,rest_1,s_1,s_2;
+      Prefix.ComponentPrefix rest;
+      Prefix.ClassPrefix cp;
+      list<DAE.Subscript> ss;
+
+    case Prefix.NOCOMPPRE() then "<Prefix.NOCOMPPRE()>";
+    case Prefix.PRE(next=Prefix.NOCOMPPRE(), subscripts={}) then pre.prefix;
+    case Prefix.PRE(next=Prefix.NOCOMPPRE()) then pre.prefix + "[" + ExpressionDump.printSubscriptLstStr(pre.subscripts) + "]";
+    case Prefix.PRE(subscripts={}) then printComponentPrefixStr(pre.next)+"."+pre.prefix;
+    case Prefix.PRE() then printComponentPrefixStr(pre.next)+"."+pre.prefix + "[" + ExpressionDump.printSubscriptLstStr(pre.subscripts) + "]";
+  end match;
+end printComponentPrefixStr;
 
 public function printPrefixStr "Prints a Prefix to a string."
   input Prefix.Prefix inPrefix;
@@ -81,21 +100,21 @@ algorithm
 
     case Prefix.NOPRE() then "<Prefix.NOPRE()>";
     case Prefix.PREFIX(Prefix.NOCOMPPRE(),_) then "<Prefix.PREFIX(Prefix.NOCOMPPRE())>";
-    case Prefix.PREFIX(Prefix.PRE(str,_,{},Prefix.NOCOMPPRE(),_),_) then str;
-    case Prefix.PREFIX(Prefix.PRE(str,_,ss,Prefix.NOCOMPPRE(),_),_)
+    case Prefix.PREFIX(Prefix.PRE(str,_,{},Prefix.NOCOMPPRE(),_,_),_) then str;
+    case Prefix.PREFIX(Prefix.PRE(str,_,ss,Prefix.NOCOMPPRE(),_,_),_)
       equation
         s = stringAppend(str, "[" + stringDelimitList(
           List.map(ss, ExpressionDump.subscriptString), ", ") + "]");
       then
         s;
-    case Prefix.PREFIX(Prefix.PRE(str,_,{},rest,_),cp)
+    case Prefix.PREFIX(Prefix.PRE(str,_,{},rest,_,_),cp)
       equation
         rest_1 = printPrefixStr(Prefix.PREFIX(rest,cp));
         s = stringAppend(rest_1, ".");
         s_1 = stringAppend(s, str);
       then
         s_1;
-    case Prefix.PREFIX(Prefix.PRE(str,_,ss,rest,_),cp)
+    case Prefix.PREFIX(Prefix.PRE(str,_,ss,rest,_,_),cp)
       equation
         rest_1 = printPrefixStr(Prefix.PREFIX(rest,cp));
         s = stringAppend(rest_1, ".");
@@ -166,6 +185,7 @@ public function prefixAdd "This function is used to extend a prefix with another
   input Prefix.Prefix inPrefix;
   input SCode.Variability vt;
   input ClassInf.State ci_state;
+  input SourceInfo inInfo;
   output Prefix.Prefix outPrefix;
 algorithm
   outPrefix := match (inIdent,inType,inIntegerLst,inPrefix,vt,ci_state)
@@ -175,10 +195,10 @@ algorithm
       Prefix.ComponentPrefix p;
 
     case (i,_,s,Prefix.PREFIX(p,_),_,_)
-      then Prefix.PREFIX(Prefix.PRE(i,inType,s,p,ci_state),Prefix.CLASSPRE(vt));
+      then Prefix.PREFIX(Prefix.PRE(i,inType,s,p,ci_state,inInfo),Prefix.CLASSPRE(vt));
 
     case(i,_,s,Prefix.NOPRE(),_,_)
-      then Prefix.PREFIX(Prefix.PRE(i,inType,s,Prefix.NOCOMPPRE(),ci_state),Prefix.CLASSPRE(vt));
+      then Prefix.PREFIX(Prefix.PRE(i,inType,s,Prefix.NOCOMPPRE(),ci_state,inInfo),Prefix.CLASSPRE(vt));
   end match;
 end prefixAdd;
 
@@ -194,8 +214,10 @@ algorithm
       Prefix.ComponentPrefix c;
       ClassInf.State ci_state;
       list<DAE.Dimension> pdims;
-    case (Prefix.PREFIX(Prefix.PRE(prefix = a, dimensions = pdims, subscripts = b,ci_state=ci_state),cp))
-      then Prefix.PREFIX(Prefix.PRE(a,pdims,b,Prefix.NOCOMPPRE(),ci_state),cp);
+      SourceInfo info;
+
+    case (Prefix.PREFIX(Prefix.PRE(prefix = a, dimensions = pdims, subscripts = b,ci_state=ci_state, info = info),cp))
+      then Prefix.PREFIX(Prefix.PRE(a,pdims,b,Prefix.NOCOMPPRE(),ci_state,info),cp);
   end match;
 end prefixFirst;
 
@@ -297,26 +319,35 @@ public function prefixToPath "Convert a Prefix to a Path"
   input Prefix.Prefix inPrefix;
   output Absyn.Path outPath;
 algorithm
-  outPath := matchcontinue (inPrefix)
+  outPath := match inPrefix
+    local
+      Prefix.ComponentPrefix ss;
+    case Prefix.PREFIX(ss,_) then componentPrefixToPath(ss);
+  end match;
+end prefixToPath;
+
+public function identAndPrefixToPath "Convert a Ident/Prefix to a String"
+  input String ident;
+  input Prefix.Prefix inPrefix;
+  output String str;
+algorithm
+  str := Absyn.pathString(PrefixUtil.prefixPath(Absyn.IDENT(ident),inPrefix));
+end identAndPrefixToPath;
+
+public function componentPrefixToPath "Convert a Prefix to a Path"
+  input Prefix.ComponentPrefix pre;
+  output Absyn.Path path;
+algorithm
+  path := match pre
     local
       String s;
-      Absyn.Path p;
       Prefix.ComponentPrefix ss;
-      Prefix.ClassPrefix cp;
-
-    case Prefix.NOPRE()
-      equation
-        /*Print.printBuf("#-- Error: Cannot convert empty prefix to a path\n");*/
-      then
-        fail();
-    case Prefix.PREFIX(Prefix.PRE(prefix = s,next = Prefix.NOCOMPPRE()),_) then Absyn.IDENT(s);
-    case Prefix.PREFIX(Prefix.PRE(prefix = s,next = ss),cp)
-      equation
-        p = prefixToPath(Prefix.PREFIX(ss,cp));
-      then
-        Absyn.QUALIFIED(s,p);
-  end matchcontinue;
-end prefixToPath;
+    case Prefix.PRE(prefix = s,next = Prefix.NOCOMPPRE())
+      then Absyn.IDENT(s);
+    case Prefix.PRE(prefix = s,next = ss)
+      then Absyn.QUALIFIED(s,componentPrefixToPath(ss));
+  end match;
+end componentPrefixToPath;
 
 public function prefixCref "Prefix a ComponentRef variable by adding the supplied prefix to
   it and returning a new ComponentRef.
@@ -380,7 +411,7 @@ algorithm
     case (cache,_,_,Prefix.PREFIX(Prefix.NOCOMPPRE(),_),SOME(cref)) then (cache,cref);
     case (cache,env,_,Prefix.PREFIX(Prefix.PRE(prefix = i,dimensions=ds,subscripts = s,next = xs,ci_state=ci_state),cp),NONE())
       equation
-        ident_ty = Expression.liftArrayLeftList(DAE.T_COMPLEX(ci_state, {}, NONE(), DAE.emptyTypeSource), ds);
+        ident_ty = Expression.liftArrayLeftList(DAE.T_COMPLEX(ci_state, {}, NONE()), ds);
         cref_ = ComponentReference.makeCrefIdent(i,ident_ty,s);
         (cache,cref_1) = prefixToCref2(cache,env,inIH,Prefix.PREFIX(xs,cp), SOME(cref_));
       then
@@ -388,7 +419,7 @@ algorithm
     case (cache,env,_,Prefix.PREFIX(Prefix.PRE(prefix = i,dimensions=ds,subscripts = s,next = xs,ci_state=ci_state),cp),SOME(cref))
       equation
         (cache,cref) = prefixSubscriptsInCref(cache,env,inIH,inPrefix,cref);
-        ident_ty = Expression.liftArrayLeftList(DAE.T_COMPLEX(ci_state, {}, NONE(), DAE.emptyTypeSource), ds);
+        ident_ty = Expression.liftArrayLeftList(DAE.T_COMPLEX(ci_state, {}, NONE()), ds);
         cref_2 = ComponentReference.makeCrefQual(i,ident_ty,s,cref);
         (cache,cref_1) = prefixToCref2(cache,env,inIH,Prefix.PREFIX(xs,cp), SOME(cref_2));
       then
@@ -423,13 +454,13 @@ algorithm
     case (Prefix.PREFIX(Prefix.NOCOMPPRE(),_),SOME(cref)) then SOME(cref);
     case (Prefix.PREFIX(Prefix.PRE(prefix = i,subscripts = s,next = xs),cp),NONE())
       equation
-        cref_ = ComponentReference.makeCrefIdent(i,DAE.T_COMPLEX(ClassInf.UNKNOWN(Absyn.IDENT("")), {}, NONE(), DAE.emptyTypeSource),s);
+        cref_ = ComponentReference.makeCrefIdent(i,DAE.T_COMPLEX(ClassInf.UNKNOWN(Absyn.IDENT("")), {}, NONE()),s);
         cref_1 = prefixToCrefOpt2(Prefix.PREFIX(xs,cp), SOME(cref_));
       then
         cref_1;
     case (Prefix.PREFIX(Prefix.PRE(prefix = i,subscripts = s,next = xs),cp),SOME(cref))
       equation
-        cref_ = ComponentReference.makeCrefQual(i,DAE.T_COMPLEX(ClassInf.UNKNOWN(Absyn.IDENT("")), {}, NONE(), DAE.emptyTypeSource),s,cref);
+        cref_ = ComponentReference.makeCrefQual(i,DAE.T_COMPLEX(ClassInf.UNKNOWN(Absyn.IDENT("")), {}, NONE()),s,cref);
         cref_1 = prefixToCrefOpt2(Prefix.PREFIX(xs,cp), SOME(cref_));
       then
         cref_1;
@@ -501,7 +532,7 @@ algorithm
       equation
         (cache,subs) = prefixSubscripts(cache,env,inIH,pre,subs);
         cr = ComponentReference.makeCrefIdent(id,tp,subs);
-      then (cache,ComponentReference.implode(listReverse(cr::acc)));
+      then (cache,ComponentReference.implode_reverse(cr::acc));
     case(cache,env,_,_,DAE.CREF_QUAL(id,tp,subs,cr),_)
       equation
         (cache,subs) = prefixSubscripts(cache,env,inIH,pre,subs);
@@ -684,6 +715,7 @@ algorithm
       DAE.ReductionIterators riters;
       DAE.CallAttributes attr;
       list<String> fieldNames;
+      DAE.ClockKind clk;
 
     // no prefix, return the input expression
     case (cache,_,_,e,Prefix.NOPRE())
@@ -713,15 +745,22 @@ algorithm
       equation
         (cache, crefExp) = prefixExpCref(cache, env, ih, inExp, pre);
       then
-        (cache,crefExp);
+        (cache, crefExp);
+
+    // clocks
+    case (cache, env, ih, DAE.CLKCONST(clk), pre)
+      equation
+        (cache, clk) = prefixClockKind(cache, env, ih, clk, pre);
+      then
+        (cache, DAE.CLKCONST(clk));
 
     case (cache,env,ih,(DAE.ASUB(exp = e1, sub = expl)),pre)
       equation
-        (cache,es_1) = prefixExpList(cache, env, ih, expl, pre);
-        (cache,e1) = prefixExp(cache, env, ih, e1,pre);
+        (cache, es_1) = prefixExpList(cache, env, ih, expl, pre);
+        (cache, e1) = prefixExp(cache, env, ih, e1, pre);
         e2 = Expression.makeASUB(e1,es_1);
       then
-        (cache,e2);
+        (cache, e2);
 
     case (cache,env,ih,(DAE.TSUB(e1, index_, t)),pre)
       equation
@@ -876,10 +915,18 @@ algorithm
     case (cache,_,_,DAE.META_OPTION(NONE()),_)
       equation
       then (cache,DAE.META_OPTION(NONE()));
+
+    case (cache,env,ih,e as DAE.UNBOX(e1),p)
+      equation
+        (cache,e1) = prefixExp(cache, env, ih, e1, p);
+        e.exp = e1;
+      then (cache,e);
         // ------------------------
 
     // no prefix, return the input expression
     case (cache,_,_,e,Prefix.NOPRE()) then (cache,e);
+
+    case (_,_,_,e as DAE.EMPTY(),_) then (inCache,e);
 
     case (_,_,_,e,_)
       equation
@@ -1022,187 +1069,114 @@ end prefixExpList;
 
 //--------------------------------------------
 //   PART OF THE WORKAROUND FOR VALUEBLOCKS. KS
-protected function prefixDecls "Add the supplied prefix to the DAE elements located in Expression.mo.
-  PART OF THE WORKAROUND FOR VALUEBLOCKS"
-  input FCore.Cache cache;
-  input FCore.Graph env;
-  input InstanceHierarchy inIH;
-  input list<DAE.Element> lDecls;
-  input list<DAE.Element> accList;
-  input Prefix.Prefix p;
-  output FCore.Cache outCache;
-  output list<DAE.Element> outDecls;
-algorithm
-  (outCache,outDecls) := matchcontinue (cache,env,inIH,lDecls,accList,p)
-    local
-      list<DAE.Element> localAccList;
-      Prefix.Prefix pre;
-      FCore.Cache localCache;
-      FCore.Graph localEnv;
-      DAE.ElementSource source "the origin of the element";
-      InstanceHierarchy ih;
-      DAE.ComponentRef cRef;
-      DAE.VarKind v1 "varible kind variable, constant, parameter, etc." ;
-      DAE.VarParallelism prl;
-      DAE.VarDirection v2 "input, output or bidir" ;
-      DAE.VarVisibility prot "if protected or public";
-      DAE.Type ty "the type" ;
-      Option<DAE.Exp> binding "binding" ;
-      DAE.InstDims dims "Binding expression e.g. for parameters" ;
-      DAE.ConnectorType ct;
-      list<Absyn.Path> f "the list of classes";
-      Option<DAE.VariableAttributes> vAttr;
-      Option<SCode.Comment> com "comment";
-      Absyn.InnerOuter inOut "inner/outer required to 'change' outer references";
-      list<DAE.Element> rest,temp;
-      DAE.Element elem;
-      DAE.Exp e1,e2;
-
-    case (localCache,_,_,{},localAccList,_) then (localCache,localAccList);
-    // variables
-    case (localCache,localEnv,ih,DAE.VAR(cRef,v1,v2,prl,prot,ty,binding,dims,
-                            ct,source,vAttr,com,inOut)
-       :: rest,localAccList,pre)
-    equation
-      (localCache,cRef) = prefixCref(localCache,localEnv,ih,pre,cRef);
-      elem = DAE.VAR(cRef,v1,v2,prl,prot,ty,binding,dims,ct,source,vAttr,com,inOut);
-      localAccList = listAppend(localAccList,List.create(elem));
-      (localCache,temp) = prefixDecls(localCache,localEnv,ih,rest,localAccList,pre);
-    then (localCache,temp);
-
-    // equations
-    case (localCache,localEnv,ih,DAE.EQUATION(e1,e2,source) :: rest,localAccList,pre)
-      equation
-        (localCache,e1) = prefixExp(localCache,localEnv,ih,e1,pre);
-        (localCache,e2) = prefixExp(localCache,localEnv,ih,e2,pre);
-        elem = DAE.EQUATION(e1,e2,source);
-        localAccList = listAppend(localAccList,List.create(elem));
-        (localCache,temp) = prefixDecls(localCache,localEnv,ih,rest,localAccList,pre);
-      then (localCache,temp);
-    // failure
-    else
-      equation
-        print("Prefix.prefixDecls failed\n");
-      then fail();
- end matchcontinue;
-end prefixDecls;
-
 protected function prefixStatements "Prefix statements.
   PART OF THE WORKAROUND FOR VALUEBLOCKS"
   input FCore.Cache cache;
   input FCore.Graph env;
   input InstanceHierarchy inIH;
   input list<DAE.Statement> stmts;
-  input list<DAE.Statement> accList;
   input Prefix.Prefix p;
-  output FCore.Cache outCache;
-  output list<DAE.Statement> outStmts;
+  output FCore.Cache outCache = cache;
+  output list<DAE.Statement> outStmts = {};
+protected
 algorithm
-  (outCache,outStmts) := match (cache,env,inIH,stmts,accList,p)
-    local
-      FCore.Cache localCache;
-      FCore.Graph localEnv;
+  for st in stmts loop
+    _ := match st
+      local
+        DAE.Type t;
+        DAE.Exp e,e1,e2,e3;
+        DAE.ElementSource source;
+        DAE.Statement elem;
+
       list<DAE.Statement> localAccList,rest;
       Prefix.Prefix pre;
       InstanceHierarchy ih;
-      DAE.ElementSource source;
-      DAE.Type t;
-      DAE.Statement elem;
       list<DAE.Statement> elems,sList,b;
       String s,id;
-      DAE.Exp e,e1,e2,e3;
       list<DAE.Exp> eLst;
       DAE.ComponentRef cRef;
       Boolean bool;
       DAE.Else elseBranch;
       Integer ix;
+      case DAE.STMT_ASSIGN(t,e1,e,source)
+        equation
+          (outCache,e1) = prefixExp(outCache,env,inIH,e1,p);
+          (outCache,e) = prefixExp(outCache,env,inIH,e,p);
+          elem = DAE.STMT_ASSIGN(t,e1,e,source);
+          outStmts = elem::outStmts;
+        then ();
 
-    case (localCache,_,_,{},localAccList,_) then (localCache,localAccList);
+      case DAE.STMT_TUPLE_ASSIGN(t,eLst,e,source)
+        equation
+          (outCache,e) = prefixExp(outCache,env,inIH,e,p);
+          (outCache,eLst) = prefixExpList(outCache,env,inIH,eLst,p);
+          elem = DAE.STMT_TUPLE_ASSIGN(t,eLst,e,source);
+          outStmts = elem::outStmts;
+        then ();
 
-    case (localCache,localEnv,ih,DAE.STMT_ASSIGN(t,e1,e,source) :: rest,localAccList,pre)
-      equation
-        (localCache,e1) = prefixExp(localCache,localEnv,ih,e1,pre);
-        (localCache,e) = prefixExp(localCache,localEnv,ih,e,pre);
-        elem = DAE.STMT_ASSIGN(t,e1,e,source);
-        localAccList = listAppend(localAccList,List.create(elem));
-        (localCache,elems) = prefixStatements(localCache,localEnv,ih,rest,localAccList,pre);
-      then (localCache,elems);
+      case DAE.STMT_ASSIGN_ARR(t,e1,e,source)
+        equation
+          (outCache,e1) = prefixExp(outCache,env,inIH,e1,p);
+          (outCache,e) = prefixExp(outCache,env,inIH,e,p);
+          elem = DAE.STMT_ASSIGN_ARR(t,e1,e,source);
+          outStmts = elem::outStmts;
+        then ();
 
-    case (localCache,localEnv,ih,DAE.STMT_TUPLE_ASSIGN(t,eLst,e,source) :: rest,localAccList,pre)
-      equation
-        (localCache,e) = prefixExp(localCache,localEnv,ih,e,pre);
-        (localCache,eLst) = prefixExpList(localCache,localEnv,ih,eLst,pre);
-        elem = DAE.STMT_TUPLE_ASSIGN(t,eLst,e,source);
-        localAccList = listAppend(localAccList,List.create(elem));
-        (localCache,elems) = prefixStatements(localCache,localEnv,ih,rest,localAccList,pre);
-      then (localCache,elems);
+      case DAE.STMT_FOR(t,bool,id,ix,e,sList,source)
+        equation
+          (outCache,e) = prefixExp(outCache,env,inIH,e,p);
+          (outCache,sList) = prefixStatements(outCache,env,inIH,sList,p);
+          elem = DAE.STMT_FOR(t,bool,id,ix,e,sList,source);
+          outStmts = elem::outStmts;
+        then ();
 
-    case (localCache,localEnv,ih,DAE.STMT_ASSIGN_ARR(t,e1,e,source) :: rest,localAccList,pre)
-      equation
-        (localCache,e1) = prefixExp(localCache,localEnv,ih,e1,pre);
-        (localCache,e) = prefixExp(localCache,localEnv,ih,e,pre);
-        elem = DAE.STMT_ASSIGN_ARR(t,e1,e,source);
-        localAccList = listAppend(localAccList,List.create(elem));
-        (localCache,elems) = prefixStatements(localCache,localEnv,ih,rest,localAccList,pre);
-      then (localCache,elems);
+      case DAE.STMT_IF(e1,sList,elseBranch,source)
+        equation
+          (outCache,e1) = prefixExp(outCache,env,inIH,e1,p);
+          (outCache,sList) = prefixStatements(outCache,env,inIH,sList,p);
+          (outCache,elseBranch) = prefixElse(outCache,env,inIH,elseBranch,p);
+          elem = DAE.STMT_IF(e1,sList,elseBranch,source);
+          outStmts = elem::outStmts;
+        then ();
 
-    case (localCache,localEnv,ih,DAE.STMT_FOR(t,bool,id,ix,e,sList,source) :: rest,localAccList,pre)
-      equation
-        (localCache,e) = prefixExp(localCache,localEnv,ih,e,pre);
-        (localCache,sList) = prefixStatements(localCache,localEnv,ih,sList,{},pre);
-        elem = DAE.STMT_FOR(t,bool,id,ix,e,sList,source);
-        localAccList = listAppend(localAccList,List.create(elem));
-        (localCache,elems) = prefixStatements(localCache,localEnv,ih,rest,localAccList,pre);
-      then (localCache,elems);
+      case DAE.STMT_WHILE(e1,sList,source)
+        equation
+          (outCache,e1) = prefixExp(outCache,env,inIH,e1,p);
+          (outCache,sList) = prefixStatements(outCache,env,inIH,sList,p);
+          elem = DAE.STMT_WHILE(e1,sList,source);
+          outStmts = elem::outStmts;
+        then ();
 
-  case (localCache,localEnv,ih,DAE.STMT_IF(e1,sList,elseBranch,source) :: rest,localAccList,pre)
-      equation
-        (localCache,e1) = prefixExp(localCache,localEnv,ih,e1,pre);
-        (localCache,sList) = prefixStatements(localCache,localEnv,ih,sList,{},pre);
-        (localCache,elseBranch) = prefixElse(localCache,localEnv,ih,elseBranch,pre);
-        elem = DAE.STMT_IF(e1,sList,elseBranch,source);
-        localAccList = listAppend(localAccList,List.create(elem));
-        (localCache,elems) = prefixStatements(localCache,localEnv,ih,rest,localAccList,pre);
-      then (localCache,elems);
+      case DAE.STMT_ASSERT(e1,e2,e3,source)
+        equation
+          (outCache,e1) = prefixExp(outCache,env,inIH,e1,p);
+          (outCache,e2) = prefixExp(outCache,env,inIH,e2,p);
+          (outCache,e3) = prefixExp(outCache,env,inIH,e3,p);
+          elem = DAE.STMT_ASSERT(e1,e2,e3,source);
+          outStmts = elem::outStmts;
+        then ();
 
-    case (localCache,localEnv,ih,DAE.STMT_WHILE(e1,sList,source) :: rest,localAccList,pre)
-      equation
-        (localCache,e1) = prefixExp(localCache,localEnv,ih,e1,pre);
-        (localCache,sList) = prefixStatements(localCache,localEnv,ih,sList,{},pre);
-        elem = DAE.STMT_WHILE(e1,sList,source);
-        localAccList = listAppend(localAccList,List.create(elem));
-        (localCache,elems) = prefixStatements(localCache,localEnv,ih,rest,localAccList,pre);
-      then (localCache,elems);
+      case DAE.STMT_FAILURE(b,source)
+        equation
+          (outCache,b) = prefixStatements(outCache,env,inIH,b,p);
+          elem = DAE.STMT_FAILURE(b,source);
+          outStmts = elem::outStmts;
+        then ();
 
-    case (localCache,localEnv,ih,DAE.STMT_ASSERT(e1,e2,e3,source) :: rest,localAccList,pre)
-      equation
-        (localCache,e1) = prefixExp(localCache,localEnv,ih,e1,pre);
-        (localCache,e2) = prefixExp(localCache,localEnv,ih,e2,pre);
-        (localCache,e3) = prefixExp(localCache,localEnv,ih,e3,pre);
-        elem = DAE.STMT_ASSERT(e1,e2,e3,source);
-        localAccList = listAppend(localAccList,List.create(elem));
-        (localCache,elems) = prefixStatements(localCache,localEnv,ih,rest,localAccList,pre);
-      then (localCache,elems);
-    case (localCache,localEnv,ih,DAE.STMT_FAILURE(b,source) :: rest,localAccList,pre)
-      equation
-        (localCache,b) = prefixStatements(localCache,localEnv,ih,b,{},pre);
-        elem = DAE.STMT_FAILURE(b,source);
-        localAccList = listAppend(localAccList,List.create(elem));
-        (localCache,elems) = prefixStatements(localCache,localEnv,ih,rest,localAccList,pre);
-      then (localCache,elems);
-    case (localCache,localEnv,ih,DAE.STMT_RETURN(source) :: rest,localAccList,pre)
+      case DAE.STMT_RETURN(source)
         equation
           elem = DAE.STMT_RETURN(source);
-          localAccList = listAppend(localAccList,List.create(elem));
-          (localCache,elems) = prefixStatements(localCache,localEnv,ih,rest,localAccList,pre);
-        then (localCache,elems);
-    case (localCache,localEnv,ih,DAE.STMT_BREAK(source) :: rest,localAccList,pre)
+          outStmts = elem::outStmts;
+        then ();
+
+      case DAE.STMT_BREAK(source)
         equation
           elem = DAE.STMT_BREAK(source);
-          localAccList = listAppend(localAccList,List.create(elem));
-          (localCache,elems) = prefixStatements(localCache,localEnv,ih,rest,localAccList,pre);
-        then (localCache,elems);
-  end match;
+          outStmts = elem::outStmts;
+        then ();
+    end match;
+  end for;
+  outStmts := Dangerous.listReverseInPlace(outStmts);
 end prefixStatements;
 
 protected function prefixElse "Prefix else statements.
@@ -1232,13 +1206,13 @@ algorithm
       equation
         (localCache,e) = prefixExp(localCache,localEnv,ih,e,pre);
         (localCache,el) = prefixElse(localCache,localEnv,ih,el,pre);
-        (localCache,lStmt) = prefixStatements(localCache,localEnv,ih,lStmt,{},pre);
+        (localCache,lStmt) = prefixStatements(localCache,localEnv,ih,lStmt,pre);
         stmt = DAE.ELSEIF(e,lStmt,el);
       then (localCache,stmt);
 
     case (localCache,localEnv,ih,DAE.ELSE(lStmt),pre)
       equation
-       (localCache,lStmt) = prefixStatements(localCache,localEnv,ih,lStmt,{},pre);
+       (localCache,lStmt) = prefixStatements(localCache,localEnv,ih,lStmt,pre);
         stmt = DAE.ELSE(lStmt);
       then (localCache,stmt);
   end match;
@@ -1292,7 +1266,6 @@ protected function prefixArrayDimensions
 algorithm
   (oty,otpl) := match (oty,tpl)
     local
-      DAE.TypeSource ts;
       FCore.Cache cache;
       FCore.Graph env;
       InnerOuter.InstHierarchy ih;
@@ -1344,6 +1317,16 @@ algorithm
   end matchcontinue;
 end prefixDimensions;
 
+public function isPrefix
+  input Prefix.Prefix prefix;
+  output Boolean isPrefix;
+algorithm
+  isPrefix := match prefix
+    case Prefix.PREFIX() then true;
+    else false;
+  end match;
+end isPrefix;
+
 public function isNoPrefix
   input Prefix.Prefix inPrefix;
   output Boolean outIsEmpty;
@@ -1353,6 +1336,137 @@ algorithm
     else false;
   end match;
 end isNoPrefix;
+
+public function prefixClockKind "Add the supplied prefix to the clock kind"
+  input FCore.Cache inCache;
+  input FCore.Graph inEnv;
+  input InnerOuter.InstHierarchy inIH;
+  input DAE.ClockKind inClkKind;
+  input Prefix.Prefix inPrefix;
+  output FCore.Cache outCache;
+  output DAE.ClockKind outClkKind;
+algorithm
+  (outCache, outClkKind) := match (inCache, inEnv, inIH, inClkKind, inPrefix)
+    local
+      DAE.Exp e,resolution,interval,method;
+      DAE.ClockKind clkKind;
+      FCore.Cache cache;
+      FCore.Graph env;
+      InstanceHierarchy ih;
+      Prefix.Prefix p;
+
+    // clock kinds
+    case (cache, _, _, DAE.INFERRED_CLOCK(), _)
+      then (cache, inClkKind);
+
+    case (cache, env, ih, DAE.INTEGER_CLOCK(e, resolution), p)
+      equation
+        (cache, e) = prefixExp(cache, env, ih, e, p);
+        (cache, resolution) = prefixExp(cache, env, ih, resolution, p);
+        clkKind = DAE.INTEGER_CLOCK(e, resolution);
+      then
+        (cache, clkKind);
+
+    case (cache, env, ih, DAE.REAL_CLOCK(e), p)
+      equation
+        (cache, e) = prefixExp(cache, env, ih, e, p);
+        clkKind = DAE.REAL_CLOCK(e);
+      then
+        (cache, clkKind);
+
+    case (cache, env, ih, DAE.BOOLEAN_CLOCK(e, interval), p)
+      equation
+        (cache, e) = prefixExp(cache, env, ih, e, p);
+        (cache, interval) = prefixExp(cache, env, ih, interval, p);
+        clkKind = DAE.BOOLEAN_CLOCK(e, interval);
+      then
+        (cache, clkKind);
+
+    case (cache, env, ih, DAE.SOLVER_CLOCK(e, method), p)
+      equation
+        (cache, e) = prefixExp(cache, env, ih, e, p);
+        (cache, method) = prefixExp(cache, env, ih, method, p);
+        clkKind = DAE.SOLVER_CLOCK(e, method);
+      then
+        (cache, clkKind);
+
+  end match;
+end prefixClockKind;
+
+public function getPrefixInfo
+  input Prefix.Prefix inPrefix;
+  output SourceInfo outInfo;
+algorithm
+  outInfo := match inPrefix
+    case Prefix.PREFIX(compPre = Prefix.PRE(info = outInfo)) then outInfo;
+    else Absyn.dummyInfo;
+  end match;
+end getPrefixInfo;
+
+public function prefixHashWork
+  input Prefix.ComponentPrefix inPrefix;
+  input output Integer hash;
+algorithm
+  hash := match inPrefix
+    case Prefix.PRE() then prefixHashWork(inPrefix.next, 31*hash + stringHashDjb2(inPrefix.prefix));
+    else hash;
+  end match;
+end prefixHashWork;
+
+public function componentPrefixPathEqual
+  input Prefix.ComponentPrefix pre1,pre2;
+  output Boolean eq;
+algorithm
+  eq := match (pre1,pre2)
+    case (Prefix.PRE(),Prefix.PRE())
+      then if pre1.prefix==pre2.prefix then componentPrefixPathEqual(pre1.next, pre2.next) else false;
+    case (Prefix.NOCOMPPRE(),Prefix.NOCOMPPRE()) then true;
+    else false;
+  end match;
+end componentPrefixPathEqual;
+
+public function componentPrefix
+  input Prefix.Prefix inPrefix;
+  output Prefix.ComponentPrefix outPrefix;
+algorithm
+  outPrefix := match inPrefix
+    case Prefix.PREFIX() then inPrefix.compPre;
+    else Prefix.NOCOMPPRE();
+  end match;
+end componentPrefix;
+
+public function writeComponentPrefix
+  input File.File file;
+  input Prefix.ComponentPrefix pre;
+  input File.Escape escape=File.Escape.None;
+algorithm
+  _ := match pre
+    case Prefix.PRE(next=Prefix.NOCOMPPRE())
+    algorithm
+      File.writeEscape(file, pre.prefix, escape);
+      ComponentReference.writeSubscripts(file, pre.subscripts, escape);
+    then ();
+    case Prefix.PRE()
+    algorithm
+      writeComponentPrefix(file, pre.next); // Stored in reverse order...
+      File.writeEscape(file, pre.prefix, escape);
+      ComponentReference.writeSubscripts(file, pre.subscripts, escape);
+    then ();
+    else ();
+  end match;
+end writeComponentPrefix;
+
+public function haveSubs "Function: crefHaveSubs
+  Checks whether Prefix has any subscripts, recursive "
+  input Prefix.ComponentPrefix pre;
+  output Boolean ob;
+algorithm
+  ob := match pre
+    case Prefix.PRE(subscripts = {}) then haveSubs(pre.next);
+    case Prefix.PRE() then true;
+    else false;
+  end match;
+end haveSubs;
 
 annotation(__OpenModelica_Interface="frontend");
 end PrefixUtil;

@@ -101,6 +101,12 @@ void ocl_get_device(){
     size_t arg_nr;
     clGetPlatformIDs(MAX_DEVICE, NULL, &nr_dev);
 
+    if (nr_dev < 1) {
+        printf("- %d OpenCL devices available.\n\n", nr_dev);
+        printf("No valid OpenCL device found. Make sure you have installed the correct OpenCL drivers and have registered the ICDs (Installable Client Drivers) for your devices.\n");
+        exit(1);
+    }
+
     //Get an OpenCL platform
     cl_platform_id* cpPlatform = new cl_platform_id[nr_dev];
     clGetPlatformIDs(nr_dev, cpPlatform, NULL);
@@ -157,10 +163,10 @@ void ocl_get_device(){
             clGetDeviceInfo(ocl_device, CL_DEVICE_MAX_MEM_ALLOC_SIZE, sizeof(cl_ulong), &mem2, NULL);
             printf("%d CL_DEVICE_MAX_MEM_ALLOC_SIZE: %I64d MB\n", i, mem2/1024/1024);
             clGetDeviceInfo(ocl_device, CL_DEVICE_MAX_PARAMETER_SIZE, sizeof(size_t), &arg_nr, NULL);
-            printf("%d CL_DEVICE_MAX_PARAMETER_SIZE: %d MB\n", i, arg_nr);
+            printf("%d CL_DEVICE_MAX_PARAMETER_SIZE: %ld MB\n", i, arg_nr);
 
             clGetDeviceInfo(ocl_device, CL_DEVICE_MAX_WORK_GROUP_SIZE, sizeof(size_t), &arg_nr, NULL);
-            printf("%d CL_DEVICE_MAX_WORK_GROUP_SIZE: %d \n", i, arg_nr);
+            printf("%d CL_DEVICE_MAX_WORK_GROUP_SIZE: %ld \n", i, arg_nr);
             MAX_THREADS_WORKGROUP = (modelica_integer)arg_nr;   //default number of threads is the max number of threads!
 
             clGetDeviceInfo(ocl_device, CL_DEVICE_PREFERRED_VECTOR_WIDTH_DOUBLE  , sizeof(cl_uint), &mem, NULL);
@@ -213,9 +219,12 @@ void ocl_initialize(){
     }
 
     gettimeofday(&t2, NULL);
+
+#if BE_OCL_VERBOSE
     elapsedTime = (t2.tv_sec - t1.tv_sec) * 1000.0;      // sec to ms
     elapsedTime += (t2.tv_usec - t1.tv_usec) / 1000.0;   // us to ms
     printf ("\tOpenCL initialization :        %lf ms\n", elapsedTime);
+#endif
 
     setenv("CUDA_CACHE_DISABLE", "1", 1);
 }
@@ -465,9 +474,12 @@ void ocl_execute_kernel(cl_kernel kernel){
 
 
     gettimeofday(&t2, NULL);
+#if BE_OCL_VERBOSE
     elapsedTime = (t2.tv_sec - t1.tv_sec) * 1000.0;      // sec to ms
     elapsedTime += (t2.tv_usec - t1.tv_usec) / 1000.0;   // us to ms
     printf ("\tKernel Execution      :        %lf ms\n", elapsedTime);
+#endif
+
 
     if(err) exit(1);
 

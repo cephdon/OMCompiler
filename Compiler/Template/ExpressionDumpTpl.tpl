@@ -61,9 +61,16 @@ match exp
     let func_str = AbsynDumpTpl.dumpPathNoQual(path)
     let argl = dumpExpList(expList, stringDelimiter, ", ")
     'function <%func_str%>(<%argl%>)'
+  case ARRAY(array={}) then
+    if (Flags.getConfigBool(Flags.MODELICA_OUTPUT)) then
+    'fill(0,0)'
+    else
+    let expl = dumpExpList(array, stringDelimiter, ", ")
+    '<%if typeinfo() then (if scalar then '/* scalar <%unparseType(ty)%>*/' else '/* non-scalar <%unparseType(ty)%> */ ')%>{<%expl%>}'
   case ARRAY(__) then
     let expl = dumpExpList(array, stringDelimiter, ", ")
     '<%if typeinfo() then (if scalar then '/* scalar <%unparseType(ty)%>*/' else '/* non-scalar <%unparseType(ty)%> */ ')%>{<%expl%>}'
+
   case MATRIX(__) then
     let mat_str = (matrix |> row => dumpExpList(row, stringDelimiter, ", ") ;separator="}, {")
     '<%if typeinfo() then '/* matrix <%unparseType(ty) %> */ '%>{{<%mat_str%>}}'
@@ -92,6 +99,12 @@ match exp
     let rparen = if needs_paren then ")"
     let exp_str = dumpExp(exp, stringDelimiter)
     '<%lparen%><%exp_str%><%rparen%>[<%ix%>]'
+  case RSUB(__) then
+    let needs_paren = parenthesizeSubExp(exp)
+    let lparen = if needs_paren then "("
+    let rparen = if needs_paren then ")"
+    let exp_str = dumpExp(exp, stringDelimiter)
+    '<%if typeinfo() then '/*RSUB: <%unparseType(ty)%>*/'%><%lparen%><%exp_str%><%rparen%>.<%fieldName%>'
   case SIZE(__) then
     let exp_str = dumpExp(exp, stringDelimiter)
     let dim_str = match sz case SOME(dim) then ', <%dumpExp(dim, stringDelimiter)%>'
@@ -182,16 +195,19 @@ match clk
   case INFERRED_CLOCK(__) then "Clock()"
   case INTEGER_CLOCK(__) then
     let ic_str = dumpExp(intervalCounter, stringDelimiter)
-    'Clock(<%ic_str%>, <%resolution%>)'
+    let re_str = dumpExp(resolution, stringDelimiter)
+    'Clock(<%ic_str%>, <%re_str%>)'
   case REAL_CLOCK(__) then
     let interval_str = dumpExp(interval, stringDelimiter)
     'Clock(<%interval_str%>)'
   case BOOLEAN_CLOCK(__) then
     let condition_str = dumpExp(condition, stringDelimiter)
-    'Clock(<%condition_str%>, <%startInterval%>)'
+    let si_str = dumpExp(startInterval, stringDelimiter)
+    'Clock(<%condition_str%>, <%si_str%>)'
   case SOLVER_CLOCK(__) then
     let clk_str = dumpExp(c, stringDelimiter)
-    'Clock(<%clk_str%>, "<%solverMethod%>")'
+    let sm_str = dumpExp(solverMethod, stringDelimiter)
+    'Clock(<%clk_str%>, <%sm_str%>)'
 end dumpClockKind;
 
 
@@ -207,6 +223,9 @@ match cref
   case CREF_QUAL(__) then
     let sub_str = dumpSubscripts(subscriptLst)
     let cref_str = dumpCref(componentRef)
+    if (Flags.getConfigBool(Flags.MODELICA_OUTPUT)) then
+    '<%ident%><%sub_str%>__<%cref_str%>'
+    else
     '<%ident%><%sub_str%>.<%cref_str%>'
   case WILD() then '_'
   case OPTIMICA_ATTR_INST_CREF(__) then
@@ -217,6 +236,10 @@ end dumpCref;
 template dumpSubscripts(list<DAE.Subscript> subscripts)
 ::=
 if subscripts then
+  if (Flags.getConfigBool(Flags.MODELICA_OUTPUT)) then
+  let sub_str = (subscripts |> sub => dumpSubscript(sub) ;separator="_")
+  '_<%sub_str%>'
+  else
   let sub_str = (subscripts |> sub => dumpSubscript(sub) ;separator=",")
   '[<%sub_str%>]'
 end dumpSubscripts;
@@ -371,8 +394,8 @@ match ty
   case T_METAOPTION(__) then
     let ty_str = dumpType(ty)
     'Option<<%ty_str%>>'
-  case T_METAUNIONTYPE(source = {p}) then AbsynDumpTpl.dumpPath(p)
-  case T_METARECORD(source = {p}) then AbsynDumpTpl.dumpPath(p)
+  case T_METAUNIONTYPE(__) then AbsynDumpTpl.dumpPath(path)
+  case T_METARECORD(__) then AbsynDumpTpl.dumpPath(path)
   case T_METAARRAY(__) then
     let ty_str = dumpType(ty)
     'array<<%ty_str%>>'
@@ -605,8 +628,6 @@ match exp
 end dumpExpCrefs;
 
 
-
-
 template errorMsg(String errMessage)
 ::=
 let() = Tpl.addTemplateError(errMessage)
@@ -614,6 +635,18 @@ let() = Tpl.addTemplateError(errMessage)
 <%errMessage%>
 >>
 end errorMsg;
+
+
+template dumpConstraints(list<DAE.Constraint> cons)
+::=
+  (cons |> con => (match con
+    case con as DAE.CONSTRAINT_DT(constraint = c, localCon=true) then
+      '<%dumpExp(c,"\"")%> (local)'
+    case con as DAE.CONSTRAINT_DT(constraint = c, localCon=false) then
+      '<%dumpExp(c,"\"")%> (global)'
+   )
+  ;separator=", ")
+end dumpConstraints;
 
 annotation(__OpenModelica_Interface="frontend");
 end ExpressionDumpTpl;

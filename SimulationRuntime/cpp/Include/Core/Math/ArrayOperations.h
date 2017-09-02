@@ -46,6 +46,11 @@ sp (shape,indices) of source array
 template < typename T >
 void create_array_from_shape(const spec_type& sp,BaseArray<T>& s,BaseArray<T>& d);
 
+template < typename T >
+void fill_array_from_shape(const spec_type& sp,BaseArray<T>& s,BaseArray<T>& d);
+
+void BOOST_EXTENSION_EXPORT_DECL identity_alloc(size_t n, DynArrayDim2<int>& I);
+
 template <typename T>
 void promote_array(size_t n, const BaseArray<T>& s, BaseArray<T>& d);
 
@@ -56,7 +61,13 @@ template <typename T>
 void multiply_array(const BaseArray<T> &leftArray, const BaseArray<T> &rightArray, BaseArray<T> &resultArray);
 
 template <typename T>
+void multiply_array_elem_wise(const BaseArray<T> &leftArray, const BaseArray<T> &rightArray, BaseArray<T> &resultArray);
+
+template <typename T>
 void divide_array(const BaseArray<T>& inputArray, const T &b, BaseArray<T>& outputArray);
+
+template <typename T>
+void divide_array_elem_wise(const BaseArray<T> &leftArray, const BaseArray<T> &rightArray, BaseArray<T> &resultArray);
 
 template <typename T>
 void fill_array(BaseArray<T>& inputArray, T b);
@@ -71,7 +82,13 @@ template <typename T>
 void subtract_array(const BaseArray<T>& leftArray, const BaseArray<T>& rightArray, BaseArray<T>& resultArray);
 
 template <typename T>
+void subtract_array_scalar(const BaseArray<T>& inputArray, T b, BaseArray<T>& outputArray);
+
+template <typename T>
 void add_array(const BaseArray<T>& leftArray, const BaseArray<T>& rightArray, BaseArray<T>& resultArray);
+
+template <typename T>
+void add_array_scalar(const BaseArray<T>& inputArray, T b, BaseArray<T>& outputArray);
 
 template <typename T>
 void usub_array(const BaseArray<T>& a , BaseArray<T>& b);
@@ -96,8 +113,11 @@ cross product of two arrays (a,b type as template parameter)
 template <typename T>
 void cross_array(const BaseArray<T>& a, const BaseArray<T>& b, BaseArray<T>& res);
 
-void BOOST_EXTENSION_EXPORT_DECL convertBoolToInt(const BaseArray<bool>& a, BaseArray<int>& b);
-void BOOST_EXTENSION_EXPORT_DECL convertIntToBool(const BaseArray<int>& a, BaseArray<bool>& b);
+/**
+cast type of array elements
+*/
+template <typename S, typename T>
+void cast_array(const BaseArray<S> &a, BaseArray<T> &b);
 
 /**
  * Permutes dims between row and column major storage layout,

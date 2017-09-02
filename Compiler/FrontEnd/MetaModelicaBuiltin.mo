@@ -779,6 +779,14 @@ function valueEq<A>
 external "builtin";
 end valueEq;
 
+function valueCompare<A>
+  "a1 > a2?"
+  input A a1;
+  input A a2;
+  output Integer i "-1, 0, 1";
+external "builtin";
+end valueCompare;
+
 function valueHashMod<A>
   input A value;
   input Integer mod;
@@ -858,6 +866,26 @@ function referenceDebugString<A>
 </html>"));
 end referenceDebugString;
 
+function isPresent<T>
+  input T ident;
+  output Boolean b;
+algorithm
+  b:=true;
+annotation(__OpenModelica_EarlyInline=true, __OpenModelica_BuiltinPtr = true, Documentation(info="<html>
+<p>From Modelica 2.x:</p>
+<p>Returns true if the formal <strike>input or</strike> output argument <i>ident</i>
+is present as an actual argument of the function call. If the argument is not
+present, isPresent(ident) may return false [but may also return true e.g. for
+implementations that always compute all results]. isPresent() should be used for
+optimisation only and should not influence the results of outputs that are present
+in the output list. It can only be used in functions.</p>
+<p>OpenModelica returns false for other output formal parameters that are
+not present in the function call (except the first output, which is always
+considered present).</p>
+<p>OpenModelica gives a compile-time error if the variable is not an input or output formal parameter.</p>
+</html>"));
+end isPresent;
+
 package MetaModelica
 package Dangerous "Functions that skip bounds checking"
 
@@ -867,6 +895,14 @@ function arrayGetNoBoundsChecking<A> "O(1)"
   output A value;
 external "builtin";
 end arrayGetNoBoundsChecking;
+
+function arrayUpdateNoBoundsChecking<A> "O(1)"
+  input array<A> arr;
+  input Integer index;
+  input A newValue;
+  output array<A> newArray;
+external "builtin";
+end arrayUpdateNoBoundsChecking;
 
 impure function arrayCreateNoInit<A>
   "Creates a new array where the elements are *not* initialized!. Any attempt to
@@ -892,6 +928,19 @@ function listReverseInPlace<A> "O(n). A destructive listReverse. May cause segme
   output list<A> outList;
 external "builtin";
 end listReverseInPlace;
+
+function listSetFirst<A> "O(1). A destructive operation changing the \"first\" part of a cons-cell."
+  input list<A> inConsCell "A non-empty list";
+  input A inNewContent;
+external "builtin";
+end listSetFirst;
+
+function listSetRest<A> "O(1). A destructive operation changing the \"rest\" part of a cons-cell.
+NOTE: Make sure you do NOT create cycles as infinite lists are not handled well in the compiler."
+  input list<A> inConsCell "A non-empty list";
+  input list<A> inNewRest;
+external "builtin";
+end listSetRest;
 
 end Dangerous;
 

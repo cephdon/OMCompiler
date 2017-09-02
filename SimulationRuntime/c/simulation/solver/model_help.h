@@ -37,52 +37,65 @@ extern "C" {
 #include "simulation_data.h"
 
 /* lochel: I guess this is used for discrete relations */
-#define RELATION(res,exp1,exp2,index,op_w) { \
-  if(data->simulationInfo.initial) \
+#define RELATION(res,exp1,exp2,index,op_w) \
+{ \
+  if(data->simulationInfo->initial) \
   { \
     res = ((op_w)((exp1),(exp2))); \
-    data->simulationInfo.relations[index] = res; \
+    data->simulationInfo->relations[index] = res; \
   } \
-  else if(data->simulationInfo.discreteCall == 0 || data->simulationInfo.solveContinuous) \
+  else if(data->simulationInfo->discreteCall == 0 || data->simulationInfo->solveContinuous) \
   { \
-    res = data->simulationInfo.relationsPre[index]; \
+    res = data->simulationInfo->relationsPre[index]; \
   } \
   else \
   { \
     res = ((op_w)((exp1),(exp2))); \
-    data->simulationInfo.relations[index] = res; \
+    data->simulationInfo->relations[index] = res; \
   } \
 }
 
 /* lochel: I guess this is used for continuous relations */
-#define RELATIONHYSTERESIS(res,exp1,exp2,index,op_w) { \
-  if(data->simulationInfo.initial) \
+#define RELATIONHYSTERESIS(res,exp1,exp2,index,op_w) \
+{ \
+  if(data->simulationInfo->initial) \
   { \
     res = ((op_w)((exp1),(exp2))); \
-    data->simulationInfo.relations[index] = res; \
+    data->simulationInfo->relations[index] = res; \
   } \
-  else if(data->simulationInfo.discreteCall == 0 || data->simulationInfo.solveContinuous) \
+  else if(data->simulationInfo->discreteCall == 0 || data->simulationInfo->solveContinuous) \
   { \
-    res = data->simulationInfo.relationsPre[index]; \
+    res = data->simulationInfo->relationsPre[index]; \
   } \
   else \
   { \
-    res = ((op_w##ZC)((exp1),(exp2),data->simulationInfo.storedRelations[index])); \
-    data->simulationInfo.relations[index] = res; \
+    res = ((op_w##ZC)((exp1),(exp2),data->simulationInfo->storedRelations[index])); \
+    data->simulationInfo->relations[index] = res; \
   } \
 }
 
+extern int maxEventIterations;
+extern double linearSparseSolverMaxDensity;
+extern int linearSparseSolverMinSize;
+extern double nonlinearSparseSolverMaxDensity;
+extern int nonlinearSparseSolverMinSize;
+extern double newtonXTol;
+extern double newtonFTol;
+extern double maxStepFactor;
+extern double steadyStateTol;
+extern const size_t SIZERINGBUFFER;
+extern int compiledInDAEMode;
+extern int compiledWithSymSolver;
+extern double numericalDifferentiationDeltaXlinearize;
+extern double numericalDifferentiationDeltaXsolver;
 
-void initializeDataStruc(DATA *data);
+void initializeDataStruc(DATA *data, threadData_t *threadData);
 
 void deInitializeDataStruc(DATA *data);
 
-void updateDiscreteSystem(DATA *data);
+void updateDiscreteSystem(DATA *data, threadData_t *threadData);
 
-/* Defined in perform_simulation.c and omp_perform_simulation.c */
-extern void updateContinuousSystem(DATA *data);
-
-void saveZeroCrossings(DATA *data);
+void saveZeroCrossings(DATA *data, threadData_t *threadData);
 
 void copyStartValuestoInitValues(DATA *data);
 
@@ -99,10 +112,10 @@ void printAllVars(DATA *data, int ringSegment, int stream);
 void printRelations(DATA *data, int stream);
 void printZeroCrossings(DATA *data, int stream);
 void printParameters(DATA *data, int stream);
-void printSparseStructure(DATA *data, int stream);
+void printSparseStructure(SPARSE_PATTERN *sparsePattern, int sizeRows, int sizeCols, int stream, const char*);
 
 void overwriteOldSimulationData(DATA *data);
-void copyRingBufferSimulationData(DATA *data, SIMULATION_DATA **destData, RINGBUFFER* destRing);
+void copyRingBufferSimulationData(DATA *data, threadData_t *threadData, SIMULATION_DATA **destData, RINGBUFFER* destRing);
 
 void restoreExtrapolationDataOld(DATA *data);
 
@@ -130,10 +143,10 @@ void storeOldValues(DATA *data);
 modelica_integer _event_integer(modelica_real x, modelica_integer index, DATA *data);
 modelica_real _event_floor(modelica_real x, modelica_integer index, DATA *data);
 modelica_real _event_ceil(modelica_real x, modelica_integer index, DATA *data);
-modelica_integer _event_div_integer(modelica_integer x1, modelica_integer x2, modelica_integer index, DATA *data);
-modelica_real _event_div_real(modelica_real x1, modelica_real x2, modelica_integer index, DATA *data);
-modelica_integer _event_mod_integer(modelica_integer x1, modelica_integer x2, modelica_integer index, DATA *data);
-modelica_integer _event_rem_integer(modelica_integer x1, modelica_integer x2, modelica_integer index, DATA *data);
+modelica_integer _event_mod_integer(modelica_integer x1, modelica_integer x2, modelica_integer index, DATA *data, threadData_t *threadData);
+modelica_real _event_mod_real(modelica_real x1, modelica_real x2, modelica_integer index, DATA *data, threadData_t *threadData);
+modelica_integer _event_div_integer(modelica_integer x1, modelica_integer x2, modelica_integer index, DATA *data, threadData_t *threadData);
+modelica_real _event_div_real(modelica_real x1, modelica_real x2, modelica_integer index, DATA *data, threadData_t *threadData);
 
 /* functions used for relation which
  * are not used as zero-crossings
@@ -150,6 +163,12 @@ modelica_boolean LessZC(double a, double b, modelica_boolean);
 modelica_boolean LessEqZC(double a, double b, modelica_boolean);
 modelica_boolean GreaterZC(double a, double b, modelica_boolean);
 modelica_boolean GreaterEqZC(double a, double b, modelica_boolean);
+
+extern int measure_time_flag;
+
+void setContext(DATA* data, double* currentTime, int currentContext);
+void increaseJacContext(DATA* data);
+void unsetContext(DATA* data);
 
 #ifdef __cplusplus
 }

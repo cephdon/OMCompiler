@@ -367,12 +367,10 @@ end skew;
 // SCodeFlatten to define which builtin functions exist (SCodeFlatten doesn't
 // care how the functions are defined, only if they exist or not).
 
-impure function delay "Delay expression"
-  external "builtin";
+function delay = $overload(OpenModelica.Internal.delay2,OpenModelica.Internal.delay3) "Delay expression"
   annotation(__OpenModelica_Impure=true, Documentation(info="<html>
   See <a href=\"modelica://ModelicaReference.Operators.'delay()'\">delay()</a>
 </html>"));
-end delay;
 
 function min "Returns the smallest element"
   external "builtin";
@@ -423,9 +421,11 @@ function smooth "Indicate smoothness of expression"
 </html>"));
 end smooth;
 
-function diagonal "Returns a diagonal matrix"
+function diagonal<T> "Returns a diagonal matrix"
+  input T v[:];
+  output T mat[size(v,1),size(v,1)];
   external "builtin";
-  annotation(Documentation(info="<html>
+  annotation(__OpenModelica_UnboxArguments=true, Documentation(info="<html>
   See <a href=\"modelica://ModelicaReference.Operators.'diagonal()'\">diagonal()</a>
 </html>"));
 end diagonal;
@@ -495,34 +495,6 @@ function sample "Overloaded operator to either trigger time events or to convert
 </html>"));
 end sample;
 
-function previous "Access previous value of a clocked variable"
-  external "builtin";
-  annotation(Documentation(info="<html>
-  See <a href=\"modelica://ModelicaReference.Operators.'previous()'\">previous()</a>
-</html>"));
-end previous;
-
-function hold "Conversion from clocked discrete-time to continuous time"
-  external "builtin";
-  annotation(Documentation(info="<html>
-  See <a href=\"modelica://ModelicaReference.Operators.'hold()'\">hold()</a>
-</html>"));
-end hold;
-
-impure function subSample "Conversion from faster clock to slower clock"
-  external "builtin";
-  annotation(Documentation(info="<html>
-  See <a href=\"modelica://ModelicaReference.Operators.'subSample()'\">subSample()</a>
-</html>"));
-end subSample;
-
-function superSample "Conversion from slower clock to faster clock"
-  external "builtin";
-  annotation(Documentation(info="<html>
-  See <a href=\"modelica://ModelicaReference.Operators.'superSample()'\">superSample()</a>
-</html>"));
-end superSample;
-
 function shiftSample "First activation of clock is shifted in time"
   external "builtin";
   annotation(Documentation(info="<html>
@@ -536,20 +508,6 @@ function backSample "First activation of clock is shifted in time before activat
   See <a href=\"modelica://ModelicaReference.Operators.'backSample()'\">backSample()</a>
 </html>"));
 end backSample;
-
-function noClock "Clock of y=Clock(u) is always inferred"
-  external "builtin";
-  annotation(Documentation(info="<html>
-  See <a href=\"modelica://ModelicaReference.Operators.'noClock()'\">noClock()</a>
-</html>"));
-end noClock;
-
-function interval "Returns the interval between the previous and present tick of the clock of its argument"
-  external "builtin";
-  annotation(Documentation(info="<html>
-  See <a href=\"modelica://ModelicaReference.Operators.'interval()'\">interval()</a>
-</html>"));
-end interval;
 
 function transition "Define state machine transition"
   external "builtin";
@@ -571,20 +529,6 @@ function activeState "Return true if instance of a state machine is active, othe
   See <a href=\"modelica://ModelicaReference.Operators.'activeState()'\">activeState()</a>
 </html>"));
 end activeState;
-
-function ticksInState "Returns the number of clock ticks since a transition was made to the currently active state"
-  external "builtin";
-  annotation(Documentation(info="<html>
-  See <a href=\"modelica://ModelicaReference.Operators.'ticksInState()'\">ticksInState()</a>
-</html>"));
-end ticksInState;
-
-function timeInState "Returns the time duration as Real in [s] since a transition was made to the currently active state"
-  external "builtin";
-  annotation(Documentation(info="<html>
-  See <a href=\"modelica://ModelicaReference.Operators.'ticksInState()'\">ticksInState()</a>
-</html>"));
-end timeInState;
 
 function change "Indicate discrete variable changing"
   external "builtin";
@@ -652,6 +596,7 @@ function inStream
   See <a href=\"modelica://ModelicaReference.Operators.'inStream()'\">inStream()</a>
 </html>"));
 end inStream;
+
 
 /* Extension for uncertainty computations */
 record Distribution
@@ -804,15 +749,77 @@ end getInstanceName;
 
 function spatialDistribution "Not yet implemented"
   input Real in0;
-  input Real x;
-  input Real initialPoints[:];
-  input Real initialValues[size(initialPoints)];
   input Real in1;
+  input Real x;
   input Boolean positiveVelocity;
-  output Real val;
+  parameter input Real initialPoints[:](each min = 0, each max = 1) = {0.0, 1.0};
+  parameter input Real initialValues[size(initialPoints)] = {0.0, 0.0};
+  output Real out0;
+  output Real out1;
 external "builtin";
 annotation(version="Modelica 3.3");
 end spatialDistribution;
+
+function previous<T> "Access previous value of a clocked variable"
+  input T u;
+  output T y;
+  external "builtin";
+  annotation(__OpenModelica_UnboxArguments=true, version="Modelica 3.3", Documentation(info="<html>
+  See <a href=\"modelica://ModelicaReference.Operators.'previous()'\">previous()</a>
+</html>"));
+end previous;
+
+function subSample = $overload(OpenModelica.Internal.subSampleExpression, OpenModelica.Internal.subSampleClock)
+  "Conversion from faster clock to slower clock"
+  annotation(version="Modelica 3.3", Documentation(info="<html>
+  See <a href=\"modelica://ModelicaReference.Operators.'subSample()'\">subSample()</a>
+</html>"));
+
+function superSample = $overload(OpenModelica.Internal.superSampleExpression, OpenModelica.Internal.superSampleClock)
+  "Conversion from slower clock to faster clock"
+  annotation(version="Modelica 3.3", Documentation(info="<html>
+  See <a href=\"modelica://ModelicaReference.Operators.'superSample()'\">superSample()</a>
+</html>"));
+
+function hold<T> "Conversion from clocked discrete-time to continuous time"
+  input T u;
+  output T y;
+  external "builtin";
+  annotation(__OpenModelica_UnboxArguments=true, version="Modelica 3.3", Documentation(info="<html>
+  See <a href=\"modelica://ModelicaReference.Operators.'hold()'\">hold()</a>
+</html>"));
+end hold;
+
+function noClock<T> "Clock of y=Clock(u) is always inferred"
+  input T u;
+  output T y;
+  external "builtin";
+  annotation(__OpenModelica_UnboxArguments=true, version="Modelica 3.3", Documentation(info="<html>
+  See <a href=\"modelica://ModelicaReference.Operators.'noClock()'\">noClock()</a>
+</html>"));
+end noClock;
+
+function interval = $overload(OpenModelica.Internal.intervalInferred, OpenModelica.Internal.intervalExpression)
+   "Returns the interval between the previous and present tick of the clock of its argument"
+  annotation(Documentation(info="<html>
+  See <a href=\"modelica://ModelicaReference.Operators.'interval()'\">interval()</a>
+</html>"));
+
+impure function ticksInState "Returns the number of clock ticks since a transition was made to the currently active state"
+  output Integer ticks;
+  external "builtin";
+  annotation(Documentation(info="<html>
+  See <a href=\"modelica://ModelicaReference.Operators.'ticksInState()'\">ticksInState()</a>
+</html>"));
+end ticksInState;
+
+impure function timeInState "Returns the time duration as Real in [s] since a transition was made to the currently active state"
+  output Real t;
+  external "builtin";
+  annotation(Documentation(info="<html>
+  See <a href=\"modelica://ModelicaReference.Operators.'ticksInState()'\">ticksInState()</a>
+</html>"));
+end timeInState;
 
 /* Actually contains more...
 record SimulationResult
@@ -820,13 +827,13 @@ record SimulationResult
   String simulationOptions;
   String messages;
 end SimulationResult; */
-
 encapsulated package OpenModelica "OpenModelica internal defintions and scripting functions"
 
 type $Code "Code quoting is not a uniontype yet because that would require enabling MetaModelica extensions in the regular compiler.
 Besides, it has special semantics."
 
 type Expression "An expression of some kind" end Expression;
+type ExpressionOrModification "An expression or modification of some kind" end ExpressionOrModification;
 type TypeName "A path, for example the name of a class, e.g. A.B.C or .A.B" end TypeName;
 type VariableName "A variable name, e.g. a.b or a[1].b[3].c" end VariableName;
 type VariableNames "An array of variable names, e.g. {a.b,a[1].b[3].c}, or a single VariableName" end VariableNames;
@@ -848,6 +855,100 @@ package Internal "Contains internal implementations, e.g. overloaded builtin fun
 
   type BuiltinType "Integer,Real,String,enumeration or array of some kind"
   end BuiltinType;
+
+  function ClockConstructor = $overload(OpenModelica.Internal.inferredClock, OpenModelica.Internal.rationalClock, OpenModelica.Internal.realClock, OpenModelica.Internal.booleanClock, OpenModelica.Internal.solverClock)
+    "Overloaded clock constructor"
+    annotation(version="Modelica 3.3", Documentation(info="<html>
+    The Clock constructors.</a>
+  </html>"));
+
+  function inferredClock
+    output Clock c;
+    external "builtin";
+  end inferredClock;
+
+  function rationalClock
+    input Integer intervalCounter(min=0);
+    parameter input Integer resolution(unit="Hz", min=1)=1;
+    output Clock c;
+    external "builtin";
+  end rationalClock;
+
+  function realClock
+    input Real interval(unit="s", min=0);
+    output Clock c;
+    external "builtin";
+  end realClock;
+
+  function booleanClock
+    input Boolean condition;
+    input Real startInterval=0.0;
+    output Clock c;
+    external "builtin";
+  end booleanClock;
+
+  function solverClock
+    input Clock c;
+    input String solverMethod;
+    output Clock clk;
+    external "builtin";
+  end solverClock;
+
+  function intervalInferred
+    output Real interval;
+    external "builtin" interval=interval();
+  end intervalInferred;
+
+  function intervalExpression<T>
+    input T u;
+    output Real y;
+    external "builtin" y=interval(u);
+    annotation(__OpenModelica_UnboxArguments=true);
+  end intervalExpression;
+
+  impure function subSampleExpression<T>
+    input T u;
+    parameter input Integer factor(min=0)=0;
+    output T y;
+    external "builtin" y=subSample(u,factor);
+    annotation(__OpenModelica_UnboxArguments=true);
+  end subSampleExpression;
+
+  impure function subSampleClock
+    input Clock u;
+    parameter input Integer factor(min=0)=0;
+    output Clock y;
+    external "builtin" y=subSample(u,factor);
+  end subSampleClock;
+
+  impure function superSampleExpression<T>
+    input T u;
+    parameter input Integer factor(min=0)=0;
+    output T y;
+    external "builtin" y=superSample(u,factor);
+    annotation(__OpenModelica_UnboxArguments=true);
+  end superSampleExpression;
+
+  impure function superSampleClock
+    input Clock u;
+    parameter input Integer factor(min=0)=0;
+    output Clock y;
+    external "builtin" y=superSample(u,factor);
+  end superSampleClock;
+
+  impure function delay2
+    input Real expr;
+    parameter input Real delayTime;
+    output Real value;
+    external "builtin" value=delay(expr, delayTime);
+  end delay2;
+
+  impure function delay3
+    input Real expr, delayTime;
+    parameter input Real delayMax;
+    output Real value;
+    external "builtin" value=delay(expr, delayTime, delayMax);
+  end delay3;
 
   function intAbs
     input Integer v;
@@ -930,6 +1031,7 @@ end Internal;
 package Scripting
 
 import OpenModelica.$Code.Expression;
+import OpenModelica.$Code.ExpressionOrModification;
 import OpenModelica.$Code.TypeName;
 import OpenModelica.$Code.VariableName;
 import OpenModelica.$Code.VariableNames;
@@ -964,16 +1066,21 @@ constant Integer RT_CLOCK_UNCERTAINTIES = 18;
 constant Integer RT_CLOCK_USER_RESERVED = 19;
 
 function readableTime
+"returns time in format AhBmTs [X.YYYY]"
   input Real sec;
   output String str;
 protected
   Integer tmp,min,hr;
 algorithm
+  /*
   tmp := mod(integer(sec),60);
   min := div(integer(sec),60);
   hr := div(min,60);
   min := mod(min,60);
   str := (if hr>0 then String(hr) + "h" else "") + (if min>0 then String(min) + "m" else "") + String(tmp) + "s";
+  str := str + " [" + String(sec, significantDigits=4) + "]";
+  */
+  str := String(sec, significantDigits=4);
 end readableTime;
 
 function timerTick
@@ -1060,12 +1167,16 @@ function loadString "Parses the data and merges the resulting AST with ithe
   If a filename is given, it is used to provide error-messages as if the string
 was read in binary format from a file with the same name.
   The file is converted to UTF-8 from the given character set.
+  When merge is true the classes cNew in the file will be merged with the already loaded classes cOld in the following way:
+   1. get all the inner class definitions from cOld that were loaded from a different file than itself
+   2. append all elements from step 1 to class cNew public list
 
   NOTE: Encoding is deprecated as *ALL* strings are now UTF-8 encoded.
   "
   input String data;
   input String filename = "<interactive>";
   input String encoding = "UTF-8";
+  input Boolean merge = false "if merge is true the parsed AST is merged with the existing AST, default to false which means that is replaced, not merged";
   output Boolean success;
 external "builtin";
 annotation(preferredView="text");
@@ -1380,7 +1491,7 @@ function setDebugFlags "example input: failtrace,-noevalfunc"
   input String debugFlags;
   output Boolean success;
 algorithm
-  success := setCommandLineOptions("+d=" + debugFlags);
+  success := setCommandLineOptions("-d=" + debugFlags);
 annotation(__OpenModelica_EarlyInline = true, preferredView="text");
 end setDebugFlags;
 
@@ -1473,12 +1584,20 @@ annotation(__OpenModelica_EarlyInline = true, preferredView="text");
 end setTearingMethod;
 
 function setCommandLineOptions
-  "The input is a regular command-line flag given to OMC, e.g. +d=failtrace or +g=MetaModelica"
+  "The input is a regular command-line flag given to OMC, e.g. -d=failtrace or -g=MetaModelica"
   input String option;
   output Boolean success;
 external "builtin";
 annotation(preferredView="text");
 end setCommandLineOptions;
+
+function getCommandLineOptions
+  "Returns all command line options who have non-default values as a list of
+   strings. The format of the strings is '--flag=value --flag2=value2'."
+  output String[:] flags;
+external "builtin";
+annotation(preferredView="text");
+end getCommandLineOptions;
 
 function getConfigFlagValidOptions
   "Returns the list of valid options for a string config flag, and the description strings for these options if available"
@@ -1637,7 +1756,7 @@ annotation(preferredView="text");
 end getMessagesString;
 
 record SourceInfo
-  String filename;
+  String fileName;
   Boolean readonly;
   Integer lineStart;
   Integer columnStart;
@@ -1850,10 +1969,9 @@ external "builtin";
 annotation(preferredView="text");
 end mkdir;
 
-function remove "removes a file or directory of given path (which may be either relative or absolute)
-  returns 0 if path was removed successfully."
-  input String newDirectory;
-  output Boolean success;
+function remove "removes a file or directory of given path (which may be either relative or absolute)."
+  input String path;
+  output Boolean success "Returns true on success.";
 external "builtin";
 annotation(preferredView="text");
 end remove;
@@ -2017,16 +2135,23 @@ function convertUnits
   input String s1;
   input String s2;
   output Boolean unitsCompatible;
-  output Real scaleFactor1;
-  output Real offset1;
-  output Real scaleFactor2;
-  output Real offset2;
+  output Real scaleFactor;
+  output Real offset;
 external "builtin";
 annotation(preferredView="text",Documentation(info="<html>
 <p>Returns the scale factor and offsets used when converting two units.</p>
 <p>Returns false if the types are not compatible and should not be converted.</p>
 </html>"));
 end convertUnits;
+
+function getDerivedUnits
+  input String baseUnit;
+  output String[:] derivedUnits;
+external "builtin";
+annotation(preferredView="text",Documentation(info="<html>
+<p>Returns the list of derived units for the specified base unit.</p>
+</html>"));
+end getDerivedUnits;
 
 function listVariables "Lists the names of the active variables in the scripting environment."
   output TypeName variables[:];
@@ -2172,6 +2297,20 @@ function exportToFigaro
 external "builtin";
 annotation(preferredView="text");
 end exportToFigaro;
+
+function inferBindings
+  input TypeName path;
+  output Boolean success;
+external "builtin";
+annotation(preferredView="text");
+end inferBindings;
+
+function generateVerificationScenarios
+  input TypeName path;
+  output Boolean success;
+external "builtin";
+annotation(preferredView="text");
+end generateVerificationScenarios;
 
 public function rewriteBlockCall "Function for property modeling, transforms block calls into instantiations for a loaded model"
   input TypeName className;
@@ -2323,19 +2462,51 @@ external "builtin";
 annotation(preferredView="text");
 end importFMU;
 
+function importFMUModelDescription "Imports modelDescription.xml
+  Example command:
+  importFMUModelDescription(\"A.xml\");"
+  input String filename "the fmu file name";
+  input String workdir = "<default>" "The output directory for imported FMU files. <default> will put the files to current working directory.";
+  input Integer loglevel = 3 "loglevel_nothing=0;loglevel_fatal=1;loglevel_error=2;loglevel_warning=3;loglevel_info=4;loglevel_verbose=5;loglevel_debug=6";
+  input Boolean fullPath = false "When true the full output path is returned otherwise only the file name.";
+  input Boolean debugLogging = false "When true the FMU's debug output is printed.";
+  input Boolean generateInputConnectors = true "When true creates the input connector pins.";
+  input Boolean generateOutputConnectors = true "When true creates the output connector pins.";
+  output String generatedFileName "Returns the full path of the generated file.";
+external "builtin";
+annotation(preferredView="text");
+end importFMUModelDescription;
+
 function translateModelFMU
 "translates a modelica model into a Functional Mockup Unit.
 The only required argument is the className, while all others have some default values.
   Example command:
   translateModelFMU(className, version=\"2.0\");"
   input TypeName className "the class that should translated";
-  input String version = "1.0" "FMU version, 1.0 or 2.0.";
-  input String fmuType = "me" "FMU type, me (model exchange), cs (co-simulation).";
+  input String version = "2.0" "FMU version, 1.0 or 2.0.";
+  input String fmuType = "me" "FMU type, me (model exchange), cs (co-simulation), me_cs (both model exchange and co-simulation)";
   input String fileNamePrefix = "<default>" "fileNamePrefix. <default> = \"className\"";
+  input Boolean includeResources = false "include Modelica based resources via loadResource or not";
   output String generatedFileName "Returns the full path of the generated FMU.";
 external "builtin";
 annotation(preferredView="text");
 end translateModelFMU;
+
+function buildModelFMU
+"translates a modelica model into a Functional Mockup Unit.
+The only required argument is the className, while all others have some default values.
+  Example command:
+  buildModelFMU(className, version=\"2.0\");"
+  input TypeName className "the class that should translated";
+  input String version = "2.0" "FMU version, 1.0 or 2.0.";
+  input String fmuType = "me" "FMU type, me (model exchange), cs (co-simulation), me_cs (both model exchange and co-simulation)";
+  input String fileNamePrefix = "<default>" "fileNamePrefix. <default> = \"className\"";
+  input String platforms[:] = {"dynamic"} "The list of platforms to generate code for. \"dynamic\"=current platform, dynamically link the runtime. \"static\"=current platform, statically link everything. Else, use a host triple, e.g. \"x86_64-linux-gnu\" or \"x86_64-w64-mingw32\"";
+  input Boolean includeResources = false "include Modelica based resources via loadResource or not";
+  output String generatedFileName "Returns the full path of the generated FMU.";
+external "builtin";
+annotation(preferredView="text");
+end buildModelFMU;
 
 function simulate "simulates a modelica model by generating c code, build it and run the simulation executable.
  The only required argument is the className, while all others have some default values.
@@ -2355,7 +2526,19 @@ function simulate "simulates a modelica model by generating c code, build it and
   input String variableFilter = ".*" "Filter for variables that should store in result file. <default> = \".*\"";
   input String cflags = "<default>" "cflags. <default> = \"\"";
   input String simflags = "<default>" "simflags. <default> = \"\"";
-  output String simulationResults;
+  output SimulationResult simulationResults;
+  record SimulationResult
+    String resultFile;
+    String simulationOptions;
+    String messages;
+    Real timeFrontend;
+    Real timeBackend;
+    Real timeSimCode;
+    Real timeTemplates;
+    Real timeCompile;
+    Real timeSimulation;
+    Real timeTotal;
+  end SimulationResult;
 external "builtin";
 annotation(preferredView="text");
 end simulate;
@@ -2385,15 +2568,36 @@ annotation(preferredView="text");
 end buildModel;
 
 function moveClass
-"moves a class up or down depending on the given direction,
- it returns true if the move was performed or false if we
- could not move the class"
+ "Moves a class up or down depending on the given offset, where a positive
+  offset moves the class down and a negative offset up. The offset is truncated
+  if the resulting index is outside the class list. It retains the visibility of
+  the class by adding public/protected sections when needed, and merges sections
+  of the same type if the class is moved from a section it was alone in. Returns
+  true if the move was successful, otherwise false."
  input TypeName className "the class that should be moved";
- input String direction "up or down";
+ input Integer offset "Offset in the class list.";
  output Boolean result;
 external "builtin";
 annotation(preferredView="text");
 end moveClass;
+
+function moveClassToTop
+  "Moves a class to the top of its enclosing class. Returns true if the move
+   was successful, otherwise false."
+  input TypeName className;
+  output Boolean result;
+external "builtin";
+annotation(preferredView="text");
+end moveClassToTop;
+
+function moveClassToBottom
+  "Moves a class to the bottom of its enclosing class. Returns true if the move
+   was successful, otherwise false."
+  input TypeName className;
+  output Boolean result;
+external "builtin";
+annotation(preferredView="text");
+end moveClassToBottom;
 
 function copyClass
 "Copies a class within the same level"
@@ -2500,6 +2704,7 @@ function getClassNames "Returns the list of class names defined in the class."
   input Boolean sort = false;
   input Boolean builtin = false "List also builtin classes if true";
   input Boolean showProtected = false "List also protected classes if true";
+  input Boolean includeConstants = false "List also constants in the class if true";
   output TypeName classNames[:];
 external "builtin";
 annotation(preferredView="text");
@@ -2684,6 +2889,18 @@ external "builtin";
 annotation(preferredView="text");
 end compareSimulationResults;
 
+public function deltaSimulationResults "calculates the sum of absolute errors."
+  input String filename;
+  input String reffilename;
+  input String method "method to compute then error. choose 1norm, 2norm, maxerr";
+  input String[:] vars = fill("",0);
+  output Real result;
+external "builtin";
+annotation(Documentation(info="<html>
+<p>For each data point in the reference file, the sum of all absolute error sums of all given variables is calculated.</p>
+</html>"),preferredView="text");
+end deltaSimulationResults;
+
 public function diffSimulationResults "compares simulation results."
   input String actualFile;
   input String expectedFile;
@@ -2735,7 +2952,7 @@ end checkCodeGraph;
 
 function val "Return the value of a variable at a given time in the simulation results"
   input VariableName var;
-  input Real time;
+  input Real timePoint = 0.0;
   input String fileName = "<default>" "The contents of the currentSimulationResult variable";
   output Real valAtTime;
 external "builtin";
@@ -2758,7 +2975,7 @@ end closeSimulationResultFile;
 
 function addClassAnnotation
   input TypeName class_;
-  input Expression annotate;
+  input ExpressionOrModification annotate;
   output Boolean bool;
 external "builtin";
 annotation(preferredView="text",Documentation(info="<html>
@@ -2802,6 +3019,86 @@ annotation(
 </html>"),
   preferredView="text");
 end getComponentModifierNames;
+
+function getComponentModifierValue
+  input TypeName class_;
+  input TypeName modifier;
+  output String value;
+external "builtin";
+annotation(
+  Documentation(info="<html>
+  <p>Returns the modifier value (only the binding exculding submodifiers) of component.
+    For instance,
+      model A
+        B b1(a1(p1=5,p2=4));
+      end A;
+      getComponentModifierValue(A,b1.a1.p1) => 5
+      getComponentModifierValue(A,b1.a1.p2) => 4
+    See also <a href=\"modelica://OpenModelica.Scripting.getComponentModifierValues\">getComponentModifierValues()</a>.</p>
+</html>"),
+  preferredView="text");
+end getComponentModifierValue;
+
+function getComponentModifierValues
+  input TypeName class_;
+  input TypeName modifier;
+  output String value;
+external "builtin";
+annotation(
+  Documentation(info="<html>
+  <p>Returns the modifier value (including the submodfiers) of component.
+    For instance,
+      model A
+        B b1(a1(p1=5,p2=4));
+      end A;
+      getComponentModifierValues(A,b1.a1) => (p1 = 5, p2 = 4)
+    See also <a href=\"modelica://OpenModelica.Scripting.getComponentModifierValue\">getComponentModifierValue()</a>.</p>
+</html>"),
+  preferredView="text");
+end getComponentModifierValues;
+
+function removeComponentModifiers
+  input TypeName class_;
+  input String componentName;
+  input Boolean keepRedeclares = false;
+  output Boolean success;
+external "builtin";
+annotation(
+  Documentation(info="<html>
+  Removes the component modifiers.
+</html>"),
+  preferredView="text");
+end removeComponentModifiers;
+
+function removeExtendsModifiers
+  input TypeName className;
+  input TypeName baseClassName;
+  input Boolean keepRedeclares = false;
+  output Boolean success;
+external "builtin";
+annotation(
+  Documentation(info="<html>
+  Removes the extends modifiers of a class.
+</html>"),
+  preferredView="text");
+end removeExtendsModifiers;
+
+function getConnectionCount "Counts the number of connect equation in a class."
+  input TypeName className;
+  output Integer count;
+external "builtin";
+annotation(preferredView="text");
+end getConnectionCount;
+
+function getNthConnection "Returns the Nth connection.
+  Example command:
+  getNthConnection(A) => {\"from\", \"to\", \"comment\"}"
+  input TypeName className;
+  input Integer index;
+  output String[:] result;
+external "builtin";
+annotation(preferredView="text");
+end getNthConnection;
 
 function getAlgorithmCount "Counts the number of Algorithm sections in a class."
   input TypeName class_;
@@ -2967,7 +3264,7 @@ end iconv;
 
 function getDocumentationAnnotation "Returns the documentaiton annotation defined in the class."
   input TypeName cl;
-  output String out[2] "{info,revision} TODO: Should be changed to have 2 outputs instead of an array of 2 Strings...";
+  output String out[3] "{info,revision,infoHeader} TODO: Should be changed to have 2 outputs instead of an array of 2 Strings...";
 external "builtin";
 annotation(preferredView="text");
 end getDocumentationAnnotation;
@@ -3276,6 +3573,17 @@ algorithm
 annotation(preferredView="text");
 end ngspicetoModelica;
 
+function getInheritedClasses
+  input TypeName name;
+  output TypeName inheritedClasses[:];
+external "builtin";
+annotation(
+  Documentation(info="<html>
+  Returns the list of inherited classes.
+</html>"),
+  preferredView="text");
+end getInheritedClasses;
+
 function getComponentsTest
   input TypeName name;
   output Component[:] components;
@@ -3299,10 +3607,13 @@ annotation(Documentation(info="<html>
 </html>"));
 end getComponentsTest;
 
-function isExperiment "An experiment is defined as having annotation Experiment(stopTime=...)"
+function isExperiment
   input TypeName name;
   output Boolean res;
 external "builtin";
+annotation(Documentation(info="<html>
+<p>An experiment is defined as having annotation experiment(StopTime=...)</p>
+</html>"));
 end isExperiment;
 
 function getSimulationOptions
@@ -3322,6 +3633,29 @@ annotation(Documentation(info="<html>
 <p>Returns the startTime, stopTime, tolerance, and interval based on the experiment annotation.</p>
 </html>"));
 end getSimulationOptions;
+
+function getAnnotationNamedModifiers
+   input TypeName name;
+   input String vendorannotation;
+   output String[:] modifiernamelist;
+external "builtin";
+annotation(Documentation(info="<html>
+<p>Returns the Modifiers name in the vendor annotation example annotation(__OpenModelica_simulationFlags(solver=\"dassl\"))
+calling sequence should be getAnnotationNamedModifiers(className,\"__OpenModelica_simulationFlags\") which returns {solver}.</p>
+</html>"));
+end getAnnotationNamedModifiers;
+
+function getAnnotationModifierValue
+  input TypeName name;
+  input String vendorannotation;
+  input String modifiername;
+  output String modifiernamevalue;
+external "builtin";
+annotation(Documentation(info="<html>
+<p>Returns the Modifiers value in the vendor annotation example annotation(__OpenModelica_simulationFlags(solver=\"dassl\"))
+calling sequence should be getAnnotationNamedModifiersValue(className,\"__OpenModelica_simulationFlags\",\"modifiername\") which returns \"dassl\".</p>
+</html>"));
+end getAnnotationModifierValue;
 
 function classAnnotationExists "Check if annotation exists"
   input TypeName className;
@@ -3550,7 +3884,7 @@ end checkInterfaceOfPackages;
 
 function sortStrings
   input String arr[:];
-  output String sorted;
+  output String sorted[:];
   external "builtin";
 annotation(
   Documentation(info="<html>
@@ -3566,6 +3900,11 @@ function getClassInformation
   output Boolean fileReadOnly;
   output Integer lineNumberStart, columnNumberStart, lineNumberEnd, columnNumberEnd;
   output String dimensions[:];
+  output Boolean isProtectedClass;
+  output Boolean isDocumentationClass;
+  output String version;
+  output String preferredView;
+  output Boolean state;
 external "builtin";
 annotation(
   Documentation(info="<html>
@@ -3573,6 +3912,115 @@ annotation(
 <p>The dimensions are returned as an array of strings. The string is the textual representation of the dimension (they are not evaluated to Integers).</p>
 </html>"), preferredView="text");
 end getClassInformation;
+
+function getTransitions
+  input TypeName cl;
+  output String[:,:] transitions;
+external "builtin";
+annotation(
+  Documentation(info="<html>
+<p>Returns list of transitions for the given class.</p>
+<p>Each transition item contains 8 values i.e, from, to, condition, immediate, reset, synchronize, priority.</p>
+</html>"), preferredView="text");
+end getTransitions;
+
+function addTransition
+  input TypeName cl;
+  input String from;
+  input String to;
+  input String condition;
+  input Boolean immediate = true;
+  input Boolean reset = true;
+  input Boolean synchronize = false;
+  input Integer priority = 1;
+  input ExpressionOrModification annotate;
+  output Boolean bool;
+external "builtin";
+annotation(preferredView="text",Documentation(info="<html>
+<p>Adds the transition to the class.</p>
+</html>"));
+end addTransition;
+
+function deleteTransition
+  input TypeName cl;
+  input String from;
+  input String to;
+  input String condition;
+  input Boolean immediate;
+  input Boolean reset;
+  input Boolean synchronize;
+  input Integer priority;
+  output Boolean bool;
+external "builtin";
+annotation(preferredView="text",Documentation(info="<html>
+<p>Deletes the transition from the class.</p>
+</html>"));
+end deleteTransition;
+
+function updateTransition
+  input TypeName cl;
+  input String from;
+  input String to;
+  input String oldCondition;
+  input Boolean oldImmediate;
+  input Boolean oldReset;
+  input Boolean oldSynchronize;
+  input Integer oldPriority;
+  input String newCondition;
+  input Boolean newImmediate;
+  input Boolean newReset;
+  input Boolean newSynchronize;
+  input Integer newPriority;
+  input ExpressionOrModification annotate;
+  output Boolean bool;
+external "builtin";
+annotation(preferredView="text",Documentation(info="<html>
+<p>Updates the transition in the class.</p>
+</html>"));
+end updateTransition;
+
+function getInitialStates
+  input TypeName cl;
+  output String[:,:] initialStates;
+external "builtin";
+annotation(
+  Documentation(info="<html>
+<p>Returns list of initial states for the given class.</p>
+<p>Each initial state item contains 2 values i.e, state name and annotation.</p>
+</html>"), preferredView="text");
+end getInitialStates;
+
+function addInitialState
+  input TypeName cl;
+  input String state;
+  input ExpressionOrModification annotate;
+  output Boolean bool;
+external "builtin";
+annotation(preferredView="text",Documentation(info="<html>
+<p>Adds the initial state to the class.</p>
+</html>"));
+end addInitialState;
+
+function deleteInitialState
+  input TypeName cl;
+  input String state;
+  output Boolean bool;
+external "builtin";
+annotation(preferredView="text",Documentation(info="<html>
+<p>Deletes the initial state from the class.</p>
+</html>"));
+end deleteInitialState;
+
+function updateInitialState
+  input TypeName cl;
+  input String state;
+  input ExpressionOrModification annotate;
+  output Boolean bool;
+external "builtin";
+annotation(preferredView="text",Documentation(info="<html>
+<p>Updates the initial state in the class.</p>
+</html>"));
+end updateInitialState;
 
 function generateScriptingAPI
   input TypeName cl;
@@ -3590,404 +4038,31 @@ annotation(
 </html>"), preferredView="text");
 end generateScriptingAPI;
 
+package Experimental
+
+function relocateFunctions
+  input String fileName;
+  input String names[:,2];
+  output Boolean success;
+external "builtin";
+annotation(
+  Documentation(info="<html>
+<p><strong>Highly experimental, requires OMC be compiled with special flags to use</strong>.</p>
+<p>Update symbols in the running program to ones defined in the given shared object.</p>
+<p>This will hot-swap the functions at run-time, enabling a smart build system to do some incremental compilation
+(as long as the function interfaces are the same).</p>
+</html>"), preferredView="text");
+end relocateFunctions;
+
+end Experimental;
+
 end Scripting;
 
 package UsersGuide
 package ReleaseNotes
-package '1.0' "Version 1.0 (r1026, 2003-10-31)"
-end '1.0';
-package '1.1' "Version 1.1 (r1323, 2004-10-25)"
-end '1.1';
-package '1.2' "Version 1.2 (r1562, 2005-03-04)"
-end '1.2';
-package '1.3.1' "Version 1.3.1 (r1999, 2005-12-01)"
-annotation(Documentation(info="<html>
-This release has several important highlights.
-This is also the <em>first</em> release for which the New BSD (Berkeley) open-source license applies to the source code, including the whole compiler and run-time system. This makes is possible to use OpenModelica for both academic and commercial purposes without restrictions.
-<h4>OpenModelica Compiler (OMC)</h4>
-This release includes a significantly improved OpenModelica Compiler (OMC):
-<ul>
-<li>Support for hybrid and discrete-event simulation (if-equations, if-expressions, when-equations;    not yet if-statements and when-statements).</li>
-<li>Parsing of full Modelica 2.2</li>
-<li>Improved support for external functions.</li>
-<li>Vectorization of function arguments; each-modifiers, better implementation of replaceable, better handling of structural parameters, better support for vector and array operations, and many other improvements.</li>
-<li>Flattening of the Modelica Block library version 1.5 (except a few models), and simulation of most of these.</li>
-<li>Automatic index reduction (present also in previous release).</li>
-<li>Updated User's Guide including examples of hybrid simulation and external functions.</li>
-</ul>
-<h4>OpenModelica Shell (OMShell)</h4>
-An improved window-based interactive command shell, now including command completion and better editing and font size support.
-<h4>OpenModelica Notebook (OMNotebook)</h4>
-A free implementation of an OpenModelica notebook (OMNOtebook), for electronic books with course material, including the DrModelica interactive course material. It is possible to simulate and plot from this notebook.
-<h4>OpenModelica Eclipse Plug-in (MDT)</h4>
-An early alpha version of the first Eclipse plug-in (called MDT for Modelica Development Tooling) for Modelica Development. This version gives compilation support and partial support for browsing Modelica package hierarchies and classes.
-<h4>OpenModelica Development Environment (OMDev)</h4>
-The following mechanisms have been put in place to support OpenModelica development.
-<ul>
-<li>Bugzilla support for OpenModelica bug tracking, accessible to anybody.</li>
-<li>A system for automatic regression testing of the compiler and simulator, (+ other system parts) usually run at check in time.</li>
-<li>Version handling is done using SVN, which is better than the previously used CVS system. For example, name change of modules is now possible within the version handling system.</li>
-</ul>
-</html>"));
-end '1.3.1';
-package '1.4.0' "Version 1.4.0 (r2393, 2006-05-18)"
-annotation(Documentation(info="<html>
-This release has a number of improvements described below. The most significant change is probably that OMC has now been translated to an extended subset of Modelica (MetaModelica), and that all development of the compiler is now done in this version..
-<h4>OpenModelica Compiler (OMC)</h4>
-This release includes further improvements of the OpenModelica Compiler (OMC):
-<ul>
-<li>Partial support for mixed system of equations.</li>
-<li>New initialization routine, based on optimization (minimizing residuals of initial equations).</li>
-<li>Symbolic simplification of builtin operators for vectors and matrices.</li>
-<li>Improved code generation in simulation code to support e.g. Modelica functions.</li>
-<li>Support for classes extending basic types, e.g. connectors (support for MSL 2.2 block connectors).</li>
-<li>Support for parametric plotting via the plotParametric command.</li>
-<li>Many bug fixes.</li>
-</ul>
-<h4>OpenModelica Shell (OMShell)</h4>
-Essentially the same OMShell as in 1.3.1. One difference is that now all error messages are sent to the command window instead of to a separate log window.
-<h4>OpenModelica Notebook (OMNotebook)</h4>
-Many significant improvements and bug fixes. This version supports graphic plots within the cells in the notebook. Improved cell handling and Modelica code syntax highlighting. Command completion of the most common OMC commands is now supported. The notebook has been used in several courses.
-<h4>OpenModelica Eclipse Plug-in (MDT)</h4>
-This is the first really useful version of MDT. Full browsing of Modelica code, e.g. the MSL 2.2, is now supported. (MetaModelica browsing is not yet fully supported). Full support for automatic indentation of Modelica code, including the MetaModelica extensions. Many bug fixes. The Eclipse plug-in is now in use for OpenModelica development at PELAB and MathCore Engineering AB since approximately one month.
-<h4>OpenModelica Development Environment (OMDev)</h4>
-The following mechanisms have been put in place to support OpenModelica development.
-<ul>
-<li>A separate web page for OMDev  (OpenModelica Development Environment).</li>
-<li>A pre-packaged OMDev zip-file with precompiled binaries for development under Windows using the mingw Gnu compiler from the Eclipse MDT plug-in. (Development is also possible using Visual Studio).</li>
-<li>All source code of the OpenModelica compiler has recently been translated to an extended subset of Modelica, currently called MetaModelica. The current size of OMC is approximately 100 000 lines All development is now done in this version.</li>
-<li>A new tutorial and users guide for development in MetaModelica.</li>
-<li>Successful builds and tests of OMC under Linux and Solaris.</li>
-</ul>
-</html>"));
-end '1.4.0';
-package '1.4.1' "Version 1.4.1 (r2432, 2006-06-19)"
-annotation(Documentation(info="<html>
-This release has only improvements and bug fixes of the OMC compiler, the MDT plugin and the OMDev components. The OMShell and OMNotebook are the same.
-<h4>OpenModelica Compiler (OMC)</h4>
-This release includes further improvements of the OpenModelica Compiler (OMC):
-<ul>
-<li>Support for external objects.</li>
-<li>OMC now reports the version number (via command line switches or CORBA API getVersion()).</li>
-<li>Implemented caching for faster instantiation of large models.</li>
-<li>Many bug fixes.</li>
-</ul>
-<h4>OpenModelica Eclipse Plug-in (MDT)</h4>
-Improvements of the error reporting when building the OMC compiler. The errors are now added to the problems view. The latest MDT release is version 0.6.6 (2006-06-06).
-<h4>OpenModelica Development Environment (OMDev)</h4>
-Small fixes in the MetaModelica compiler. MetaModelica Users Guide is now part of the OMDev release. The latest OMDev was release in 2006-06-06.
-</html>"));
-end '1.4.1';
-package '1.4.2' "Version 1.4.2 (r2557, 2006-10-01)"
-annotation(Documentation(info="<html>
-This release has improvements and bug fixes of the OMC compiler, OMNotebook, the MDT plugin and the OMDev. OMShell is the same as previously.
-<h4>OpenModelica Compiler (OMC)</h4>
-This release includes further improvements of the OpenModelica Compiler (OMC):
-<ul>
-<li>Improved initialization and index reduction.</li>
-<li>Support for integer arrays is now largely implemented.</li>
-<li>The val(variable,time) scripting function for accessing the value of a simulation result variable at a certain point in the simulated time.</li>
-<li>Interactive evalution of for-loops, while-loops, if-statements, if-expressions, in the interactive scripting mode.</li>
-<li>Improved documentation and examples of calling the Model Query and Manipulation API.</li>
-<li>Many bug fixes.</li>
-</ul>
-<h4>OpenModelica Notebook (OMNotebook)</h4>
-Search and replace functions have been added. The DrModelica tutorial (all files) has been updated, obsolete sections removed, and models which are not supported by the current implementation marked clearly. Automatic recognition of the .onb suffix (e.g. when double-clicking) in Windows makes it even more convenient to use.
-<h4>OpenModelica Eclipse Plug-in (MDT)</h4>
-Two major improvements are added in this release:
-<ul>
-<li>Browsing and code completion works both for standard Modelica and for MetaModelica.</li>
-<li>The debugger for algorithmic code is now available and operational in Eclipse for debugging of MetaModelica programs.</li>
-</ul>
-<h4>OpenModelica Development Environment (OMDev)</h4>
-Mostly the same as previously.
-</html>"));
-end '1.4.2';
-package '1.4.3' "Version 1.4.3 (r2860, 2007-07-13)"
-annotation(Documentation(info="<html>
-This release has  a number of significant improvements of the OMC compiler, OMNotebook, the MDT plugin and the OMDev. Increased platform availability now also for Linux and Macintosh, in addition to Windows. OMShell is the same as previously, but now ported to Linux and Mac.
-<h4>OpenModelica Compiler (OMC)</h4>
-This release includes a number of  improvements of the OpenModelica Compiler (OMC):
-<ul>
-<li>Significantly increased compilation speed, especially with large models and many packages.</li>
-<li>Now available also for Linux and Macintosh platforms.</li>
-<li>Support for when-equations in algorithm sections, including elsewhen.</li>
-<li>Support for inner/outer prefixes of components (but without type error checking).</li>
-<li>Improved solution of nonlinear systems.</li>
-<li>Added ability to compile generated simulation code using Visual Studio compiler.</li>
-<li>Added smart setting of fixed attribute to false. If initial equations, OMC instead has fixed=true as default for states due to allowing overdetermined initial equation systems.</li>
-<li>Better state select heuristics.</li>
-<li>New function getIncidenceMatrix(ClassName) for dumping the incidence matrix.</li>
-<li>Builtin functions String(), product(), ndims(), implemented.</li>
-<li>Support for terminate() and assert() in equations.</li>
-<li>In emitted flat form: protected variables are now prefixed with protected when printing flat class.</li>
-<li>Some support for  tables, using omcTableTimeIni instead of dymTableTimeIni2.</li>
-<li>Better support for empty arrays, and support for matrix operations like  a*[1,2;3,4].</li>
-<li>Improved val() function can now evaluate array elements and record fields, e.g. val(x[n]), val(x.y) .</li>
-<li>Support for reinit in algorithm sections.</li>
-<li>String support in external functions.</li>
-<li>Double precision floating point precision now also for interpreted expressions</li>
-<li>Better simulation error messages.</li>
-<li>Support for der(expressions).</li>
-<li>Support for iterator expressions such as {3*i for i in 1..10}.</li>
-<li>More test cases in the test suite.</li>
-<li>A number of bug fixes, including sample and event handling bugs.</li>
-</ul>
-<h4>OpenModelica Notebook (OMNotebook)</h4>
-A number of improvements, primarily in the platform availability.
-<ul>
-<li>Available on the Linux and Macintosh platforms, in addition to Windows.</li>
-<li>Fixed cell copying bugs, plotting of derivatives now works, etc.</li>
-</ul>
-<h4>OpenModelica Shell (OMShell)</h4>
-Now available also on the Macintosh platform.
-<h4>OpenModelica Eclipse Plug-in (MDT)</h4>
-This release includes major improvements of MDT and the associated MetaModelica debugger:
-<ul>
-<li>Greatly improved browsing and code completion works both for standard Modelica and for MetaModelica.</li>
-<li>Hovering over identifiers displays type information.</li>
-<li>A new and greatly improved implementation of the debugger for MetaModelica algorithmic code, operational in Eclipse. Greatly improved performance - only approx 10% speed reduction even for 100 000 line programs. Greatly improved single stepping, step over, data structure browsing, etc.</li>
-<li>Many bug fixes.</li>
-</ul>
-<h4>OpenModelica Development Environment (OMDev)</h4>
-<ul>
-<li>Increased compilation speed for MetaModelica.</li>
-<li>Better if-expression support in MetaModelica.</li>
-</ul>
-</html>"));
-end '1.4.3';
-package '1.4.4' "Version 1.4.4 (r3218, 2008-02-20)"
-annotation(Documentation(info="<html>
-This release is primarily a bug fix release, except for a preliminary version of new plotting functionality available both from the OMNotebook and separately through a Modelica API. This is also the first release under the open source license OSMC-PL (Open Source Modelica Consortium Public License), with support from the recently created Open Source Modelica Consortium. An integrated version handler, bug-, and issue tracker has also been added.
-<h4>OpenModelica Compiler (OMC)</h4>
-This release includes small improvements and some bugfixes of the OpenModelica Compiler (OMC):
-<ul>
-<li>Better support for if-equations, also inside when.</li>
-<li>Better support for calling functions in parameter expressions and interactively through dynamic loading of functions.</li>
-<li>Less memory consumtion during compilation and interactive evaluation.</li>
-<li>A number of bug-fixes.</li>
-</ul>
-<h4>OpenModelica Notebook (OMNotebook)</h4>
-Test release of improvements, primarily in the plotting functionality and platform availability.
-<ul>
-<li>Preliminary version of improvements in the plotting functionality: scalable plots, zooming, logarithmic plots, grids, etc., currently available in a preliminary version through the plot2 function.</li>
-<li>Programmable plotting accessible through a Modelica API.</li>
-</ul>
-<h4>OpenModelica Shell (OMShell)</h4>
-Same as previously.
-<h4>OpenModelica Eclipse Plug-in (MDT)</h4>
-This release includes minor bugfixes of MDT and the associated MetaModelica debugger.
-<h4>OpenModelica Development Environment (OMDev)</h4>
-Extended test suite with a better structure. Version handling, bug tracking, issue tracking, etc. now available under the integrated Codebeamer.
-</html>"));
-end '1.4.4';
-package '1.4.5' "Version 1.4.5 (r3856, 2009-02-10)"
-annotation(Documentation(info="<html>
-This release has several improvements, especially platform availability, less compiler memory usage, and supporting more aspects of  Modelica 3.0.
-<h4>OpenModelica Compiler (OMC)</h4>
-This release includes small improvements and some bugfixes of the OpenModelica Compiler (OMC):
-<ul>
-<li>Less memory consumption and better memory management over time. This also includes a better API supporting automatic memory management when calling C functions from within the compiler.</li>
-<li>Modelica 3.0 parsing support.</li>
-<li>Export of DAE to XML and MATLAB.</li>
-<li>Support for several platforms Linux, MacOS, Windows (2000, Xp, Vista).</li>
-<li>Support for record and strings as function arguments.</li>
-<li>Many bug fixes.</li>
-<li>(Not part of OMC): Additional free graphic editor SimForge can be used with OpenModelica.</li>
-</ul>
-<h4>OpenModelica Notebook (OMNotebook)</h4>
-A number of improvements, primarily in the plotting functionality and platform availability.
-<ul>
-<li>A number of improvements in the plotting functionality: scalable plots, zooming, logarithmic plots, grids, etc.</li>
-<li>Programmable plotting accessible through a Modelica API.</li>
-<li>Simple 3D visualization.</li>
-<li>Support for several platforms Linux, MacOS, Windows (2000, Xp, Vista).</li>
-</ul>
-<h4>OpenModelica Shell (OMShell)</h4>
-Same as previously.
-<h4>OpenModelica Eclipse Plug-in (MDT)</h4>
-Minor bug fixes.
-<h4>OpenModelica Development Environment (OMDev)</h4>
-Same as previously.
-</html>"));
-end '1.4.5';
-package '1.5.0' "Version 1.5.0 (r5856, 2010-07-13)"
-annotation(Documentation(info="<html>
-This OpenModelica 1.5 release has major improvements in the OpenModelica compiler frontend and some in the backend. A major improvement of this release is full flattening support for the MultiBody library as well as limited simulation support for MultiBody. Interesting new facilities are the interactive simulation and the integrated UML-Modelica modeling with ModelicaML. Approximately 4 person-years of additional effort have been invested in the compiler compared to the 1.4.5 version, e.g., in order to have a more complete coverage of Modelica 3.0, mainly focusing on improved flattening in the compiler frontend.
-<h4>OpenModelica Compiler (OMC)</h4>
-This release includes major improvements of the flattening frontend part of the OpenModelica Compiler (OMC) and some improvements of the backend, including, but not restricted to:
-<ul>
-<li>Improved flattening speed of at least a factor of 10 or more compared to the 1.4.5 release, primarily for larger models with inner-outer, but also speedup for other models, e.g. the robot model flattens in approximately 2 seconds.</li>
-<li>Flattening of all MultiBody models, including all elementary models, breaking connection graphs, world object, etc. Moreover, simulation is now possible for at least five MultiBody models: Pendulum, DoublePendulum, InitSpringConstant, World, PointGravityWithPointMasses.</li>
-<li>Progress in supporting the Media library, but simulation is not yet possible.</li>
-<li>Support for enumerations, both in the frontend and the backend.</li>
-<li>Support for expandable connectors.</li>
-<li>Support for the inline and late inline annotations in functions.</li>
-<li>Complete support for record constructors, also for records containing other records.</li>
-<li>Full support for iterators, including nested ones.</li>
-<li>Support for inferred iterator and for-loop ranges.</li>
-<li>Support for the function derivative annotation.</li>
-<li>Prototype of interactive simulation.</li>
-<li>Prototype of integrated UML-Modelica modeling and simulation with ModelicaML.</li>
-<li>A new bidirectional external Java interface for calling external Java functions, or for calling Modelica functions from Java.</li>
-<li>Complete implementation of replaceable model extends.</li>
-<li>Fixed problems involving arrays of unknown dimensions.</li>
-<li>Limited support for tearing.</li>
-<li>Improved error handling at division by zero.</li>
-<li>Support for Modelica 3.1 annotations.</li>
-<li>Support for all MetaModelica language constructs inside OpenModelica.</li>
-<li>OpenModelica works also under 64-bit Linux and Mac 64-bit OSX.</li>
-<li>Parallel builds and running test suites in parallel on multi-core platforms.</li>
-<li>New OpenModelica text template language for easier implementation of code generators, XML generators, etc.</li>
-<li>New OpenModelica code generators to C and C# using the text template language.</li>
-<li>Faster simulation result data file output optionally as comma-separated values.</li>
-<li>Many bug fixes.</li>
-</ul>
-It is now possible to graphically edit models using parts from the Modelica Standard Library 3.1, since the simForge graphical editor (from Politecnico di Milano) that is used together with OpenModelica has been updated to version 0.9.0 with a important new functionality, including support for Modelica 3.1 and 3.0 annotations. The 1.6 and 2.2.1 Modelica graphical annotation versions are still supported.
-<h4>OpenModelica Notebook (OMNotebook)</h4>
-Improvements in platform availability.
-<ul>
-<li>Support for 64-bit Linux.</li>
-<li>Support for Windows 7.</li>
-<li>Better support for MacOS, including 64-bit OSX.</li>
-</ul>
-<h4>OpenModelica Shell (OMShell)</h4>
-Same as previously.
-<h4>OpenModelica Eclipse Plug-in (MDT)</h4>
-Minor bug fixes.
-<h4>OpenModelica Development Environment (OMDev)</h4>
-Minor bug fixes.
-</html>"));
-end '1.5.0';
-package '1.6.0' "Version 1.6.0 (r7524, 2010-12-21)"
-annotation(Documentation(info="<html>
-The OpenModelica 1.6 release primarily contains flattening, simulation, and performance improvements regarding Modelica Standard Library 3.1 support, but also has an interesting new tool - the OMEdit graphic connection editor, and a new educational material called DrControl, and an improved ModelicaML UML/Modelica profile with better support for modeling and requirement handling.
-<h4>OpenModelica Compiler (OMC)</h4>
-This release includes bug fix and performance improvemetns of the flattening frontend part of the OpenModelica Compiler (OMC) and some improvements of the backend, including, but not restricted to:
-<ul>
-<li>Flattening of the whole Modelica Standard Library 3.1 (MSL 3.1), except Media and Fluid.</li>
-<li>Improved flattening speed of a factor of 5-20 compared to OpenModelica 1.5 for a number of models, especially in the MultiBody library.</li>
-<li>Reduced memory consumption by the OpenModelica compiler frontend, for certain large models a reduction of a factor 50.</li>
-<li>Reorganized, more modular OpenModelica compiler backend, can now handle approximately 30000 equations, compared to previously approximately 10000 equations.</li>
-<li>Better error messages from the compiler, especially regarding functions.</li>
-<li>Improved simulation coverage of MSL 3.1. Many models that did not simulate before are now simulating. However, there are still many models in certain sublibraries that do not simulate.</li>
-<li>Progress in supporting the Media library, but simulation is not yet possible.</li>
-<li>Improved support for enumerations, both in the frontend and the backend.</li>
-<li>Implementation of stream connectors.</li>
-<li>Support for linearization through symbolic Jacobians.</li>
-<li>Many bug fixes.</li>
-</ul>
-<h4>OpenModelica Notebook (OMNotebook)</h4>
-A new DrControl electronic notebook for teaching control and modeling with Modelica.
-<h4>OpenModelica Shell (OMShell)</h4>
-Same as previously.
-<h4>OpenModelica Eclipse Plug-in (MDT)</h4>
-Same as previously.
-<h4>OpenModelica Development Environment (OMDev)</h4>
-Several enhancements. Support for match-expressions in addition to matchcontinue. Support for real if-then-else. Support for if-then without else-branches. Modelica Development Tooling 0.7.7 with small improvements such as more settings, improved error detection in console, etc.
-<h4>New Graphic Editor OMEdit</h4>
-A new improved open source graphic model connection editor called OMEdit, supporting 3.1 graphical annotations, which makes it possible to move models back and forth to other tools without problems. The editor has been implemented by students at Linköping University and is based on the C++ Qt library.
-</html>"));
-end '1.6.0';
-package '1.7.0' "Version 1.7.0 (r8711, 2011-04-20)"
-annotation(Documentation(info="<html>
-The OpenModelica 1.7 release contains OMC flattening improvements for the Media library, better and faster event handling and simulation, and fast MetaModelica support in the compiler, enabling it to compiler itself. This release also includes two interesting new tools - the OMOpttim optimization subsystem, and a new performance profiler for equation-based Modelica models.
-<h4>OpenModelica Compiler (OMC)</h4>
-This release includes bug fixes and performance improvements of the flattening frontend part of the OpenModelica Compiler (OMC) and several improvements of the backend, including, but not restricted to:
-<ul>
-<li>Flattening of the whole Modelica Standard Library 3.1 (MSL 3.1), except Media and Fluid.</li>
-<li>Progress in supporting the Media library, some models now flatten.</li>
-<li>Much faster simulation of many models through more efficient handling of alias variables, binary output format, and faster event handling.</li>
-<li>Faster and more stable simulation through new improved event handling, which is now default.</li>
-<li>Simulation result storage in binary .mat files, and plotting from such files.</li>
-<li>Support for Unicode characters in quoted Modelica identifiers, including Japanese and Chinese.</li>
-<li>Preliminary MetaModelica 2.0 support. (use setCommandLineOptions({\"+g=MetaModelica\"}) ). Execution is as fast as MetaModelica 1.0, except for garbage collection.</li>
-<li>Preliminary bootstrapped OpenModelica compiler: OMC now compiles itself, and the bootstrapped compiler passes the test suite. A garbage collector is still missing.</li>
-<li>Many bug fixes.</li>
-</ul>
-<h4>OpenModelica Notebook (OMNotebook)</h4>
-Improved much faster and more stable 2D plotting through the new OMPlot module. Plotting from binary .mat files. Better integration between OMEdit and OMNotebook, copy/paste between them.
-<h4>OpenModelica Shell (OMShell)</h4>
-Same as previously, except the improved 2D plotting through OMPlot.
-<h4>OpenModelica Eclipse Plug-in (MDT)</h4>
-Same as previously.
-<h4>OpenModelica Development Environment (OMDev)</h4>
-No changes.
-<h4>Graphic Editor OMEdit</h4>
-Several enhancements of OMEdit are included in this release. Support for Icon editing is now available. There is also an improved much faster 2D plotting through the new OMPlot module. Better integration between OMEdit and OMNotebook, with copy/paste between them. Interactive on-line simulation is available in an easy-to-use way.
-<h4>New OMOptim Optimization Subsystem</h4>
-A new optimization subsystem called OMOptim has been added to OpenModelica. Currently, parameter optimization using genetic algorithms is supported in this version 0.9. Pareto front optimization is also supported.
-<h4>New Performance Profiler</h4>
-A new, low overhead, performance profiler for Modelica models has been developed.
-</html>"));
-end '1.7.0';
-package '1.8.0' "Version 1.8.0 (r10584, 2011-11-25)"
-annotation(Documentation(info="<html>
-The OpenModelica 1.8 release contains OMC flattening improvements for the Media library - it now flattens the whole library and simulates about 20% of its example models. Moreover, about half of the Fluid library models also flatten. This release also includes two new tool functionalities - the FMI for model exchange import and export, and a new efficient Eclipse-based debugger for Modelica/MetaModelica algorithmic code.
-<h4>OpenModelica Compiler (OMC)</h4>
-This release includes bug fixes and improvements of the flattening frontend part of the OpenModelica Compiler (OMC) and several improvements of the backend, including, but not restricted to:
-A faster and more stable OMC model compiler. The 1.8.0 version flattens and simulates more models than the previous 1.7.0 version.
-<ul>
-<li>Flattening of the whole Media library, and about half of the Fluid library. Simulation of approximately 20% of the Media library example models.</li>
-<li>Functional Mockup Interface FMI 1.0 for model exchange, export and import, for the Windows platform.</li>
-<li>Bug fixes in the OpenModelica graphical model connection editor OMEdit, supporting easy-to-use graphical drag-and-drop modeling and MSL 3.1.</li>
-<li>Bug fixes in the OMOptim optimization subsystem.</li>
-<li>Beta version of compiler support for a new Eclipse-based very efficient algorithmic code debugger for functions in MetaModelica/Modelica, available in the development environment when using the bootstrapped OpenModelica compiler.</li>
-<li>Improvements in initialization of simulations.</li>
-<li>Improved index reduction with dynamic state selection, which improves simulation.</li>
-<li>Better error messages from several parts of the compiler, including a new API call for giving better error messages.</li>
-<li>Automatic partitioning of equation systems and multi-core parallel simulation of independent parts based on the shared-memory OpenMP model. This version is a preliminary experimental version without load balancing.</li>
-</ul>
-<h4>OpenModelica Notebook (OMNotebook)</h4>
-No changes.
-<h4>OpenModelica Shell (OMShell)</h4>
-Small performance improvements.
-<h4>OpenModelica Eclipse Plug-in (MDT)</h4>
-Small fixes and improvements. MDT now also includes a beta version of a new Eclipse-based very efficient algorithmic code debugger for functions in MetaModelica/Modelica.
-<h4>OpenModelica Development Environment (OMDev)</h4>
-Third party binaries, including Qt libraries and executable Qt clients, are now part of the OMDev package. Also, now uses GCC 4.4.0 instead of the earlier GCC 3.4.5.
-<h4>Graphic Editor OMEdit</h4>
-Bug fixes. Access to FMI Import/Export through a pull-down menu. Improved configuration of library loading. A function to go to a specific line number. A button to cancel an on-going simulation. Support for some updated OMC API calls.
-<h4>New OMOptim Optimization Subsystem</h4>
-Bug fixes, especially in the Linux version.
-<h4>FMI Support</h4>
-The Functional Mockup Interface FMI 1.0 for model exchange import and export is supported by this release. The functionality is accessible via API calls as well as via pull-down menu commands in OMEdit.
-</html>"));
-end '1.8.0';
-package '1.8.1' "Version 1.8.1 (r11645, 2012-04-03)"
-annotation(Documentation(info="<html>
-  <head><meta http-equiv=\"refresh\" content=\"0; url=https://trac.openmodelica.org/OpenModelica/wiki/ReleaseNotes/1.8.1\"></head>
-  <body>Redirecting to the <a href=\"https://trac.openmodelica.org/OpenModelica/wiki/ReleaseNotes/1.8.1\">on-line release notes</a>.</body>
-</html>"));
-end '1.8.1';
-package '1.9.0' "Version 1.9.0 (r17628, 2013-10-09)"
   annotation(Documentation(info = "<html>
-  <head><meta http-equiv=\"refresh\" content=\"0; url=https://trac.openmodelica.org/OpenModelica/wiki/ReleaseNotes/1.9.0\"></head>
-  <body>Redirecting to the <a href=\"https://trac.openmodelica.org/OpenModelica/wiki/ReleaseNotes/1.9.0\">on-line release notes</a>.</body>
-</html>"));
-end '1.9.0';
-package '1.9.1' "Version 1.9.1 Beta 4 (2014-10-07)"
-  annotation(Documentation(info = "<html>
-  <head><meta http-equiv=\"refresh\" content=\"0; url=https://trac.openmodelica.org/OpenModelica/wiki/ReleaseNotes/1.9.1\"></head>
-  <body>Redirecting to the <a href=\"https://trac.openmodelica.org/OpenModelica/wiki/ReleaseNotes/1.9.1\">on-line release notes</a>.</body>
-</html>"));
-end '1.9.1';
-package '1.9.2' "Version 1.9.2 (2015-03-17)"
-  annotation(Documentation(info = "<html>
-  <head><meta http-equiv=\"refresh\" content=\"0; url=https://trac.openmodelica.org/OpenModelica/wiki/ReleaseNotes/1.9.2\"></head>
-  <body>Redirecting to the <a href=\"https://trac.openmodelica.org/OpenModelica/wiki/ReleaseNotes/1.9.2\">on-line release notes</a>.</body>
-</html>"));
-end '1.9.2';
-package '1.9.3' "Version 1.9.3 (2015-03-17)"
-  annotation(Documentation(info = "<html>
-  <head><meta http-equiv=\"refresh\" content=\"0; url=https://trac.openmodelica.org/OpenModelica/wiki/ReleaseNotes/1.9.3\"></head>
-  <body>Redirecting to the <a href=\"https://trac.openmodelica.org/OpenModelica/wiki/ReleaseNotes/1.9.3\">on-line release notes</a>.</body>
-</html>"));
-end '1.9.3';
-annotation(Documentation(info="<html>
-This section summarizes the major releases of OpenModelica and what changed between the major versions.
-Note that OpenModelica is developed rapidly.
-The nightly builds are updated on a continuous basis and the release notes for these are not always up to date.</a>.
+  <head><meta http-equiv=\"refresh\" content=\"0; url=https://openmodelica.org/doc/OpenModelicaUsersGuide/latest/releases.html\"></head>
+  <body>Redirecting to the <a href=\"https://openmodelica.org/doc/OpenModelicaUsersGuide/latest/releases.html\">on-line release notes</a> (you can also find the release notes in the locally installed version of the user's guide, OPENMODELICAHOME/share/doc/OpenModelicaUsersGuide).</body>
 </html>"));
 end ReleaseNotes;
 end UsersGuide;

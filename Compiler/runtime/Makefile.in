@@ -10,9 +10,11 @@ FMIINCLUDE = ../../3rdParty/FMIL/install/include
 GRAPHINCLUDE=../../3rdParty/metis-5.1.0/include
 GRAPHSTREAMINCLUDE = ../../3rdParty/graphstream/gs-netstream/c++/src/
 CJSONINCLUDE = ../../3rdParty/cJSON
+ZMQINCLUDE = ../../3rdParty/libzmq/include
 CFLAGS = @CFLAGS@ $(USE_CORBA)
-OMPCC = @OMPCC@
+OMPCC = @CC@ @OMPCFLAGS@
 OMBUILDDIR = @OMBUILDDIR@
+OMC=@OMC@
 
 ifdef USE_CORBA
   CORBAINCL = @CORBACFLAGS@
@@ -29,9 +31,12 @@ CC	= @CC@
 CXX	= @CXX@
 IDL	= @IDLCMD@
 IDLPYTHON = @IDLPYTHONCMD@
-CXXFLAGS = $(CFLAGS)
-CPPFLAGS = @CPPFLAGS@ -I$(top_builddir)/SimulationRuntime/c -I$(top_builddir)/SimulationRuntime/c/simulation/results -I$(top_builddir)/SimulationRuntime/c/util -I$(top_builddir)/SimulationRuntime/c/meta -I$(top_builddir)/SimulationRuntime/c/meta/gc -I.. -I. $(CORBAINCL) -I$(FMIINCLUDE) -I$(top_builddir)/3rdParty/gc/include -I$(GRAPHSTREAMINCLUDE) -I$(GRAPHINCLUDE) -I$(CJSONINCLUDE)
+CXXFLAGS = @CXXFLAGS@
+CPPFLAGS = @CPPFLAGS@ -I$(top_builddir)/SimulationRuntime/c -I$(top_builddir)/SimulationRuntime/c/simulation/results -I$(top_builddir)/SimulationRuntime/c/util -I$(top_builddir)/SimulationRuntime/c/meta -I$(top_builddir)/SimulationRuntime/c/meta/gc -I. $(CORBAINCL) -I$(FMIINCLUDE) -I$(top_builddir)/3rdParty/gc/include -I$(GRAPHSTREAMINCLUDE) -I$(GRAPHINCLUDE) -I$(CJSONINCLUDE) -I$(ZMQINCLUDE)
 TRIPLE=@host_short@
+SHREXT=@SHREXT@
+RPATH=@RPATH@
+LDFLAGS = -L "$(builddir_lib)/$(TRIPLE)/omc/" -lOpenModelicaRuntimeC @OMCRUNTIME_SHARED_LDFLAGS@
 
 include Makefile.common
 

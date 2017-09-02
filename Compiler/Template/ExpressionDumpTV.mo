@@ -207,7 +207,7 @@ package DAE
 
     record INTEGER_CLOCK
       Exp intervalCounter;
-      Integer resolution;
+      Exp resolution;
     end INTEGER_CLOCK;
 
     record REAL_CLOCK
@@ -216,12 +216,12 @@ package DAE
 
     record BOOLEAN_CLOCK
       Exp condition;
-      Real startInterval;
+      Exp startInterval;
     end BOOLEAN_CLOCK;
 
     record SOLVER_CLOCK
       Exp c;
-      String solverMethod;
+      Exp solverMethod;
     end SOLVER_CLOCK;
   end ClockKind;
 
@@ -348,6 +348,12 @@ package DAE
       Integer ix;
       Type ty;
     end TSUB;
+
+    record RSUB
+      Exp exp;
+      String fieldName;
+      Type ty;
+    end RSUB;
 
     record SIZE
       Exp exp;
@@ -709,11 +715,9 @@ package DAE
     end T_ARRAY;
 
     record T_NORETCALL
-      TypeSource source;
     end T_NORETCALL;
 
     record T_UNKNOWN
-      TypeSource source;
     end T_UNKNOWN;
 
     record T_COMPLEX
@@ -766,15 +770,15 @@ package DAE
     record T_METAUNIONTYPE
       list<Absyn.Path> paths;
       Boolean knownSingleton;
-      TypeSource source;
+      Absyn.Path path;
     end T_METAUNIONTYPE;
 
     record T_METARECORD
+      Absyn.Path path;
       Absyn.Path utPath;
       Integer index;
       list<Var> fields;
       Boolean knownSingleton;
-      TypeSource source;
     end T_METARECORD;
 
     record T_METAARRAY
@@ -801,6 +805,18 @@ package DAE
       Ident name;
     end TYPES_VAR;
   end Var;
+
+  uniontype Constraint "The `Constraints\' type corresponds to a whole Constraint section.
+  It is simply a list of expressions."
+    record CONSTRAINT_EXPS
+      list<Exp> constraintLst;
+    end CONSTRAINT_EXPS;
+
+    record CONSTRAINT_DT "Constraints needed for proper Dynamic Tearing"
+      Exp constraint;
+      Boolean localCon "local or global constraint; local constraints depend on variables that are computed within the algebraic loop itself";
+    end CONSTRAINT_DT;
+  end Constraint;
 end DAE;
 
 package Dump
@@ -839,5 +855,14 @@ package Types
     output String str;
   end unparseType;
 end Types;
+
+package Flags
+  uniontype ConfigFlag end ConfigFlag;
+  constant ConfigFlag MODELICA_OUTPUT;
+  function getConfigBool
+    input ConfigFlag inFlag;
+    output Boolean outValue;
+  end getConfigBool;
+end Flags;
 
 end ExpressionDumpTV;

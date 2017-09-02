@@ -34,7 +34,6 @@ encapsulated package ExpressionSolve
   package:     ExpressionSolve
   description: ExpressionSolve
 
-  RCS: $Id$
 
   This file contains the module ExpressionSolve, which contains functions
   to solve a DAE.Exp for a DAE.Exp"
@@ -47,9 +46,9 @@ public import DAE;
 protected import ComponentReference;
 protected import Debug;
 protected import Differentiate;
+protected import ElementSource;
 protected import Expression;
 protected import ExpressionDump;
-protected import BackendDump;
 protected import ExpressionSimplify;
 protected import Flags;
 protected import List;
@@ -65,144 +64,91 @@ protected import BackendDAEUtil;
 // =============================================================================
 
 public function solveSimpleEquations
-  input BackendDAE.BackendDAE inDAE;
-  output BackendDAE.BackendDAE outDAE;
+  input output BackendDAE.BackendDAE DAE;
 algorithm
- (outDAE, _) := BackendDAEUtil.mapEqSystemAndFold(inDAE, findSimpleEquation0, false);
+
+DAE.eqs := list( (match syst
+              local
+                BackendDAE.StrongComponents comps;
+                array<Integer> ass1 "eqn := ass1[var]";
+               array<Integer> ass2 "var := ass2[eqn]";
+
+   case BackendDAE.EQSYSTEM(matching = BackendDAE.MATCHING(comps=comps,ass1=ass1, ass2=ass2))
+   algorithm
+   comps := list( (match comp
+     local
+       BackendDAE.Equation eqn;
+       BackendDAE.Var var;
+       Integer eindex,vindx;
+       Boolean solved;
+       BackendDAE.StrongComponent tmpComp;
+
+    case BackendDAE.SINGLEEQUATION()
+      algorithm
+       BackendDAE.SINGLEEQUATION(eqn=eindex,var=vindx) := comp;
+       eqn := BackendEquation.get(syst.orderedEqs, eindex);
+       var := BackendVariable.getVarAt(syst.orderedVars, vindx);
+       tmpComp := comp;
+       if BackendEquation.isEquation(eqn) then
+         (eqn,solved) := solveSimpleEquationsWork(eqn, var, DAE.shared);
+         syst.orderedEqs := BackendEquation.setAtIndex(syst.orderedEqs, eindex, eqn);
+
+         if not solved then
+           tmpComp := BackendDAE.EQUATIONSYSTEM({eindex}, {vindx}, BackendDAE.EMPTY_JACOBIAN() ,BackendDAE.JAC_NONLINEAR(), false);
+         end if;
+       end if; // isEquation
+       then tmpComp;
+     else
+       comp;
+     end match) for comp in comps);
+     syst.matching := BackendDAE.MATCHING(ass1, ass2, comps);
+     then syst;
+    else syst;
+ end match)
+for syst in DAE.eqs);
+
 end solveSimpleEquations;
 
-protected function findSimpleEquation0
-  input BackendDAE.EqSystem isyst;
-  input BackendDAE.Shared inShared;
-  input Boolean inChanged;
-  output BackendDAE.EqSystem osyst;
-  output BackendDAE.Shared outShared;
-  output Boolean outChanged;
+protected function solveSimpleEquationsWork
+  input output BackendDAE.Equation eqn;
+  input BackendDAE.Var var "solve eq with respect to var";
+  input BackendDAE.Shared shared;
+  output Boolean solved;
+
 protected
-  BackendDAE.StrongComponents comps;
+  DAE.ComponentRef cr;
+  DAE.Exp e1,e2,varexp,e;
+  BackendDAE.EquationAttributes attr;
+  DAE.ElementSource source;
+  Boolean isContinuousIntegration = BackendDAEUtil.isSimulationDAE(shared);
 algorithm
-  BackendDAE.EQSYSTEM(matching=BackendDAE.MATCHING(comps=comps)) := isyst;
-  (osyst, outShared, outChanged) := findSimpleEquation1(isyst, inShared, comps, inChanged);
-end findSimpleEquation0;
+  BackendDAE.EQUATION(exp=e1, scalar=e2, source=source,attr=attr) := eqn;
+    BackendDAE.VAR(varName = cr) := var;
+    varexp := Expression.crefExp(cr);
+    if BackendVariable.isStateVar(var) then
+      varexp := Expression.expDer(varexp);
+      cr := ComponentReference.crefPrefixDer(cr);
+    end if;
 
-protected function findSimpleEquation1
-  input BackendDAE.EqSystem isyst;
-  input BackendDAE.Shared ishared;
-  input BackendDAE.StrongComponents inComps;
-  input Boolean inchanged;
-  output BackendDAE.EqSystem osyst = isyst;
-  output BackendDAE.Shared oshared = ishared;
-  output Boolean changed = inchanged "not used";
-protected
-  Boolean b;
-  BackendDAE.StrongComponent c;
-  Integer i = 1;
-  list<BackendDAE.Var> newVars = {};
-
-  BackendDAE.Variables vars;
-  BackendDAE.Matching matching;
-  BackendDAE.StateSets stateSets;
-  BackendDAE.BaseClockPartitionKind partitionKind;
-  BackendDAE.EquationArray eqns;
-
-algorithm
-  for comp in inComps loop
-    (osyst,oshared, newVars) := findSimpleEquationWork(osyst,oshared,comp, i, newVars);
-    i := i + 1;
-  end for;
-
-  if  not listEmpty(newVars) then
-    BackendDAE.EQSYSTEM(orderedVars=vars,orderedEqs=eqns,matching=matching,stateSets=stateSets,partitionKind=partitionKind) := osyst;
-    vars := BackendVariable.addVars(newVars, vars);
-    osyst := BackendDAE.EQSYSTEM(vars,eqns,NONE(),NONE(),matching,stateSets,partitionKind);
-    //BackendDump.printEqSystem(osyst);
+  if (Types.isIntegerOrRealOrSubTypeOfEither(Expression.typeof(e1)) and Types.isIntegerOrRealOrSubTypeOfEither(Expression.typeof(e2))) then
+    (e1, e2) := preprocessingSolve(e1, e2, varexp, SOME(shared.functionTree), NONE(), 0,  false);
   end if;
 
-end findSimpleEquation1;
+  try
+    e := solve2(e1, e2, varexp, SOME(shared.functionTree), NONE(), false, isContinuousIntegration);
+    source := ElementSource.addSymbolicTransformationSolve(true, source, cr, e1, e2, e, {});
+    eqn := BackendEquation.generateEquation(varexp, e, source, attr);
+    solved := true;
+  else
+    //eqn is change by possible simplification inside preprocessingSolve for solve the eqn with respect to varexp
+    //source := ElementSource.addSymbolicTransformationSimplify(true, source, DAE.PARTIAL_EQUATION(e1), DAE.PARTIAL_EQUATION(e2));
+    eqn := BackendEquation.generateEquation(e1, e2, source, attr);
+    solved := false;
+  end try;
 
-protected function findSimpleEquationWork
-  input BackendDAE.EqSystem isyst;
-  input BackendDAE.Shared ishared;
-  input BackendDAE.StrongComponent icomp;
-  input Integer iter;
-  input list<BackendDAE.Var> iNewVars;
-  output BackendDAE.EqSystem osyst;
-  output BackendDAE.Shared oshared;
-  output list<BackendDAE.Var> oNewVars;
-algorithm
-  (osyst,oshared,oNewVars):=
-  matchcontinue (isyst,ishared,icomp)
-    local
-      DAE.ComponentRef cr;
-      list<DAE.ComponentRef> solveCr;
-      BackendDAE.Variables vars;
-      BackendDAE.EquationArray eqns, eqns_;
-      BackendDAE.Equation eqn_;
-      BackendDAE.Var var_;
-      list<BackendDAE.Var> tmpvars;
-      Integer eindex,vindx;
-      BackendDAE.EqSystem syst;
-      BackendDAE.Shared shared;
-      DAE.ElementSource source;
-      BackendDAE.Matching matching;
-      DAE.FunctionTree funcs;
-      list<BackendDAE.Equation> solveEqns;
-      DAE.Exp e1,e2,varexp,e;
-      list<DAE.Statement> asserts;
-      BackendDAE.EquationAttributes attr;
-      BackendDAE.StrongComponent comp;
-      BackendDAE.StrongComponents comps;
-      array<Integer> ass1, ass2;
+end solveSimpleEquationsWork;
 
-
-    case (BackendDAE.EQSYSTEM(orderedVars=vars,orderedEqs=eqns,matching=matching),shared,BackendDAE.SINGLEEQUATION(eqn=eindex,var=vindx))
-      algorithm
-        (eqn_ as BackendDAE.EQUATION(exp=e1, scalar=e2, source=source,attr=attr)) := BackendEquation.equationNth1(eqns, eindex);
-        (var_ as BackendDAE.VAR(varName = cr)) := BackendVariable.getVarAt(vars, vindx);
-
-        varexp := Expression.crefExp(cr);
-        varexp := if BackendVariable.isStateVar(var_) then Expression.expDer(varexp) else varexp;
-        BackendDAE.SHARED(functionTree = funcs) := shared;
-        tmpvars := iNewVars;
-        try
-          //TODO:
-          //(e, asserts, solveEqns, solveCr) := ExpressionSolve.solve2(e1, e2, varexp, SOME(funcs), SOME(eindex));
-          (e, asserts, solveEqns, solveCr) := ExpressionSolve.solve2(e1, e2, varexp, SOME(funcs), NONE());
-          source := DAEUtil.addSymbolicTransformationSolve(true, source, cr, e1, e2, e, asserts);
-           if listEmpty(solveEqns) then
-             eqn_ := BackendDAE.EQUATION(varexp, e, source, attr);
-           else
-             solveCr := listReverse(solveCr);
-             tmpvars := List.appendNoCopy(tmpvars, List.map(solveCr, BackendVariable.makeVar));
-             eqn_ := BackendDAE.EQUATION(varexp, e, source, attr);
-             solveEqns := eqn_::solveEqns;
-             eqn_ := eqnLst2Alg(solveEqns,source,attr);
-           end if;
-        else
-         try
-           // ExpressionSolve fail!
-           // try simplify equation
-           (varexp, e, solveEqns, solveCr, _) := preprocessingSolve(e1, e2, varexp, NONE(), NONE(), 0);
-           true := listEmpty(solveEqns);
-           eqn_ := BackendDAE.EQUATION(varexp, e, source, attr);
-         else
-           eqn_ := eqn_;
-         end try;
-          // ExressionSolve can't solve eqn -> make equastion system
-          comp := BackendDAE.EQUATIONSYSTEM({eindex}, {vindx},  BackendDAE.EMPTY_JACOBIAN() ,BackendDAE.JAC_NONLINEAR(), false);
-          BackendDAE.MATCHING(comps = comps, ass1 = ass1, ass2 = ass2) := matching;
-          comps := List.replaceAt(comp, iter, comps);
-          matching := BackendDAE.MATCHING(ass1, ass2, comps);
-        end try;
-        eqns_ := BackendEquation.setAtIndex(eqns, eindex, eqn_);
-        syst := BackendDAEUtil.setEqSystEqs(isyst, eqns_);
-        syst := BackendDAEUtil.setEqSystMatching(syst, matching);
-        then(syst, shared, tmpvars);
-
-    else (isyst, ishared, iNewVars);
-  end matchcontinue;
-end findSimpleEquationWork;
-
+/*
 public function eqnLst2Alg
   input list<BackendDAE.Equation> eqns;
   input DAE.ElementSource source;
@@ -238,6 +184,7 @@ algorithm
                               source, expand, attr);
 
 end eqnLst2Alg;
+*/
 
 public function solve
 "Solves an equation consisting of a right hand side (rhs) and a
@@ -259,22 +206,18 @@ algorithm
   ExpressionDump.dumpExpStr(inExp2,0) + " with respect to: " +
   ExpressionDump.printExpStr(inExp3) + "\n");
 */
- (outExp,outAsserts,dummy1, dummy2, dummyI) := matchcontinue(inExp1, inExp2, inExp3)
-                        case(_,_,_) then  solveSimple(inExp1, inExp2, inExp3,0);
-                        case(_,_,_) then  solveSimple(inExp2, inExp1, inExp3,0);
-                        case(_,_,_) then  solveWork(inExp1, inExp2, inExp3, NONE(), NONE(), 0);
-                        else
-                          equation
-                           if Flags.isSet(Flags.FAILTRACE) then
-                            print("\n-ExpressionSolve.solve failed:\n");
-                            print(ExpressionDump.printExpStr(inExp1) + " = " + ExpressionDump.printExpStr(inExp2));
-                            print(" with respect to: " + ExpressionDump.printExpStr(inExp3));
-                           end if;
-                        then fail();
-                        end matchcontinue;
+  (outExp,outAsserts,dummy1, dummy2, dummyI) := matchcontinue inExp1
+    case _ then solveSimple(inExp1, inExp2, inExp3, 0);
+    case _ then solveSimple(inExp2, inExp1, inExp3, 0);
+    case _ then solveWork(inExp1, inExp2, inExp3, NONE(), NONE(), 0, false, false);
+    else equation
+      if Flags.isSet(Flags.FAILTRACE) then
+        Error.addInternalError("Failed to solve \"" + ExpressionDump.printExpStr(inExp1) + " = " + ExpressionDump.printExpStr(inExp2) + "\" w.r.t. \"" + ExpressionDump.printExpStr(inExp3) + "\"", sourceInfo());
+      end if;
+    then fail();
+  end matchcontinue;
 
  (outExp,_) := ExpressionSimplify.simplify1(outExp);
-
 end solve;
 
 
@@ -288,6 +231,8 @@ public function solve2
   input DAE.Exp inExp3 "DAE.CREF or 'der(DAE.CREF())'";
   input Option<DAE.FunctionTree> functions "need for solve modelica functions";
   input Option<Integer> uniqueEqIndex "offset for tmp vars";
+  input Boolean doInline = true;
+  input Boolean isContinuousIntegration = false;
   output DAE.Exp outExp;
   output list<DAE.Statement> outAsserts;
   output list<BackendDAE.Equation> eqnForNewVars "eqn for tmp vars";
@@ -301,23 +246,16 @@ algorithm
   ExpressionDump.dumpExpStr(inExp2,0) + " with respect to: " +
   ExpressionDump.printExpStr(inExp3) + "\n");
 */
- (outExp,outAsserts,eqnForNewVars,newVarsCrefs,dummyI) := matchcontinue(inExp1, inExp2, inExp3, functions, uniqueEqIndex)
-                        case(_,_,_,_,_) then  solveSimple(inExp1, inExp2, inExp3,0);
-                        case(_,_,_,_,_) then  solveSimple(inExp2, inExp1, inExp3,0);
-                        case(_,_,_,_,_) then  solveWork(inExp1, inExp2, inExp3, functions, uniqueEqIndex, 0);
-                        else
-                          equation
-                           if Flags.isSet(Flags.FAILTRACE) then
-                            print("\n-ExpressionSolve.solve2 failed:\n");
-                            print(ExpressionDump.printExpStr(inExp1) + " = " + ExpressionDump.printExpStr(inExp2));
-                            print(" with respect to: " + ExpressionDump.printExpStr(inExp3));
-                           end if;
-                        then fail();
-                        end matchcontinue;
-
- outExp := symEuler_helper(outExp, inExp3);
- (outExp,_) := ExpressionSimplify.simplify1(outExp);
-
+  (outExp,outAsserts,eqnForNewVars,newVarsCrefs,dummyI) := matchcontinue inExp1
+    case _ then solveSimple(inExp1, inExp2, inExp3, 0);
+    case _ then solveSimple(inExp2, inExp1, inExp3, 0);
+    case _ then solveWork(inExp1, inExp2, inExp3, functions, uniqueEqIndex, 0, doInline, isContinuousIntegration);
+    else equation
+      if Flags.isSet(Flags.FAILTRACE) then
+        Error.addInternalError("Failed to solve \"" + ExpressionDump.printExpStr(inExp1) + " = " + ExpressionDump.printExpStr(inExp2) + "\" w.r.t. \"" + ExpressionDump.printExpStr(inExp3) + "\"", sourceInfo());
+      end if;
+    then fail();
+  end matchcontinue;
 end solve2;
 
 
@@ -329,6 +267,8 @@ protected function solveWork
  input Option<DAE.FunctionTree> functions;
  input Option<Integer> uniqueEqIndex "offset for tmp vars";
  input Integer idepth;
+ input Boolean doInline;
+ input Boolean isContinuousIntegration;
  output DAE.Exp outExp;
  output list<DAE.Statement> outAsserts;
  output list<BackendDAE.Equation> eqnForNewVars "eqn for tmp vars";
@@ -341,8 +281,8 @@ protected
  list<BackendDAE.Equation> eqnForNewVars1;
  list<DAE.ComponentRef> newVarsCrefs1;
 algorithm
- (e1, e2, eqnForNewVars, newVarsCrefs, depth) := matchcontinue(inExp1, inExp2, inExp3, functions, uniqueEqIndex)
-               case(_,_,_,_,_) then preprocessingSolve(inExp1, inExp2, inExp3, functions, uniqueEqIndex, idepth);
+ (e1, e2, eqnForNewVars, newVarsCrefs, depth) := matchcontinue inExp1
+               case _ then preprocessingSolve(inExp1, inExp2, inExp3, functions, uniqueEqIndex, idepth, doInline);
                else
                 equation
                   if Flags.isSet(Flags.FAILTRACE) then
@@ -353,15 +293,15 @@ algorithm
                 then (inExp1,inExp2,{},{}, idepth);
               end matchcontinue;
 
- (outExp, outAsserts, eqnForNewVars1, newVarsCrefs1, depth) := matchcontinue(e1, e2, inExp3)
-                          case(DAE.IFEXP(),_,_) then  solveIfExp(e1, e2, inExp3, functions, uniqueEqIndex, depth);
-                          case(_,_,_) then  solveSimple(e1, e2, inExp3, depth);
-                          case(_,_,_) then  solveLinearSystem(e1, e2, inExp3, functions, depth);
+ (outExp, outAsserts, eqnForNewVars1, newVarsCrefs1, depth) := matchcontinue e1
+                          case _ then  solveIfExp(e1, e2, inExp3, functions, uniqueEqIndex, depth, doInline, isContinuousIntegration);
+                          case _ then  solveSimple(e1, e2, inExp3, depth);
+                          case _ then  solveLinearSystem(e1, e2, inExp3, functions, depth);
                           else fail();
                          end matchcontinue;
 
- eqnForNewVars := List.appendNoCopy(eqnForNewVars, eqnForNewVars1);
- newVarsCrefs := List.appendNoCopy(newVarsCrefs, newVarsCrefs1);
+ eqnForNewVars := listAppend(eqnForNewVars, eqnForNewVars1);
+ newVarsCrefs := listAppend(newVarsCrefs, newVarsCrefs1);
 
 end solveWork;
 
@@ -422,77 +362,44 @@ algorithm
       Real r, r2;
       list<DAE.Statement> asserts;
 
-    // special case for inital system when already solved, cr1 = $_start(...)
-    case (DAE.CREF(componentRef = cr1),DAE.CALL(path = Absyn.IDENT(name = "$_start")),DAE.CREF(componentRef = cr))
-      equation
-        true = ComponentReference.crefEqual(cr, cr1);
-      then
-        (inExp2,{});
-    case (DAE.CALL(path = Absyn.IDENT(name = "der"),expLst = {DAE.CREF(componentRef = cr1)}),DAE.CALL(path = Absyn.IDENT(name = "$_start")),DAE.CREF(componentRef = cr))
-      equation
-        true = ComponentReference.crefEqual(cr, cr1);
-      then
-        (inExp2,{});
-
     // special case when already solved, cr1 = rhs, otherwise division by zero when dividing with derivative
     case (DAE.CREF(componentRef = cr1),_,DAE.CREF(componentRef = cr))
-      equation
-        true = ComponentReference.crefEqual(cr, cr1);
-        false = Expression.expHasCrefNoPreOrStart(inExp2, cr);
+      guard ComponentReference.crefEqual(cr, cr1) and (not Expression.expHasCrefNoPreOrStart(inExp2, cr))
       then
         (inExp2,{});
     case (DAE.CALL(path = Absyn.IDENT(name = "der"),expLst = {DAE.CREF(componentRef = cr1)}),_,DAE.CALL(path = Absyn.IDENT(name = "der"),expLst = {DAE.CREF(componentRef = cr)}))
-      equation
-        true = ComponentReference.crefEqual(cr, cr1);
-        false = Expression.expHasDerCref(inExp2, cr);
+      guard  ComponentReference.crefEqual(cr, cr1) and (not Expression.expHasDerCref(inExp2, cr))
       then
         (inExp2,{});
 
     // -cr = exp
     case (DAE.UNARY(operator = DAE.UMINUS(), exp = DAE.CREF(componentRef = cr1)),_,DAE.CREF(componentRef = cr))
-      equation
-        true = ComponentReference.crefEqual(cr1,cr);
-        // cr not in e2
-        false = Expression.expHasCrefNoPreOrStart(inExp2,cr);
+      guard ComponentReference.crefEqual(cr1,cr) and (not Expression.expHasCrefNoPreOrStart(inExp2,cr))
       then
         (Expression.negate(inExp2),{});
     case (DAE.UNARY(operator = DAE.UMINUS_ARR(), exp = DAE.CREF(componentRef = cr1)),_,DAE.CREF(componentRef = cr))
-      equation
-        true = ComponentReference.crefEqual(cr1,cr);
-        // cr not in e2
-        false = Expression.expHasCrefNoPreOrStart(inExp2,cr);
+      guard ComponentReference.crefEqual(cr1,cr) and (not Expression.expHasCrefNoPreOrStart(inExp2,cr)) // cr not in e2
       then
         (Expression.negate(inExp2),{});
     case (DAE.UNARY(operator = DAE.UMINUS(), exp = DAE.CALL(path = Absyn.IDENT(name = "der"),expLst = {DAE.CREF(componentRef = cr1)})),_,DAE.CALL(path = Absyn.IDENT(name = "der"),expLst = {DAE.CREF(componentRef = cr)}))
-      equation
-        true = ComponentReference.crefEqual(cr1,cr);
-        // cr not in e2
-        false = Expression.expHasDerCref(inExp2,cr);
+      guard ComponentReference.crefEqual(cr1,cr) and (not  Expression.expHasDerCref(inExp2,cr)) // cr not in e2
       then
         (Expression.negate(inExp2),{});
     case (DAE.UNARY(operator = DAE.UMINUS_ARR(), exp = DAE.CALL(path = Absyn.IDENT(name = "der"),expLst = {DAE.CREF(componentRef = cr1)})),_,DAE.CALL(path = Absyn.IDENT(name = "der"),expLst = {DAE.CREF(componentRef = cr)}))
-      equation
-        true = ComponentReference.crefEqual(cr1,cr);
-        // cr not in e2
-        false = Expression.expHasDerCref(inExp2,cr);
+      guard ComponentReference.crefEqual(cr1,cr) and (not Expression.expHasDerCref(inExp2,cr))
       then
         (Expression.negate(inExp2),{});
 
     // !cr = exp
     case (DAE.LUNARY(operator = DAE.NOT(), exp = DAE.CREF(componentRef = cr1)),_,DAE.CREF(componentRef = cr))
-      equation
-        true = ComponentReference.crefEqual(cr1,cr);
-        // cr not in e2
-        false = Expression.expHasCrefNoPreOrStart(inExp2,cr);
+      guard ComponentReference.crefEqual(cr1,cr) and (not Expression.expHasCrefNoPreOrStart(inExp2,cr))
       then
         (Expression.negate(inExp2),{});
 
     // Integer(enumcr) = ...
     case (DAE.CALL(path = Absyn.IDENT(name = "Integer"),expLst={DAE.CREF(componentRef = cr1)}),_,DAE.CREF(componentRef = cr,ty=tp))
+      guard ComponentReference.crefEqual(cr, cr1) and (not  Expression.expHasCrefNoPreorDer(inExp2,cr))
       equation
-        true = ComponentReference.crefEqual(cr, cr1);
-        // cr not in e2
-        false = Expression.expHasCrefNoPreorDer(inExp2,cr);
         asserts = generateAssertType(tp,cr,inExp3,{});
       then (DAE.CAST(tp,inExp2),asserts);
       else fail();
@@ -547,51 +454,51 @@ preprocessing for solve1,
  author: Vitalij Ruge
 "
 
-  input DAE.Exp inExp1 "lhs";
-  input DAE.Exp inExp2 "rhs";
+  input output DAE.Exp x "lhs";
+  input output DAE.Exp y "rhs";
   input DAE.Exp inExp3 "DAE.CREF or 'der(DAE.CREF())'";
   input Option<DAE.FunctionTree> functions;
   input Option<Integer> uniqueEqIndex "offset for tmp vars";
   input Integer idepth;
-  output DAE.Exp h;
-  output DAE.Exp k;
+  input Boolean doInline;
   output list<BackendDAE.Equation> eqnForNewVars = {} "eqn for tmp vars";
   output list<DAE.ComponentRef> newVarsCrefs = {};
   output Integer depth = idepth;
 
  protected
   DAE.Exp res;
-  list<DAE.Exp> lhs, rhs, resTerms;
+  list<DAE.Exp> lhs, rhs;
   list<DAE.Exp> lhsWithX, rhsWithX, lhsWithoutX, rhsWithoutX, eWithX, factorWithX, factorWithoutX;
-  DAE.Exp lhsX, rhsX, lhsY, rhsY, x, y, N;
+  DAE.Exp lhsX, rhsX, lhsY, rhsY, N;
   DAE.ComponentRef cr;
-  DAE.Boolean con, new_x, collect = true, inlineFun = true;
+  DAE.Boolean con, new_x, inlineFun = true;
   Integer iter;
+  Integer numSimplifed = 0 ;
 
  algorithm
-   (x, _) := ExpressionSimplify.simplify(inExp1);
-   (y, _) := ExpressionSimplify.simplify(inExp2);
-   res := Expression.expSub(x, y);
-   resTerms :=  Expression.terms(res);
 
    // split and sort
-   (lhsX, lhsY) := preprocessingSolve5(inExp1, inExp3,true);
-   (rhsX, rhsY) := preprocessingSolve5(inExp2, inExp3,true);
+   (lhsX, lhsY) := preprocessingSolve5(x, inExp3,true);
+   (rhsX, rhsY) := preprocessingSolve5(y, inExp3,true);
    x := Expression.expSub(lhsX, rhsX);
    y := Expression.expSub(rhsY, lhsY);
 
-   con := true;
+   con := not Expression.isCref(x);
    iter := 0;
-
-   x := unifyFunCalls(x, inExp3);
-   while con and iter < 1000 loop
-
+   if con then
+     x := unifyFunCalls(x, inExp3);
+   end if;
+   while con and iter < 1000 and (not Expression.isCref(x)) loop
      (x, y, con) := preprocessingSolve2(x,y, inExp3);
      (x, y, new_x) := preprocessingSolve3(x,y, inExp3);
      con := con or new_x;
      while new_x loop
        (x, y, new_x) := preprocessingSolve3(x,y, inExp3);
      end while;
+
+     if Expression.isCref(x) then
+       break;
+     end if;
      (x, y, new_x) := removeSimpleCalls(x,y, inExp3);
      con := con or new_x;
      (x, y, new_x) := preprocessingSolve4(x,y, inExp3);
@@ -602,8 +509,11 @@ preprocessing for solve1,
      con := new_x or con;
      end if;
 
-     if not con then
-       (x, con) := ExpressionSimplify.simplify(x);
+     if (not con) then
+       if (numSimplifed < 3) then
+         (x, con) := ExpressionSimplify.simplify(x);
+         numSimplifed := numSimplifed + 1;
+       end if;
        // Z/N = rhs -> Z = rhs*N
        (x,N) := Expression.makeFraction(x);
        if not Expression.isOne(N) then
@@ -613,76 +523,38 @@ preprocessing for solve1,
        end if;
 
        con := new_x or con;
-       iter := iter + 50;
      end if;
 
-     if con and collect then
+     if con  then
        (lhsX, lhsY) := preprocessingSolve5(x, inExp3, true);
        (rhsX, rhsY) := preprocessingSolve5(y, inExp3, false);
        x := Expression.expSub(lhsX, rhsX);
        y := Expression.expSub(rhsY, lhsY);
-       collect := true;
-       inlineFun := true;
-     elseif collect then
-       collect := false;
-       con := true;
+     elseif doInline and inlineFun then
        iter := iter + 50;
-     elseif inlineFun then
-       (x,con) := solveFunCalls(x, inExp3, functions);
-       collect := con;
-       inlineFun := false;
-     end if;
-
-     if con and collect then
-       (lhsX, lhsY) := preprocessingSolve5(x, inExp3, true);
-       (rhsX, rhsY) := preprocessingSolve5(y, inExp3, false);
-       x := Expression.expSub(lhsX, rhsX);
-       y := Expression.expSub(rhsY, lhsY);
+       if inlineFun then
+         (x,con) := solveFunCalls(x, inExp3, functions);
+         inlineFun := false;
+         if con then
+           numSimplifed := 0;
+         end if;
+       end if;
      end if;
 
      iter := iter + 1;
      //print("\nx ");print(ExpressionDump.printExpStr(x));print("\ny ");print(ExpressionDump.printExpStr(y));
    end while;
 
-   (k,_) := ExpressionSimplify.simplify1(y);
-
-   // h(x) = k(y)
-   (h,_) := ExpressionSimplify.simplify(x);
+   y := ExpressionSimplify.simplify1(y);
 
 /*
-   if not Expression.expEqual(inExp1,h) then
+   if not Expression.expEqual(inExp1,x) then
      print("\nIn: ");print(ExpressionDump.printExpStr(inExp1));print(" = ");print(ExpressionDump.printExpStr(inExp2));
-     print("\nOut: ");print(ExpressionDump.printExpStr(h));print(" = ");print(ExpressionDump.printExpStr(k));
+     print("\nOut: ");print(ExpressionDump.printExpStr(x));print(" = ");print(ExpressionDump.printExpStr(y));
      print("\t w.r.t ");print(ExpressionDump.printExpStr(inExp3));
    end if;
 */
 end preprocessingSolve;
-
-protected function symEuler_helper
-"
- special case for symEuler
-"
-  input DAE.Exp rhs;
-  input DAE.Exp X;
-  output DAE.Exp orhs = rhs;
-protected
-  DAE.Type tp;
-  DAE.Exp dt;
-algorithm
-  if Flags.getConfigBool(Flags.SYM_EULER) then
-    dt := Expression.crefExp(ComponentReference.makeCrefIdent(BackendDAE.symEulerDT, DAE.T_REAL_DEFAULT, {}));
-    if expHasCref(rhs, dt) then
-      // x = dt != 0 ? k1(y,dt) : old_x
-      tp := Expression.typeof(X);
-      orhs := DAE.IFEXP(Expression.makeNoEvent(DAE.RELATION(
-                dt,
-                  DAE.EQUAL(tp),
-                DAE.RCONST(0.0),-1,NONE())),
-              Expression.makePureBuiltinCall("$_old", {X}, tp), rhs);
-    end if;
-  end if;
-
-end symEuler_helper;
 
 protected function preprocessingSolve2
 "
@@ -702,88 +574,73 @@ protected function preprocessingSolve2
 
 algorithm
 
-(olhs, orhs, con) := matchcontinue (inExp1,inExp2,inExp3)
+(olhs, orhs, con) := match (inExp1)
     local
-     DAE.Exp e,a, b, fb, fa, ga, lhs, rhs;
+     DAE.Exp e,a, b, fb, fa, ga, lhs;
      DAE.Type tp;
      DAE.Operator op;
      list<DAE.Exp> eWithX, factorWithX, factorWithoutX;
      DAE.Exp pWithX, pWithoutX;
 
     // -f(a) = b => f(a) = -b
-    case(DAE.UNARY(op as DAE.UMINUS(), fa),_,_)
+    case DAE.UNARY(op as DAE.UMINUS(), fa)
+      guard expHasCref(fa, inExp3) and not expHasCref(inExp2, inExp3)
+    then(fa, DAE.UNARY(op, inExp2), true);
+
+    case DAE.UNARY(op as DAE.UMINUS_ARR(), fa)
+      guard expHasCref(fa, inExp3) and not expHasCref(inExp2, inExp3)
       equation
-        true = expHasCref(fa, inExp3);
-        false = expHasCref(inExp2, inExp3);
-        b = DAE.UNARY(op, inExp2);
-    then(fa, b, true);
-    case(DAE.UNARY(op as DAE.UMINUS_ARR(), fa),_,_)
-      equation
-        true = expHasCref(fa, inExp3);
-        false = expHasCref(inExp2, inExp3);
         b = DAE.UNARY(op, inExp2);
     then(fa, b, true);
 
     // b/f(a) = rhs  => f(a) = b/rhs solve for a
-    case(DAE.BINARY(b,DAE.DIV(_),fa), rhs, _)
+    case DAE.BINARY(b,DAE.DIV(_),fa)
+      guard expHasCref(fa, inExp3) and (not expHasCref(b, inExp3)) and (not expHasCref(inExp2, inExp3))
       equation
-        true = expHasCref(fa, inExp3);
-        false = expHasCref(b, inExp3);
-        false = expHasCref(rhs, inExp3);
-        e = Expression.makeDiv(b, rhs);
+        e = Expression.makeDiv(b, inExp2);
       then(fa, e, true);
 
     // b*f(a) = rhs  => f(a) = rhs/b solve for a
-    case(DAE.BINARY(b, DAE.MUL(_), fa), rhs, _)
+    case DAE.BINARY(b, DAE.MUL(_), fa)
+      guard expHasCref(fa, inExp3) and (not expHasCref(b, inExp3)) and (not expHasCref(inExp2, inExp3))
       equation
-        false = expHasCref(b, inExp3);
-        true = expHasCref(fa, inExp3);
-        false = expHasCref(rhs, inExp3);
 
         eWithX = Expression.expandFactors(inExp1);
         (factorWithX, factorWithoutX) = List.split1OnTrue(eWithX, expHasCref, inExp3);
         pWithX = makeProductLstSort(factorWithX);
         pWithoutX = makeProductLstSort(factorWithoutX);
 
-        e = Expression.makeDiv(rhs, pWithoutX);
+        e = Expression.makeDiv(inExp2, pWithoutX);
 
        then(pWithX, e, true);
 
     // b*a = rhs  => a = rhs/b solve for a
-    case(DAE.BINARY(b, DAE.MUL(_), fa), rhs, _)
+    case DAE.BINARY(b, DAE.MUL(_), fa)
+      guard expHasCref(fa, inExp3) and (not expHasCref(b, inExp3)) and (not expHasCref(inExp2, inExp3))
       equation
-        false = expHasCref(b, inExp3);
-        true = expHasCref(fa, inExp3);
-        false = expHasCref(rhs, inExp3);
-        e = Expression.makeDiv(rhs, b);
+        e = Expression.makeDiv(inExp2, b);
        then(fa, e, true);
 
     // a*b = rhs  => a = rhs/b solve for a
-    case(DAE.BINARY(fa, DAE.MUL(_), b), rhs, _)
+    case DAE.BINARY(fa, DAE.MUL(_), b)
+      guard expHasCref(fa, inExp3) and (not expHasCref(b, inExp3)) and (not expHasCref(inExp2, inExp3))
       equation
-        false = expHasCref(b, inExp3);
-        true = expHasCref(fa, inExp3);
-        false = expHasCref(rhs, inExp3);
-        e = Expression.makeDiv(rhs, b);
+        e = Expression.makeDiv(inExp2, b);
        then(fa, e, true);
 
     // f(a)/b = rhs  => f(a) = rhs*b solve for a
-    case(DAE.BINARY(fa, DAE.DIV(_), b), rhs, _)
+    case DAE.BINARY(fa, DAE.DIV(_), b)
+      guard expHasCref(fa, inExp3) and (not expHasCref(b, inExp3)) and (not expHasCref(inExp2, inExp3))
       equation
-        true = expHasCref(fa, inExp3);
-        false = expHasCref(b, inExp3);
-        false = expHasCref(rhs, inExp3);
-        e = Expression.expMul(rhs, b);
+        e = Expression.expMul(inExp2, b);
        then (fa, e, true);
 
     // g(a)/f(a) = rhs  => rhs*f(a) - g(a) = 0  solve for a
-    case(DAE.BINARY(ga, DAE.DIV(tp), fa), rhs, _)
+    case DAE.BINARY(ga, DAE.DIV(tp), fa)
+      guard expHasCref(fa, inExp3) and expHasCref(ga, inExp3) and (not expHasCref(inExp2, inExp3))
       equation
-        true = expHasCref(fa, inExp3);
-        true = expHasCref(ga, inExp3);
-        false = expHasCref(rhs, inExp3);
 
-        e = Expression.expMul(rhs, fa);
+        e = Expression.expMul(inExp2, fa);
         lhs = Expression.expSub(e, ga);
         e = Expression.makeConstZero(tp);
 
@@ -791,7 +648,7 @@ algorithm
 
    else (inExp1, inExp2, false);
 
-   end matchcontinue;
+   end match;
 
 end preprocessingSolve2;
 
@@ -814,64 +671,56 @@ protected function preprocessingSolve3
   output Boolean con "continue";
 
 algorithm
-  (olhs, orhs, con) := matchcontinue(inExp1, inExp2, inExp3)
+  (olhs, orhs, con) := match(inExp1, inExp2)
       local
        Real r, r1, r2;
        DAE.Exp e1, e2, res;
 
       // (r1)^f(a) = r2 => f(a)  = ln(r2)/ln(r1)
-      case (DAE.BINARY(e1 as DAE.RCONST(r1),DAE.POW(_),e2), DAE.RCONST(r2), _)
+      case (DAE.BINARY(e1 as DAE.RCONST(r1),DAE.POW(_),e2), DAE.RCONST(r2))
+        guard r2 > 0.0 and r1 > 0.0 and (not Expression.isConstOne(e1)) and expHasCref(e2, inExp3)
        equation
-         true = r2 > 0.0;
-         true = r1 > 0.0;
-         false = Expression.isConstOne(e1);
-         true = expHasCref(e2, inExp3);
          r = log(r2) / log(r1);
          res = DAE.RCONST(r);
        then
          (e2, res, true);
 
       // f(a)^b = 0 => f(a) = 0
-      case (DAE.BINARY(e1,DAE.POW(_),e2), DAE.RCONST(real = 0.0), _)
-        equation
-         false = expHasCref(e2, inExp3);
-         true = expHasCref(e1, inExp3);
+      case (DAE.BINARY(e1,DAE.POW(_),e2), DAE.RCONST(real = 0.0))
+        guard expHasCref(e1, inExp3) and (not expHasCref(e2, inExp3))
        then
          (e1, inExp2, true);
 
       // f(a)^n = c => f(a) = c^(1/n)
       // where n is odd
-      case (DAE.BINARY(e1,DAE.POW(_),e2 as DAE.RCONST(r)), _, _)
+      case (DAE.BINARY(e1,DAE.POW(_),e2 as DAE.RCONST(r)), _)
+        guard (not expHasCref(inExp2, inExp3)) and expHasCref(e1, inExp3) and (1.0 == realMod(r,2.0))
         equation
-          false = expHasCref(inExp2, inExp3);
-          true = expHasCref(e1, inExp3);
-          1.0 = realMod(r,2.0);
           res = Expression.makeDiv(DAE.RCONST(1.0),e2);
           res = Expression.expPow(inExp2,res);
        then
          (e1, res, true);
 
       // sqrt(f(a)) = f(a)^n = c => f(a) = c^(1/n)
-      case (DAE.BINARY(e1,DAE.POW(_),DAE.RCONST(0.5)), _, _)
+      case (DAE.BINARY(e1,DAE.POW(_),DAE.RCONST(0.5)), _)
+        guard not expHasCref(inExp2, inExp3) and expHasCref(e1, inExp3)
         equation
-          false = expHasCref(inExp2, inExp3);
-          true = expHasCref(e1, inExp3);
           res = Expression.expPow(inExp2,DAE.RCONST(2.0));
        then
          (e1, res, true);
 
       // abs(x) = 0
-      case (DAE.CALL(path = Absyn.IDENT(name = "abs"),expLst = {e1}), DAE.RCONST(0.0),_)
+      case (DAE.CALL(path = Absyn.IDENT(name = "abs"),expLst = {e1}), DAE.RCONST(0.0))
         then (e1,inExp2,true);
 
       // sign(x) = 0
-      case (DAE.CALL(path = Absyn.IDENT(name = "sign"),expLst = {e1}), DAE.RCONST(0.0),_)
+      case (DAE.CALL(path = Absyn.IDENT(name = "sign"),expLst = {e1}), DAE.RCONST(0.0))
         then (e1,inExp2,true);
 
 
       else (inExp1, inExp2, false);
 
-  end matchcontinue;
+  end match;
 
 
 end preprocessingSolve3;
@@ -898,7 +747,7 @@ protected function preprocessingSolve4
 
 algorithm
 
-  (oExp1, oExp2, newX) := matchcontinue(inExp1, inExp2, inExp3)
+  (oExp1, oExp2, newX) := match(inExp1, inExp2, inExp3)
           local
           String s1,s2;
           DAE.Operator op;
@@ -909,22 +758,27 @@ algorithm
           case(DAE.BINARY(DAE.CALL(path = Absyn.IDENT("exp"), expLst={e1}), DAE.SUB(_),
                           DAE.CALL(path = Absyn.IDENT("exp"), expLst={e2})),DAE.RCONST(0.0),_)
           then (e1, e2, true);
+
           // log(f(x)) - log(g(x)) = 0
           case(DAE.BINARY(DAE.CALL(path = Absyn.IDENT("log"), expLst={e1}), DAE.SUB(_),
                           DAE.CALL(path = Absyn.IDENT("log"), expLst={e2})),DAE.RCONST(0.0),_)
           then (e1, e2, true);
+
           // log10(f(x)) - log10(g(x)) = 0
           case(DAE.BINARY(DAE.CALL(path = Absyn.IDENT("log10"), expLst={e1}), DAE.SUB(_),
                           DAE.CALL(path = Absyn.IDENT("log10"), expLst={e2})),DAE.RCONST(0.0),_)
           then (e1, e2, true);
+
           // sinh(f(x)) - sinh(g(x)) = 0
           case(DAE.BINARY(DAE.CALL(path = Absyn.IDENT("sinh"), expLst={e1}), DAE.SUB(_),
                           DAE.CALL(path = Absyn.IDENT("sinh"), expLst={e2})),DAE.RCONST(0.0),_)
           then (e1, e2, true);
+
           // tanh(f(x)) - tanh(g(x)) = 0
           case(DAE.BINARY(DAE.CALL(path = Absyn.IDENT("tanh"), expLst={e1}), DAE.SUB(_),
                           DAE.CALL(path = Absyn.IDENT("tanh"), expLst={e2})),DAE.RCONST(0.0),_)
           then (e1, e2, true);
+
           // sqrt(f(x)) - sqrt(g(x)) = 0
           case(DAE.BINARY(DAE.CALL(path = Absyn.IDENT("sqrt"), expLst={e1}), DAE.SUB(_),
                           DAE.CALL(path = Absyn.IDENT("sqrt"), expLst={e2})),DAE.RCONST(0.0),_)
@@ -933,28 +787,27 @@ algorithm
           // sinh(f(x)) - cosh(g(x)) = 0
           case(DAE.BINARY(DAE.CALL(path = Absyn.IDENT("sinh"), expLst={e1}), DAE.SUB(_),
                           DAE.CALL(path = Absyn.IDENT("cosh"), expLst={e2})),DAE.RCONST(0.0),_)
-          equation
-          true = Expression.expEqual(e1,e2);
-          then (e1, inExp2, true);
-          case(DAE.BINARY(DAE.CALL(path = Absyn.IDENT("cosh"), expLst={e1}), DAE.SUB(_),
-                          DAE.CALL(path = Absyn.IDENT("sinh"), expLst={e2})),DAE.RCONST(0.0),_)
-          equation
-          true = Expression.expEqual(e1,e2);
+          guard Expression.expEqual(e1,e2)
           then (e1, inExp2, true);
 
+          case(DAE.BINARY(DAE.CALL(path = Absyn.IDENT("cosh"), expLst={e1}), DAE.SUB(_),
+                          DAE.CALL(path = Absyn.IDENT("sinh"), expLst={e2})),DAE.RCONST(0.0),_)
+          guard Expression.expEqual(e1,e2)
+          then (e1, inExp2, true);
 
 
          // y*sinh(x) - z*cosh(x) = 0
           case(DAE.BINARY(DAE.BINARY(e3,DAE.MUL(),DAE.CALL(path = Absyn.IDENT("sinh"), expLst={e1})), DAE.SUB(tp),
                           DAE.BINARY(e4,DAE.MUL(),DAE.CALL(path = Absyn.IDENT("cosh"), expLst={e2}))),DAE.RCONST(0.0),_)
+          guard Expression.expEqual(e1,e2)
           equation
-          true = Expression.expEqual(e1,e2);
           e = Expression.makePureBuiltinCall("tanh",{e1},tp);
           then (Expression.expMul(e3,e), e4, true);
+
           case(DAE.BINARY(DAE.BINARY(e4,DAE.MUL(),DAE.CALL(path = Absyn.IDENT("cosh"), expLst={e2})), DAE.SUB(tp),
                           DAE.BINARY(e3,DAE.MUL(),DAE.CALL(path = Absyn.IDENT("sinh"), expLst={e1}))),DAE.RCONST(0.0),_)
+          guard Expression.expEqual(e1,e2)
           equation
-          true = Expression.expEqual(e1,e2);
           e = Expression.makePureBuiltinCall("tanh",{e1},tp);
           then (Expression.expMul(e3,e), e4, true);
 
@@ -963,24 +816,21 @@ algorithm
           // sqrt(x) - x = 0 -> x = x^2
           case(DAE.BINARY(DAE.CALL(path = Absyn.IDENT("sqrt"), expLst={e1}), DAE.SUB(_),e2), DAE.RCONST(0.0),_)
           then (e1, Expression.expPow(e2, DAE.RCONST(2.0)), true);
+
           case(DAE.BINARY(e2, DAE.SUB(_),DAE.CALL(path = Absyn.IDENT("sqrt"), expLst={e1})), DAE.RCONST(0.0),_)
-          equation
           then (e1, Expression.expPow(e2, DAE.RCONST(2.0)), true);
 
           // f(x)^n - g(x)^n = 0 -> (f(x)/g(x))^n = 1
           case(DAE.BINARY(DAE.BINARY(e1, DAE.POW(), e2), DAE.SUB(tp), DAE.BINARY(e3, DAE.POW(), e4)), DAE.RCONST(0.0),_)
+            guard Expression.expEqual(e2,e4) and expHasCref(e1,inExp3) and expHasCref(e3,inExp3)
           equation
-            true = Expression.expEqual(e2,e4);
-            true = expHasCref(e1,inExp3);
-            true = expHasCref(e3,inExp3);
             e = Expression.expPow(Expression.makeDiv(e1,e3),e2);
             (e_1, e_2, _) = preprocessingSolve3(e, Expression.makeConstOne(tp), inExp3);
           then (e_1, e_2, true);
 
-
           else (inExp1, inExp2, false);
 
-    end matchcontinue;
+    end match;
 
 
 end preprocessingSolve4;
@@ -1005,20 +855,17 @@ algorithm
      DAE.Exp e, e1, e2, e3, e4, res;
 
     case(DAE.IFEXP(e,e1,e2), _,_)
+      guard expHasCref(e1, inExp3) and expHasCref(e2, inExp3) and  (not expHasCref(e, inExp3))
      equation
-         false = expHasCref(e, inExp3);
-         true = expHasCref(e1, inExp3);
-         true = expHasCref(e2, inExp3);
          e3 = expAddX(inExp2, e1, inExp3);
          e4 = expAddX(inExp2, e2, inExp3);
 
          res = DAE.IFEXP(e, e3, e4);
      then res;
+
     case(_, DAE.IFEXP(e,e1,e2), _)
+      guard expHasCref(e1, inExp3) and expHasCref(e2, inExp3) and (not expHasCref(e, inExp3))
      equation
-         false = expHasCref(e, inExp3);
-         true = expHasCref(e1, inExp3);
-         true = expHasCref(e2, inExp3);
          e3 = expAddX(inExp1, e1, inExp3);
          e4 = expAddX(inExp1, e2, inExp3);
 
@@ -1127,62 +974,49 @@ protected function preprocessingSolve5
   input DAE.Exp inExp1 "lhs";
   input DAE.Exp inExp3 "DAE.CREF or 'der(DAE.CREF())'";
   input DAE.Boolean expand;
-  output DAE.Exp outLhs = DAE.RCONST(0.0);
+  output DAE.Exp outLhs;
   output DAE.Exp outRhs;
 
 protected
-  DAE.Exp res;
-  list<DAE.Exp> lhs, rhs, resTerms;
-
+  list<DAE.Exp> lhs, rhs;
+  DAE.Exp tmpLhs, e1;
+  Boolean b;
+  DAE.ComponentRef cr;
 algorithm
 
-   //can be improve with Expression.getTermsContainingX ???
-
    if expHasCref(inExp1, inExp3) then
-     resTerms := Expression.terms(inExp1);
-     // split
-     (lhs, rhs) := List.split1OnTrue(resTerms, expHasCref, inExp3);
-     //print("\nlhs =");print(ExpressionDump.printExpListStr(lhs));
-     //print("\nrhs =");print(ExpressionDump.printExpListStr(rhs));
 
-     // sort
-     // a*f(x)*b -> c*f(x)
-     for e in lhs loop
-       outLhs := expAddX(e, outLhs, inExp3); // special add
-     end for;
+    if expand then
+      (cr, b) := Expression.expOrDerCref(inExp3);
+      if b then
+        (lhs, rhs) := Expression.allTermsForCref(inExp1, cr, Expression.Expression.expHasDerCref);
+      else
+        (lhs, rhs) := Expression.allTermsForCref(inExp1, cr, Expression.expHasCrefNoPreOrStart);
+      end if;
+    else
+      (lhs, rhs) := List.split1OnTrue(Expression.terms(inExp1), expHasCref, inExp3);
+    end if;
 
-     //rhs
-     outRhs := Expression.makeSum(rhs);
-     (outRhs,_) := ExpressionSimplify.simplify1(outRhs);
-
-     if expand then
-       resTerms := Expression.terms(Expression.expand(outLhs));
-       (lhs, rhs) := List.split1OnTrue(resTerms, expHasCref, inExp3);
-       outLhs := DAE.RCONST(0.0);
-       // sort
-       // a*f(x)*b -> c*f(x)
-       for e in lhs loop
-         outLhs := expAddX(e, outLhs, inExp3); // special add
-       end for;
-       //rhs
-       outRhs := Expression.expAdd(outRhs,Expression.makeSum(rhs));
-       (outRhs,_) := ExpressionSimplify.simplify1(outRhs);
-
-       resTerms := Expression.allTerms(outLhs);
-       (lhs, rhs) := List.split1OnTrue(resTerms, expHasCref, inExp3);
-       // sort
-       // a*f(x)*b -> c*f(x)
-       outLhs := DAE.RCONST(0.0);
-       for e in lhs loop
-         outLhs := expAddX(e, outLhs, inExp3); // special add
-       end for;
-       //rhs
-       outRhs := Expression.expAdd(outRhs,Expression.makeSum(rhs));
-       (outRhs,_) := ExpressionSimplify.simplify1(outRhs);
-
-     end if;
+    // sort
+    // a*f(x)*b -> c*f(x)
+    outLhs := DAE.RCONST(0.0);
+    tmpLhs := DAE.RCONST(0.0);
+    for e in lhs loop
+      if Expression.isNegativeUnary(e) then
+        DAE.UNARY(exp = e1) := e;
+        tmpLhs := expAddX(e1, tmpLhs, inExp3); // special add
+      else
+        outLhs := expAddX(e, outLhs, inExp3); // special add
+      end if;
+    end for;
+    outLhs := expAddX(outLhs, Expression.negate(tmpLhs), inExp3);
+    //rhs
+    outRhs := Expression.makeSum1(rhs);
+    (outRhs,_) := ExpressionSimplify.simplify1(outRhs);
+    (outLhs,_) := ExpressionSimplify.simplify1(outLhs);
 
    else
+    outLhs := DAE.RCONST(0.0);
     outRhs := inExp1;
    end if;
 
@@ -1191,7 +1025,6 @@ end preprocessingSolve5;
 protected function unifyFunCalls
 "
 e.g.
- smooth() -> if
  semiLinear() -> if
  author: Vitalij Ruge
 "
@@ -1211,24 +1044,22 @@ protected function unifyFunCallsWork
   output Boolean cont;
   output DAE.Exp oT;
  algorithm
-   (outExp,cont,oT) := matchcontinue(inExp, iT)
+   (outExp,cont,oT) := match(inExp, iT)
    local
      DAE.Exp e, e1,e2,e3, X;
      DAE.Type tp;
-
+/*
    case(DAE.CALL(path = Absyn.IDENT(name = "smooth"), expLst = {_, e}),X)
-     equation
-       true = expHasCref(e, X);
+     guard expHasCref(e, X)
      then (e, true, iT);
 
    case(DAE.CALL(path = Absyn.IDENT(name = "noEvent"), expLst = {e}),X)
-     equation
-       true = expHasCref(e, X);
+     guard expHasCref(e, X)
      then (e, true, iT);
-
+*/
    case(DAE.CALL(path = Absyn.IDENT(name = "semiLinear"),expLst = {e1, e2, e3}),_)
-     equation
-       false = Expression.isZero(e1);
+     guard not Expression.isZero(e1)
+       equation
        tp = Expression.typeof(e1);
        e = DAE.IFEXP(DAE.RELATION(e1,DAE.GREATEREQ(tp), Expression.makeConstZero(tp),-1,NONE()),Expression.expMul(e1,e2), Expression.expMul(e1,e3));
      then (e,true, iT);
@@ -1238,14 +1069,14 @@ protected function unifyFunCallsWork
      guard expHasCref(e1, X)
      equation
       tp = Expression.typeof(e1);
-      e2 = Expression.crefExp(ComponentReference.makeCrefIdent(BackendDAE.symEulerDT, DAE.T_REAL_DEFAULT, {}));
-      e3 = Expression.makePureBuiltinCall("$_old", {e1}, tp);
+      e2 = Expression.crefExp(ComponentReference.makeCrefIdent(BackendDAE.symSolverDT, DAE.T_REAL_DEFAULT, {}));
+      e3 = Expression.makePureBuiltinCall("pre", {e1}, tp);
       e3 = Expression.expSub(e1,e3);
       e = Expression.expDiv(e3,e2);
      then (e,true, iT);
 
    else (inExp, true, iT);
-   end matchcontinue;
+   end match;
 
 end unifyFunCallsWork;
 
@@ -1375,11 +1206,11 @@ algorithm
     case (DAE.CALL(path = Absyn.IDENT(name = "semiLinear"),expLst = {DAE.RCONST(real = 0.0), e1, e2}),DAE.RCONST(real = 0.0),_)
        then (e1,e2,true);
     // smooth(i,f(a)) = rhs -> f(a) = rhs
-    case (DAE.CALL(path = Absyn.IDENT(name = "smooth"),expLst = {_, e2}),_,_)
-       then (e2, inExp2, true);
+    //case (DAE.CALL(path = Absyn.IDENT(name = "smooth"),expLst = {_, e2}),_,_)
+    //   then (e2, inExp2, true);
     // noEvent(f(a)) = rhs -> f(a) = rhs
-    case (DAE.CALL(path = Absyn.IDENT(name = "noEvent"),expLst = {e2}),_,_)
-       then (e2, inExp2, true);
+    //case (DAE.CALL(path = Absyn.IDENT(name = "noEvent"),expLst = {e2}),_,_)
+    //   then (e2, inExp2, true);
 
     else (inExp1, inExp2, false);
   end matchcontinue;
@@ -1405,11 +1236,11 @@ author: vitalij
      Boolean b;
 
    case(DAE.CALL(),(X, functions))
+     guard expHasCref(inExp, X)
      equation
-       //print("\nIn: ");print(ExpressionDump.printExpStr(inExp));
-       true = expHasCref(inExp, X);
-       (e,_,b) = Inline.forceInlineExp(inExp,(functions,{DAE.NORM_INLINE(),DAE.NO_INLINE()}),DAE.emptyElementSource);
-       //print("\nOut: ");print(ExpressionDump.printExpStr(e));
+       //print("\nfIn: ");print(ExpressionDump.printExpStr(inExp));
+       (e,_,b) = Inline.forceInlineExp(inExp,(functions,{DAE.NORM_INLINE(),DAE.DEFAULT_INLINE()}),DAE.emptyElementSource);
+       //print("\nfOut: ");print(ExpressionDump.printExpStr(e));
      then (e, not b, iT);
    else (inExp, true, iT);
    end matchcontinue;
@@ -1650,8 +1481,8 @@ algorithm
     true = expHasCref(e1, inExp3);
     false = expHasCref(inExp2, inExp3);
     tp = Expression.typeof(e1);
-    e2 = Expression.crefExp(ComponentReference.makeCrefIdent(BackendDAE.symEulerDT, DAE.T_REAL_DEFAULT, {}));
-    lhs = Expression.makePureBuiltinCall("$_old", {e1}, tp);
+    e2 = Expression.crefExp(ComponentReference.makeCrefIdent(BackendDAE.symSolverDT, DAE.T_REAL_DEFAULT, {}));
+    lhs = Expression.makePureBuiltinCall("pre", {e1}, tp);
     lhs = Expression.expAdd(Expression.expMul(inExp2,e2), lhs);
   then(e1, lhs, true, ieqnForNewVars, inewVarsCrefs, idepth + 1);
 
@@ -1842,6 +1673,8 @@ protected function solveIfExp
   input Option<DAE.FunctionTree> functions;
   input Option<Integer> uniqueEqIndex "offset for tmp vars";
   input Integer idepth;
+  input Boolean doInline;
+  input Boolean isContinuousIntegration;
   output DAE.Exp outExp;
   output list<DAE.Statement> outAsserts;
   output list<BackendDAE.Equation> eqnForNewVars "eqn for tmp vars";
@@ -1849,7 +1682,7 @@ protected function solveIfExp
   output Integer odepth;
 
 algorithm
-   (outExp,outAsserts,eqnForNewVars,newVarsCrefs,odepth) := match(inExp1,inExp2,inExp3, functions, uniqueEqIndex)
+   (outExp,outAsserts,eqnForNewVars,newVarsCrefs,odepth) := match inExp1
    local
       DAE.Exp e1,e2,e3,res,lhs,rhs;
       list<DAE.Statement> asserts,asserts1,asserts2;
@@ -1861,17 +1694,18 @@ algorithm
       //  a1 = solve(f(a),f1(a)) for a
       //  a2 = solve(f(a),f2(a)) for a
       //  => a = if g(b) then a1 else a2
-      case (DAE.IFEXP(e1,e2,e3),_,_,_,_)
+      case DAE.IFEXP(e1,e2,e3)
+        guard
+           isContinuousIntegration or not expHasCref(e1, inExp3)
         equation
-          false = expHasCref(e1, inExp3);
 
-          (lhs, asserts1, eqns, var, depth) = solveWork(e2, inExp2, inExp3, functions, uniqueEqIndex, idepth);
-          (rhs,_, eqns1, var1, depth) = solveWork(e3, inExp2, inExp3, functions, uniqueEqIndex, depth);
+          (lhs, asserts1, eqns, var, depth) = solveWork(e2, inExp2, inExp3, functions, uniqueEqIndex, idepth, doInline, isContinuousIntegration);
+          (rhs,_, eqns1, var1, depth) = solveWork(e3, inExp2, inExp3, functions, uniqueEqIndex, depth, doInline, isContinuousIntegration);
 
           res = DAE.IFEXP(e1,lhs,rhs);
           asserts = listAppend(asserts1,asserts1);
       then
-        (res,asserts,List.appendNoCopy(eqns1,eqns),  List.appendNoCopy(var1, var), depth);
+        (res,asserts,listAppend(eqns1,eqns),  listAppend(var1, var), depth);
       else fail();
    end match;
 
@@ -1903,6 +1737,7 @@ algorithm
       DAE.ComponentRef cr;
       DAE.Exp rhs;
       DAE.Type tp;
+      Integer i;
 
     // cr = (e1-e2)/(der(e1-e2,cr))
     case (_,_,DAE.CREF(componentRef = cr))
@@ -1918,7 +1753,11 @@ algorithm
         false = Expression.expHasCrefNoPreOrStart(dere, cr);
         tp = Expression.typeof(inExp3);
         (z,_) = Expression.makeZeroExpression(Expression.arrayDimension(tp));
-        ((e,_)) = Expression.replaceExp(e, inExp3, z);
+        ((e,i)) = Expression.replaceExp(e, inExp3, z);
+        // replace at least once, otherwise it's wrong
+        if i < 1 then
+          fail();
+        end if;
         (e,_) = ExpressionSimplify.simplify(e);
         rhs = Expression.negate(Expression.makeDiv(e,dere));
       then
@@ -2053,7 +1892,7 @@ protected function makeProductLstSort2
 protected
   list<DAE.Exp> rest;
 algorithm
-  rest := ExpressionSimplify.simplifyList(inExpLst, {});
+  rest := ExpressionSimplify.simplifyList(inExpLst);
   for elem in rest loop
     if not Expression.isOne(elem) then
     outExp := match(elem)
@@ -2103,10 +1942,10 @@ protected function makeIntialGuess
 protected
   DAE.Exp con, e;
 algorithm
- con := Expression.makePureBuiltinCall("initial",{},tp);
- (e,_) := Expression.traverseExpBottomUp(iExp2,makeIntialGuess2,(iExp3, "$_start",tp,true));
- (oExp,_) := Expression.traverseExpBottomUp(iExp2,makeIntialGuess2,(iExp3, "$_initialGuess",tp,false));
- oExp := DAE.IFEXP(con,e,oExp);
+ con := Expression.makePureBuiltinCall("initial", {}, tp);
+ e := Expression.traverseExpBottomUp(iExp2, makeIntialGuess2, (iExp3, "pre", tp, true));
+ oExp := Expression.traverseExpBottomUp(iExp2, makeIntialGuess2, (iExp3, "pre", tp, false));
+ oExp := DAE.IFEXP(con, e, oExp);
 end makeIntialGuess;
 
 protected function makeIntialGuess2
@@ -2115,26 +1954,28 @@ protected function makeIntialGuess2
   output DAE.Exp oExp;
   output tuple<DAE.Exp, String, DAE.Type, Boolean> otpl = itpl;
 algorithm
- oExp := match(iExp, itpl)
-         local DAE.ComponentRef cr1,cr2;
-               DAE.Type tp;
-               String fun;
-               DAE.Exp e;
+  oExp := match(iExp, itpl)
+    local
+      DAE.ComponentRef cr1,cr2;
+      DAE.Type tp;
+      String fun;
+      DAE.Exp e;
 
-         case(DAE.CREF(componentRef = cr1), (DAE.CREF(componentRef = cr2), fun, tp,_))
-           guard(ComponentReference.crefEqual(cr1, cr2))
-           then Expression.makePureBuiltinCall(fun,{iExp},tp);
-         case(_,(_,_,tp,true))
-           algorithm
-             try
-               SOME(e) := makeIntialGuess3(iExp, tp);
-             else
-               e := iExp;
-             end try;
-             then e;
-         else iExp;
-         end match;
+    case (DAE.CREF(componentRef=cr1), (DAE.CREF(componentRef=cr2), fun, tp, _))
+      guard(ComponentReference.crefEqual(cr1, cr2)) algorithm
+      e := Expression.makePureBuiltinCall(fun, {iExp}, tp);
+    then e;
 
+    case (_, (_, _, tp, true)) algorithm
+      try
+        SOME(e) := makeIntialGuess3(iExp, tp);
+      else
+        e := iExp;
+      end try;
+    then e;
+
+    else iExp;
+  end match;
 end makeIntialGuess2;
 
 protected function makeIntialGuess3

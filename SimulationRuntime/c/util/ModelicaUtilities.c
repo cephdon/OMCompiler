@@ -31,11 +31,8 @@
 #include "ModelicaUtilities.h"
 #include "modelica_string.h"
 
-#include "gc.h"
-
 #include <stdio.h>
 #include <stdlib.h>
-#include <pthread.h>
 #include "omc_error.h"
 
 void ModelicaMessage(const char* string) {
@@ -83,8 +80,9 @@ void ModelicaFormatError(const char* string, ...) {
 
 char* ModelicaAllocateString(size_t len) {
   char *res = ModelicaAllocateStringWithErrorReturn(len);
-  if(!res)
+  if (!res) {
     ModelicaFormatError("%s:%d: ModelicaAllocateString failed", __FILE__, __LINE__);
+  }
   return res;
 }
 

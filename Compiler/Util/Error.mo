@@ -35,7 +35,6 @@ encapsulated package Error
   package:     Error
   description: Error handling
 
-  RCS: $Id$
 
   This file contains the Error handling for the Compiler. The following steps
   are used to add a new error message:
@@ -70,16 +69,21 @@ encapsulated package Error
 public import Util;
 public import Flags;
 
+protected
+
+import Config;
+import Global;
+
 public
 uniontype Severity "severity of message"
   record INTERNAL "Error because of a failure in the tool" end INTERNAL;
 
-  record ERROR "Error when tool can not succed in translation because of a user error" end ERROR;
+  record ERROR "Error when tool can not succeed in translation because of a user error" end ERROR;
 
-  record WARNING "Warning when tool succeds but with warning" end WARNING;
+  record WARNING "Warning when tool succeeds but with warning" end WARNING;
 
   record NOTIFICATION "Additional information to user, e.g. what
-             actions tool has taken to succed in translation" end NOTIFICATION;
+             actions tool has taken to succeed in translation" end NOTIFICATION;
 end Severity;
 
 public
@@ -160,8 +164,8 @@ public constant Message REM_ARG_ZERO = MESSAGE(17, TRANSLATION(), ERROR(),
   Util.gettext("Second argument in rem is zero in rem(%s,%s)."));
 public constant Message SCRIPT_READ_SIM_RES_ERROR = MESSAGE(18, SCRIPTING(), ERROR(),
   Util.gettext("Error reading simulation result."));
-public constant Message RECURSIVE_EXTENDS = MESSAGE(19, TRANSLATION(), ERROR(),
-  Util.gettext("Extending %s is not allowed, since it is an enclosing class."));
+public constant Message EXTENDS_LOOP = MESSAGE(19, TRANSLATION(), ERROR(),
+  Util.gettext("extends %s causes an instantiation loop."));
 public constant Message LOAD_MODEL_ERROR = MESSAGE(20, TRANSLATION(), ERROR(),
   Util.gettext("Class %s not found."));
 public constant Message WRITING_FILE_ERROR = MESSAGE(21, SCRIPTING(), ERROR(),
@@ -195,7 +199,7 @@ public constant Message STRUCT_SINGULAR_SYSTEM = MESSAGE(34, SYMBOLIC(), ERROR()
 public constant Message UNSUPPORTED_LANGUAGE_FEATURE = MESSAGE(35, TRANSLATION(), ERROR(),
   Util.gettext("The language feature %s is not supported. Suggested workaround: %s"));
 public constant Message NON_EXISTING_DERIVATIVE = MESSAGE(36, SYMBOLIC(), ERROR(),
-  Util.gettext("Derivative of expression %s is non-existent."));
+  Util.gettext("Derivative of expression \"%s\" w.r.t. \"%s\" is non-existent."));
 public constant Message NO_CLASSES_LOADED = MESSAGE(37, TRANSLATION(), ERROR(),
   Util.gettext("No classes are loaded."));
 public constant Message INST_PARTIAL_CLASS = MESSAGE(38, TRANSLATION(), ERROR(),
@@ -280,10 +284,10 @@ public constant Message NO_MATCHING_FUNCTION_FOUND_NO_CANDIDATE = MESSAGE(77, TR
   Util.gettext("No matching function found for %s."));
 public constant Message FUNCTION_COMPS_MUST_HAVE_DIRECTION = MESSAGE(78, TRANSLATION(), ERROR(),
   Util.gettext("Component %s in function is neither input nor output."));
-public constant Message FUNCTION_SLOT_ALLREADY_FILLED = MESSAGE(79, TRANSLATION(), ERROR(),
+public constant Message FUNCTION_SLOT_ALREADY_FILLED = MESSAGE(79, TRANSLATION(), ERROR(),
   Util.gettext("Slot %s already filled in a function call in component %s."));
-public constant Message NO_SUCH_ARGUMENT = MESSAGE(80, TRANSLATION(), ERROR(),
-  Util.gettext("Function %s has no argument named %s."));
+public constant Message NO_SUCH_PARAMETER = MESSAGE(80, TRANSLATION(), ERROR(),
+  Util.gettext("Function %s has no parameter named %s."));
 public constant Message CONSTANT_OR_PARAM_WITH_NONCONST_BINDING = MESSAGE(81, TRANSLATION(), ERROR(),
   Util.gettext("%s is a constant or parameter with a non-constant initializer %s."));
 public constant Message WRONG_DIMENSION_TYPE = MESSAGE(82, TRANSLATION(), ERROR(),
@@ -315,7 +319,7 @@ public constant Message NON_CLASS_IN_COMP_FUNC_NAME = MESSAGE(94, TRANSLATION(),
 public constant Message DIFFERENT_VARIABLES_SOLVED_IN_ELSEWHEN = MESSAGE(95, SYMBOLIC(), ERROR(),
   Util.gettext("The same variables must me solved in elsewhen clause as in the when clause."));
 public constant Message CLASS_IN_COMPOSITE_COMP_NAME = MESSAGE(96, TRANSLATION(), ERROR(),
-  Util.gettext("Found class %s during lookup of composite component name, expected component."));
+  Util.gettext("Found class %s during lookup of composite component name '%s', expected component."));
 public constant Message MODIFIER_DECLARATION_TYPE_MISMATCH_ERROR = MESSAGE(97, TRANSLATION(), ERROR(),
   Util.gettext("Type mismatch in modifier of component %s, declared type %s, got modifier %s of type %s."));
 public constant Message ASSERT_CONSTANT_FALSE_ERROR = MESSAGE(98, SYMBOLIC(), ERROR(),
@@ -325,7 +329,7 @@ public constant Message ARRAY_INDEX_OUT_OF_BOUNDS = MESSAGE(99, TRANSLATION(), E
 public constant Message COMPONENT_CONDITION_VARIABILITY = MESSAGE(100, TRANSLATION(), ERROR(),
   Util.gettext("Component condition must be parameter or constant expression (in %s)."));
 public constant Message FOUND_CLASS_NAME_VIA_COMPONENT = MESSAGE(101, TRANSLATION(), ERROR(),
-  Util.gettext("Found class %s by name lookup via component (only component and function call names may be looked up via a component)."));
+  Util.gettext("Class name '%s' was found via a component (only component and function call names may be accessed in this way)."));
 public constant Message FOUND_FUNC_NAME_VIA_COMP_NONCALL = MESSAGE(102, TRANSLATION(), ERROR(),
   Util.gettext("Found function %s by name lookup via component, but this is only valid when the name is used as a function call."));
 public constant Message DUPLICATE_MODIFICATIONS = MESSAGE(103, TRANSLATION(), ERROR(),
@@ -345,9 +349,9 @@ public constant Message NON_PARAMETER_ITERATOR_RANGE = MESSAGE(109, TRANSLATION(
 public constant Message IMPLICIT_ITERATOR_NOT_FOUND_IN_LOOP_BODY = MESSAGE(110, TRANSLATION(), ERROR(),
   Util.gettext("Identifier %s of implicit for iterator must be present as array subscript in the loop body."));
 public constant Message LOOKUP_VIA_COMP_NON_FUNCALL = MESSAGE(111, TRANSLATION(), ERROR(),
-Util.gettext("Lookup of element %s is not allowed via component %s when looking for %s (only function calls may be looked up via a component)."));
+  Util.gettext("Illegal access of class '%s' in component '%s' when looking for non-function call name '%s'."));
 public constant Message LOOKUP_CLASS_VIA_COMP_COMP = MESSAGE(112, TRANSLATION(), ERROR(),
-  Util.gettext("Lookup of class %s is not allowed in composite component name %s (only components may be looked up in this way)."));
+  Util.gettext("Illegal access of class '%s' via component '%s' when looking for '%s'."));
 public constant Message SUBSCRIPTED_FUNCTION_CALL = MESSAGE(113, TRANSLATION(), ERROR(),
   Util.gettext("Function call %s contains subscripts."));
 public constant Message IF_EQUATION_UNBALANCED = MESSAGE(114, TRANSLATION(), ERROR(),
@@ -434,6 +438,8 @@ public constant Message WRONG_NUMBER_OF_SUBSCRIPTS = MESSAGE(154, TRANSLATION(),
   Util.gettext("Wrong number of subscripts in %s (%s subscripts for %s dimensions)."));
 public constant Message FUNCTION_ELEMENT_WRONG_KIND = MESSAGE(155, TRANSLATION(), ERROR(),
   Util.gettext("Element is not allowed in function context: %s"));
+public constant Message MISSING_DEFAULT_ARG = MESSAGE(156, TRANSLATION(), WARNING(),
+  Util.gettext("Missing default argument on function parameter %s."));
 public constant Message DUPLICATE_CLASSES_TOP_LEVEL = MESSAGE(157, TRANSLATION(), ERROR(),
   Util.gettext("Duplicate classes on top level is not allowed (got %s)."));
 public constant Message WHEN_EQ_LHS = MESSAGE(158, TRANSLATION(), ERROR(),
@@ -465,7 +471,7 @@ public constant Message CIRCULAR_COMPONENTS = MESSAGE(170, TRANSLATION(), ERROR(
 public constant Message FAILURE_TO_DEDUCE_DIMS_FROM_MOD = MESSAGE(171, TRANSLATION(), WARNING(),
   Util.gettext("Failed to deduce dimensions of %s due to unknown dimensions of modifier %s."));
 public constant Message REPLACEABLE_BASE_CLASS = MESSAGE(172, TRANSLATION(), ERROR(),
-  Util.gettext("Part %s of base class %s is replaceable."));
+  Util.gettext("Class %s in extends %s is replaceable."));
 public constant Message NON_REPLACEABLE_CLASS_EXTENDS = MESSAGE(173, TRANSLATION(), ERROR(),
   Util.gettext("Non-replaceable base class %s in class extends."));
 public constant Message ERROR_FROM_HERE = MESSAGE(174, TRANSLATION(), NOTIFICATION(),
@@ -482,8 +488,8 @@ public constant Message INVALID_TYPE_PREFIX = MESSAGE(179, TRANSLATION(), ERROR(
   Util.gettext("Invalid type prefix '%s' on %s %s, due to existing type prefix '%s'."));
 public constant Message LINEAR_SYSTEM_INVALID = MESSAGE(180, SYMBOLIC(), ERROR(),
   Util.gettext("Linear solver (%s) returned invalid input for linear system %s."));
-public constant Message LINEAR_SYSTEM_SINGULAR = MESSAGE(181, SYMBOLIC(), ERROR(),
-  Util.gettext("When solving linear system %1\n  U(%2,%2) = 0.0, which means system is singular for variable %3."));
+public constant Message LINEAR_SYSTEM_SINGULAR = MESSAGE(181, SYMBOLIC(), WARNING(),
+  Util.gettext("The linear system: %1\n might be structurally or numerically singular for variable %3 since U(%2,%2) = 0.0. It might be hard to solve. Compilation continues anyway."));
 public constant Message EMPTY_ARRAY = MESSAGE(182, TRANSLATION(), ERROR(),
   Util.gettext("Array constructor may not be empty."));
 public constant Message LOAD_MODEL_DIFFERENT_VERSIONS = MESSAGE(183, SCRIPTING(), WARNING(),
@@ -527,7 +533,7 @@ public constant Message NON_FORMAL_PUBLIC_FUNCTION_VAR = MESSAGE(201, TRANSLATIO
 public constant Message PROTECTED_FORMAL_FUNCTION_VAR = MESSAGE(202, TRANSLATION(), ERROR(),
   Util.gettext("Invalid protected variable %s, function variables that are input/output must be public."));
 public constant Message UNFILLED_SLOT = MESSAGE(203, TRANSLATION(), ERROR(),
-  Util.gettext("Function argument %s was not given by the function call, and does not have a default value."));
+  Util.gettext("Function parameter %s was not given by the function call, and does not have a default value."));
 public constant Message SAME_CONNECT_INSTANCE = MESSAGE(204, TRANSLATION(), WARNING(),
   Util.gettext("connect(%s, %s) connects the same connector instance! The connect equation will be ignored."));
 public constant Message STACK_OVERFLOW = MESSAGE(205, SCRIPTING(), ERROR(),
@@ -565,7 +571,7 @@ public constant Message INVALID_CLASS_RESTRICTION = MESSAGE(220, TRANSLATION(), 
 public constant Message CONNECT_IN_INITIAL_EQUATION = MESSAGE(221, TRANSLATION(), ERROR(),
   Util.gettext("Connect equations are not allowed in initial equation sections."));
 public constant Message FINAL_COMPONENT_OVERRIDE = MESSAGE(222, TRANSLATION(), ERROR(),
-  Util.gettext("Trying to override final component %s with modifier %s."));
+  Util.gettext("Trying to override final element %s with modifier '%s'."));
 public constant Message NOTIFY_NOT_LOADED = MESSAGE(223, SCRIPTING(), NOTIFICATION(),
   Util.gettext("Automatically loaded package %s %s due to uses annotation."));
 public constant Message REINIT_MUST_BE_REAL = MESSAGE(224, TRANSLATION(), ERROR(),
@@ -575,7 +581,7 @@ public constant Message REINIT_MUST_BE_VAR = MESSAGE(225, TRANSLATION(), ERROR()
 public constant Message CONNECT_TWO_SOURCES = MESSAGE(226, TRANSLATION(), WARNING(),
   Util.gettext("Connecting two signal sources while connecting %s to %s."));
 public constant Message INNER_OUTER_FORMAL_PARAMETER = MESSAGE(227, TRANSLATION(), ERROR(),
-  Util.gettext("Invalid prefix %son formal parameter %s."));
+  Util.gettext("Invalid prefix %s on formal parameter %s."));
 public constant Message REDECLARE_NONEXISTING_ELEMENT = MESSAGE(228, TRANSLATION(), ERROR(),
   Util.gettext("Illegal redeclare of element %s, no inherited element with that name exists."));
 public constant Message INVALID_ARGUMENT_TYPE_FIRST_ARRAY = MESSAGE(229, TRANSLATION(), ERROR(),
@@ -647,7 +653,7 @@ public constant Message BACKENDDAEINFO_STRONGCOMPONENT_STATISTICS = MESSAGE(261,
 public constant Message BACKENDDAEINFO_SYSTEMS = MESSAGE(262, SYMBOLIC(), NOTIFICATION(),
   Util.gettext("Equation system details:\n * Constant Jacobian: %s\n * Linear Jacobian (size,density): %s\n * Non-linear Jacobian: %s\n * Without analytic Jacobian: %s"));
 public constant Message BACKENDDAEINFO_TORN = MESSAGE(263, SYMBOLIC(), NOTIFICATION(),
-  Util.gettext("Torn system details:\n * Linear torn systems: %s\n * Non-linear torn systems: %s"));
+  Util.gettext("Torn system details for %s tearing set:\n * Linear torn systems: %s\n * Non-linear torn systems: %s"));
 public constant Message BACKEND_DAE_TO_MODELICA = MESSAGE(264, SYMBOLIC(), NOTIFICATION(),
   Util.gettext("The following Modelica-like model represents the back-end DAE for the '%s' stage:\n%s"));
 public constant Message NEGATIVE_DIMENSION_INDEX = MESSAGE(265, TRANSLATION(), ERROR(),
@@ -677,7 +683,7 @@ public constant Message TCOMPLEX_TUPLE_ONE_NAME = MESSAGE(276, TRANSLATION(), NO
 public constant Message ENUM_DUPLICATES = MESSAGE(277, TRANSLATION(), ERROR(),
   Util.gettext("Enumeration has duplicate names: %s in list of names %s."));
 public constant Message RESERVED_IDENTIFIER = MESSAGE(278, TRANSLATION(), ERROR(),
-  Util.gettext("Identifier %s is reserved for the built-in type with the same name."));
+  Util.gettext("Identifier %s is reserved for the built-in element with the same name."));
 public constant Message NOTIFY_IMPACT_FOUND = MESSAGE(279, SCRIPTING(), NOTIFICATION(),
   Util.gettext("The impact package manager downloaded package %s%s to directory %s."));
 public constant Message DERIVATIVE_FUNCTION_CONTEXT = MESSAGE(280, SCRIPTING(), ERROR(),
@@ -686,11 +692,47 @@ public constant Message RETURN_OUTSIDE_FUNCTION = MESSAGE(281, TRANSLATION(), ER
   Util.gettext("'return' may not be used outside function."));
 public constant Message EXT_LIBRARY_NOT_FOUND = MESSAGE(282, TRANSLATION(), WARNING(),
   Util.gettext("Could not find library %s in either of:%s"));
-public constant Message EXT_LIBRARY_NOT_FOUND_DESPITE_COMPILATION_SUCCESS = MESSAGE(258, TRANSLATION(), WARNING(),
+public constant Message EXT_LIBRARY_NOT_FOUND_DESPITE_COMPILATION_SUCCESS = MESSAGE(283, TRANSLATION(), WARNING(),
   Util.gettext("Could not find library %s despite compilation command %s in directory %s returning success."));
-public constant Message GENERATE_SEPARATE_CODE_DEPENDENCIES_FAILED_UNKNOWN_PACKAGE = MESSAGE(283, SCRIPTING(), ERROR(),
+public constant Message GENERATE_SEPARATE_CODE_DEPENDENCIES_FAILED_UNKNOWN_PACKAGE = MESSAGE(284, SCRIPTING(), ERROR(),
   Util.gettext("Failed to get dependencies for package %s. %s contains an import to non-existing package %s."));
-
+public constant Message USE_OF_PARTIAL_CLASS = MESSAGE(285, TRANSLATION(), ERROR(),
+  Util.gettext("component %s contains the definition of a partial class %s.\nPlease redeclare it to any package compatible with %s."));
+public constant Message SCANNER_ERROR = MESSAGE(286, SYNTAX(), ERROR(),
+  Util.gettext("Syntax error, unrecognized input: %s."));
+public constant Message SCANNER_ERROR_LIMIT = MESSAGE(287, SYNTAX(), ERROR(),
+  Util.gettext("Additional syntax errors were suppressed."));
+public constant Message INVALID_TIME_SCOPE = MESSAGE(288, TRANSLATION(), ERROR(),
+  Util.gettext("Built-in variable 'time' may only be used in a model or block."));
+public constant Message NO_JACONIAN_TORNLINEAR_SYSTEM = MESSAGE(289, SYMBOLIC(), ERROR(),
+  Util.gettext("A torn linear system has no symbolic jacobian and currently there are no means to solve that numerically. Please compile with the module \"calculateStrongComponentJacobians\" to provide symbolic jacobians for torn linear systems."));
+public constant Message EXT_FN_SINGLE_RETURN_ARRAY = MESSAGE(290, TRANSLATION(), WARNING(),
+  Util.gettext("An external declaration with a single output without explicit mapping is defined as having the output as the lhs, but language %s does not support this for array variables. OpenModelica will put the output as an input (as is done when there is more than 1 output), but this is not according to the Modelica Specification. Use an explicit mapping instead of the implicit one to suppress this warning."));
+public constant Message RHS_TUPLE_EXPRESSION = MESSAGE(291, TRANSLATION(), ERROR(),
+  Util.gettext("Tuple expressions may only occur on the left side of an assignment or equation with a single function call on the right side. Got the following expression: %s."));
+public constant Message EACH_ON_NON_ARRAY = MESSAGE(292, TRANSLATION(), ERROR(),
+  Util.gettext("'each' used when modifying non-array element %s."));
+public constant Message BUILTIN_EXTENDS_INVALID_ELEMENTS = MESSAGE(293, TRANSLATION(), ERROR(),
+  Util.gettext("A class extending from builtin type %s may not have other elements."));
+public constant Message INITIAL_CALL_WARNING = MESSAGE(294, TRANSLATION(), WARNING(),
+  Util.gettext("The standard says that initial() may only be used as a when condition (when initial() or when {..., initial(), ...}), but got condition %s."));
+public constant Message RANGE_TYPE_MISMATCH = MESSAGE(295, TRANSLATION(), ERROR(),
+  Util.gettext("Type mismatch in range: '%s' of type\n  %s\nis not type compatible with '%s' of type\n  %s"));
+public constant Message RANGE_ZERO_STEP = MESSAGE(296, TRANSLATION(), ERROR(),
+  Util.gettext("Range may not have a step size of 0."));
+public constant Message RANGE_INVALID_STEP = MESSAGE(297, TRANSLATION(),
+ERROR(),
+  Util.gettext("Range of type %s may not specify a step size."));
+public constant Message RANGE_INVALID_TYPE = MESSAGE(298, TRANSLATION(), ERROR(),
+  Util.gettext("Range has invalid type %s."));
+public constant Message CLASS_EXTENDS_MISSING_REDECLARE = MESSAGE(299, TRANSLATION(), WARNING(),
+  Util.gettext("Missing redeclare prefix on class extends %s, treating like redeclare anyway."));
+public constant Message INITIALIZATION_NOT_FULLY_SPECIFIED = MESSAGE(496, TRANSLATION(), WARNING(),
+  Util.gettext("The initial conditions are not fully specified. %s."));
+public constant Message INITIALIZATION_OVER_SPECIFIED = MESSAGE(497, TRANSLATION(), WARNING(),
+  Util.gettext("The initial conditions are over specified. %s."));
+public constant Message INITIALIZATION_ITERATION_VARIABLES = MESSAGE(498, TRANSLATION(), WARNING(),
+  Util.gettext("There are iteration variables with default zero start attribute. %s."));
 public constant Message UNBOUND_PARAMETER_WITH_START_VALUE_WARNING = MESSAGE(499, TRANSLATION(), WARNING(),
   Util.gettext("Parameter %s has no value, and is fixed during initialization (fixed=true), using available start value (start=%s) as default value."));
 public constant Message UNBOUND_PARAMETER_WARNING = MESSAGE(500, TRANSLATION(), WARNING(),
@@ -701,8 +743,6 @@ public constant Message SETTING_FIXED_ATTRIBUTE = MESSAGE(503, TRANSLATION(), WA
   Util.gettext("Using over-determined solver for initialization. Setting fixed=false to the following variables: %s."));
 public constant Message FAILED_TO_EVALUATE_FUNCTION = MESSAGE(506, TRANSLATION(), ERROR(),
   Util.gettext("Failed to evaluate function: %s."));
-public constant Message FINAL_OVERRIDE = MESSAGE(508, TRANSLATION(), ERROR(),
-  Util.gettext("Trying to override final variable in component %s and scope %s by using modifiers: %s and %s that do not agree."));
 public constant Message WARNING_RELATION_ON_REAL = MESSAGE(509, TRANSLATION(), WARNING(),
   Util.gettext("In component %s, in relation %s, %s on Real numbers is only allowed inside functions."));
 public constant Message OUTER_MODIFICATION = MESSAGE(512, TRANSLATION(), WARNING(),
@@ -712,7 +752,7 @@ public constant Message DERIVATIVE_NON_REAL = MESSAGE(514, TRANSLATION(), ERROR(
 public constant Message UNUSED_MODIFIER = MESSAGE(515, TRANSLATION(), ERROR(),
   Util.gettext("In modifier %s."));
 public constant Message MULTIPLE_MODIFIER = MESSAGE(516, TRANSLATION(), ERROR(),
-  Util.gettext("Multiple modifiers in same scope for element %s, %s."));
+  Util.gettext("Multiple modifiers in same scope for element %s."));
 public constant Message INCONSISTENT_UNITS = MESSAGE(517, TRANSLATION(), WARNING(),
   Util.gettext("The system of units is inconsistent in term %s with the units %s and %s respectively."));
 public constant Message CONSISTENT_UNITS = MESSAGE(518, TRANSLATION(), NOTIFICATION(),
@@ -728,7 +768,7 @@ public constant Message WARNING_JACOBIAN_EQUATION_SOLVE = MESSAGE(523, SYMBOLIC(
 public constant Message SIMPLIFICATION_COMPLEXITY = MESSAGE(523, SYMBOLIC(), NOTIFICATION(),
   Util.gettext("Simplification produced a higher complexity (%s) than the original (%s). The simplification was: %s => %s."));
 public constant Message ITERATOR_NON_ARRAY = MESSAGE(524, TRANSLATION(), ERROR(),
-  Util.gettext("Iterator %s, has type %s, but expected an array expression."));
+  Util.gettext("Iterator %s, has type %s, but expected a 1D array expression."));
 public constant Message INST_INVALID_RESTRICTION = MESSAGE(525, TRANSLATION(), ERROR(),
   Util.gettext("Cannot instantiate %s due to class specialization %s."));
 public constant Message INST_NON_LOADED = MESSAGE(526, TRANSLATION(), WARNING(),
@@ -748,7 +788,7 @@ public constant Message MISSING_INNER_CLASS = MESSAGE(532, TRANSLATION(), WARNIN
 public constant Message RECURSION_DEPTH_WARNING = MESSAGE(533, TRANSLATION(), ERROR(),
   Util.gettext("The maximum recursion depth of %s was reached when evaluating expression %s in scope %s. Translation may still succeed but you are recommended to fix the problem."));
 public constant Message RECURSION_DEPTH_DERIVED = MESSAGE(534, TRANSLATION(), ERROR(),
-  Util.gettext("The maximum recursion depth of %s was reached when instantiating a derived class. Current class %s in scope %s."));
+  Util.gettext("The maximum recursion depth of was reached when instantiating a derived class. Current class %s in scope %s."));
 public constant Message EVAL_EXTERNAL_OBJECT_CONSTRUCTOR = MESSAGE(535, TRANSLATION(), WARNING(),
   Util.gettext("OpenModelica requires that all external objects input arguments are possible to evaluate before initialization in order to avoid odd run-time failures, but %s is a variable."));
 public constant Message CLASS_ANNOTATION_DOES_NOT_EXIST = MESSAGE(536, SCRIPTING(), ERROR(),
@@ -778,7 +818,7 @@ public constant Message NON_STANDARD_OPERATOR = MESSAGE(547, TRANSLATION(), WARN
 public constant Message CONNECT_ARRAY_SIZE_ZERO = MESSAGE(548, TRANSLATION(), WARNING(),
   Util.gettext("Ignoring connection of array components having size zero: %s and %s."));
 public constant Message ILLEGAL_RECORD_COMPONENT = MESSAGE(549, TRANSLATION(), ERROR(),
-  Util.gettext("Ignoring record component:\n%swhen building record the constructor. Records are allowed to contain only components of basic types, arrays of basic types or other records."));
+  Util.gettext("Ignoring record component:\n%swhen building the record constructor. Records are allowed to contain only components of basic types, arrays of basic types or other records."));
 public constant Message EQ_WITHOUT_TIME_DEP_VARS = MESSAGE(550, SYMBOLIC(), ERROR(),
   Util.gettext("Found equation without time-dependent variables: %s = %s"));
 public constant Message OVERCONSTRAINED_OPERATOR_SIZE_ZERO = MESSAGE(551, TRANSLATION(), WARNING(),
@@ -815,19 +855,36 @@ public constant Message CLOCKED_WHEN_IN_WHEN_EQ = MESSAGE(566, TRANSLATION(), ER
   Util.gettext("Clocked when equation inside the body of when equation."));
 public constant Message CONT_CLOCKED_PARTITION_CONFLICT_EQ = MESSAGE(567, TRANSLATION(), ERROR(),
   Util.gettext("Equation belongs to clocked and continuous partitions."));
-public constant Message CLOCKED_DSICRETE_CONT_CONFLICT = MESSAGE(568, TRANSLATION(), ERROR(),
-  Util.gettext("Clocked equation contains discrete and continuous expression."));
+public constant Message CLOCK_SOLVERMETHOD = MESSAGE(568, TRANSLATION(), WARNING(),
+  Util.gettext("Applying clock solverMethod %s instead of specified %s. Supported are: ImplicitEuler, SemiImplicitEuler, ExplicitEuler and ImplicitTrapezoid."));
 public constant Message INVALID_CLOCK_EQUATION = MESSAGE(569, TRANSLATION(), ERROR(),
   Util.gettext("Invalid form of clock equation"));
 public constant Message SUBCLOCK_CONFLICT = MESSAGE(570, TRANSLATION(), ERROR(),
-  Util.gettext("Partition have different sub-clocks."));
+  Util.gettext("Partition has different sub-clock %ss (%s) and (%s)."));
 public constant Message CLOCK_CONFLICT = MESSAGE(571, TRANSLATION(), ERROR(),
-  Util.gettext("Partition have different base clocks."));
+  Util.gettext("Partitions have different base clocks."));
 public constant Message EXEC_STAT = MESSAGE(572, TRANSLATION(), NOTIFICATION(),
-  Util.gettext("Performance of %s: time %s/%s"));
+  Util.gettext("Performance of %s: time %s/%s, allocations: %s / %s, free: %s / %s"));
 public constant Message EXEC_STAT_GC = MESSAGE(573, TRANSLATION(), NOTIFICATION(),
   Util.gettext("Performance of %s: time %s/%s, GC stats:%s"));
-
+public constant Message MAX_TEARING_SIZE = MESSAGE(574, SYMBOLIC(), NOTIFICATION(),
+  Util.gettext("Tearing is skipped for strong component %s because system size of %s exceeds maximum system size for tearing of %s systems (%s).\nTo adjust the maximum system size for tearing use --maxSizeLinearTearing=<size> and --maxSizeNonlinearTearing=<size>.\n"));
+public constant Message NO_TEARING_FOR_COMPONENT = MESSAGE(575, SYMBOLIC(), NOTIFICATION(),
+  Util.gettext("Tearing is skipped for strong component %s because of activated compiler flag 'noTearingForComponent=%1'.\n"));
+public constant Message WRONG_VALUE_OF_ARG = MESSAGE(576, TRANSLATION(), ERROR(),
+  Util.gettext("Wrong value of argument to %s: %s = %s %s."));
+public constant Message USER_DEFINED_TEARING_ERROR = MESSAGE(577, SYMBOLIC(), ERROR(),
+  Util.gettext("Wrong usage of user defined tearing: %s Make sure you use user defined tearing as stated in the flag description."));
+public constant Message USER_TEARING_VARS = MESSAGE(578, SYMBOLIC(), NOTIFICATION(),
+  Util.gettext("Following iteration variables are selected by the user for strong component %s (DAE kind: %s):\n%s"));
+public constant Message CLASS_EXTENDS_TARGET_NOT_FOUND = MESSAGE(579, TRANSLATION(), ERROR(),
+  Util.gettext("Base class targeted by class extends %s not found in the inherited classes."));
+public constant Message ASSIGN_PARAM_FIXED_ERROR = MESSAGE(580, TRANSLATION(), ERROR(),
+  Util.gettext("Trying to assign to parameter component %s(fixed=true) in %s := %s"));
+public constant Message EQN_NO_SPACE_TO_SOLVE = MESSAGE(581, SYMBOLIC(), WARNING(),
+  Util.gettext("Equation %s (size: %s) %s is not big enough to solve for enough variables.\n  Remaining unsolved variables are: %s\n  Already solved: %s\n  Equations used to solve those variables:%s"));
+public constant Message VAR_NO_REMAINING_EQN = MESSAGE(582, SYMBOLIC(), WARNING(),
+  Util.gettext("Variable %s does not have any remaining equation to be solved in.\n  The original equations were:%s"));
 
 public constant Message MATCH_SHADOWING = MESSAGE(5001, TRANSLATION(), ERROR(),
   Util.gettext("Local variable '%s' shadows another variable."));
@@ -895,6 +952,26 @@ public constant Message META_EMPTY_CALL_PATTERN = MESSAGE(5035, TRANSLATION(), N
   Util.gettext("Removing empty call named pattern argument: %s."));
 public constant Message META_ALL_EMPTY = MESSAGE(5036, TRANSLATION(), NOTIFICATION(),
   Util.gettext("All patterns in call were empty: %s."));
+public constant Message DUPLICATE_DEFINITION = MESSAGE(5037, TRANSLATION(), ERROR(),
+  Util.gettext("The same variable is being defined twice: %s."));
+public constant Message PATTERN_VAR_NOT_VARIABLE = MESSAGE(5038, TRANSLATION(), ERROR(),
+  Util.gettext("Identifiers need to point to local or output variables. Variable %s is %s."));
+public constant Message LIST_REVERSE_WRONG_ORDER = MESSAGE(5039, TRANSLATION(), NOTIFICATION(),
+  Util.gettext("%1:=listAppend(%1, _) has the first argument in the \"wrong\" order.\n  It is very slow to keep appending a linked list (scales like O(N²)).\n  Consider building the list in the reverse order in order to improve performance (scales like O(N) even if you need to reverse a lot of lists). Use annotation __OpenModelica_DisableListAppendWarning=true to disable this message for a certain assignment."));
+public constant Message IS_PRESENT_WRONG_SCOPE = MESSAGE(5040, TRANSLATION(), ERROR(),
+  Util.gettext("isPresent needs to be called from a function scope, got %s."));
+public constant Message IS_PRESENT_WRONG_DIRECTION = MESSAGE(5041, TRANSLATION(), ERROR(),
+  Util.gettext("isPresent needs to be called on an input or output formal parameter."));
+public constant Message IS_PRESENT_INVALID_EXP = MESSAGE(5042, TRANSLATION(), ERROR(),
+  Util.gettext("isPresent needs to be called on an input or output formal parameter, but got a non-identifier expression: %s."));
+public constant Message METARECORD_WITH_TYPEVARS = MESSAGE(5043, TRANSLATION(), ERROR(),
+  Util.gettext("Records inside uniontypes must not contain type variables (got: %s). Put them on the uniontype instead."));
+public constant Message UNIONTYPE_MISSING_TYPEVARS = MESSAGE(5044, TRANSLATION(), ERROR(),
+  Util.gettext("Uniontype %s has type variables, but they were not given in the declaration."));
+public constant Message UNIONTYPE_WRONG_NUM_TYPEVARS = MESSAGE(5045, TRANSLATION(), ERROR(),
+  Util.gettext("Uniontype %s has %s type variables, but got %s."));
+public constant Message SERIALIZED_SIZE = MESSAGE(5046, TRANSLATION(), NOTIFICATION(),
+  Util.gettext("%s has serialized size %s."));
 
 public constant Message COMPILER_ERROR = MESSAGE(5999, TRANSLATION(), ERROR(),
   Util.notrans("%s"));
@@ -907,7 +984,7 @@ public constant Message COMPILER_NOTIFICATION_SCRIPTING = MESSAGE(6002, SCRIPTIN
 public constant Message SUSAN_ERROR = MESSAGE(7000, TRANSLATION(), ERROR(),
   Util.notrans("%s"));
 public constant Message TEMPLATE_ERROR = MESSAGE(7001, TRANSLATION(), ERROR(),
-  Util.gettext("Template error: %s"));
+  Util.gettext("Template error: %s."));
 public constant Message OPERATOR_OVERLOADING_WARNING = MESSAGE(7002, TRANSLATION(), WARNING(),
   Util.gettext("Operator Overloading: %s."));
 public constant Message OPERATOR_OVERLOADING_ERROR = MESSAGE(7003, TRANSLATION(), ERROR(),
@@ -923,28 +1000,96 @@ public constant Message FILE_NOT_FOUND_ERROR = MESSAGE(7007, SCRIPTING(), ERROR(
 public constant Message UNKNOWN_FMU_VERSION = MESSAGE(7008, SCRIPTING(), ERROR(),
   Util.gettext("Unknown FMU version %s. Only version 1.0 & 2.0 are supported."));
 public constant Message UNKNOWN_FMU_TYPE = MESSAGE(7009, SCRIPTING(), ERROR(),
-  Util.gettext("Unknown FMU type %s. Supported types are me (model exchange) & cs (co-simulation)."));
+  Util.gettext("Unknown FMU type %s. Supported types are me (model exchange), cs (co-simulation) & me_cs (model exchange & co-simulation)."));
+public constant Message FMU_EXPORT_NOT_SUPPORTED = MESSAGE(7010, SCRIPTING(), ERROR(),
+  Util.gettext("Export of FMU type %s for version %s is not supported. Supported combinations are me (model exchange) for versions 1.0 & 2.0, cs (co-simulation) & me_cs (model exchange & co-simulation) for version 2.0."));
 // FIGARO_ERROR added by Alexander Carlqvist
-public constant Message FIGARO_ERROR = MESSAGE(7010, SCRIPTING(), ERROR(),
+public constant Message FIGARO_ERROR = MESSAGE(7011, SCRIPTING(), ERROR(),
   Util.notrans("Figaro: %s."));
-public constant Message SUSAN_NOTIFY = MESSAGE(7011, TRANSLATION(), NOTIFICATION(),
+public constant Message SUSAN_NOTIFY = MESSAGE(7012, TRANSLATION(), NOTIFICATION(),
   Util.notrans("%s"));
+public constant Message PDEModelica_ERROR = MESSAGE(7013, TRANSLATION(), ERROR(),
+  Util.gettext("PDEModelica: %s"));
+public constant Message TEMPLATE_ERROR_FUNC = MESSAGE(7014, TRANSLATION(), ERROR(),
+  Util.gettext("Template error: A template call failed (a call with %s parameters: %s). One possible reason could be that a template imported function call failed (which should not happen for functions called from within template code; templates preserve pure 'match'/non-failing semantics)."));
+public constant Message FMU_EXPORT_NOT_SUPPORTED_CPP = MESSAGE(7015, SCRIPTING(), WARNING(),
+  Util.gettext("Export of FMU type %s is not supported with Cpp target. FMU will be for Model Exchange (me)."));
+public constant Message DEPRECATED_API_CALL = MESSAGE(7016, SCRIPTING(), WARNING(),
+  Util.gettext("'%1' is deprecated. It is recommended to use '%2' instead."));
 
 protected import ErrorExt;
 
-public function updateCurrentComponent "Function: updateCurrentComponent
+public function updateCurrentComponent<T> "Function: updateCurrentComponent
 This function takes a String and set the global var to
 which the current variable the compiler is working with."
+  input T cpre; // Should be Prefix.ComponentPrefix
   input String component;
   input SourceInfo info;
+  input prefixToStr func;
+  partial function prefixToStr<T>
+    input String str;
+    input T t;
+    output String ostr;
+  end prefixToStr;
 protected
-  String filename;
-  Integer ls, le, cs, ce;
-  Boolean ro;
+  Option<tuple<array<T>, array<String>, array<SourceInfo>, array<prefixToStr>>> tpl;
+  array<T> apre;
+  array<String> astr;
+  array<SourceInfo> ainfo;
+  array<prefixToStr> afunc;
 algorithm
-  SOURCEINFO(filename, ro, ls, cs, le, ce, _) := info;
-  ErrorExt.updateCurrentComponent(component, ro, Util.testsuiteFriendly(filename), ls, le, cs, ce);
+  tpl := getGlobalRoot(Global.currentInstVar);
+  _ := match tpl
+    case NONE() algorithm setGlobalRoot(Global.currentInstVar, SOME((arrayCreate(1,cpre),arrayCreate(1,component),arrayCreate(1,info),arrayCreate(1,func)))); then ();
+    case SOME((apre,astr,ainfo,afunc))
+      algorithm
+        arrayUpdate(apre, 1, cpre);
+        arrayUpdate(astr, 1, component);
+        arrayUpdate(ainfo, 1, info);
+        arrayUpdate(afunc, 1, func);
+      then ();
+  end match;
 end updateCurrentComponent;
+
+public function getCurrentComponent<T> "Gets the current component as a string."
+  output String str;
+  output Integer sline=0, scol=0, eline=0, ecol=0;
+  output Boolean read_only=false;
+  output String filename="";
+protected
+  Option<tuple<array<T>, array<String>, array<SourceInfo>, array<prefixToStr>>> tpl;
+  array<T> apre;
+  array<String> astr;
+  array<SourceInfo> ainfo;
+  array<prefixToStr> afunc;
+  SourceInfo info;
+  prefixToStr func;
+  partial function prefixToStr<T>
+    input String str;
+    input T t;
+    output String ostr;
+  end prefixToStr;
+algorithm
+  tpl := getGlobalRoot(Global.currentInstVar);
+  str := match tpl
+    case NONE() then "";
+    case SOME((apre,astr,ainfo,afunc))
+      algorithm
+        str := arrayGet(astr, 1);
+        if str <> "" then
+          func := arrayGet(afunc, 1);
+          str := "Variable " + func(str,arrayGet(apre,1)) + ": ";
+          info := arrayGet(ainfo, 1);
+          sline := info.lineNumberStart;
+          scol := info.columnNumberStart;
+          eline := info.lineNumberEnd;
+          ecol := info.columnNumberEnd;
+          read_only := info.isReadOnly;
+          filename := info.fileName;
+        end if;
+      then str;
+  end match;
+end getCurrentComponent;
 
 public function addMessage "Implementation of Relations
   function: addMessage
@@ -955,15 +1100,17 @@ public function addMessage "Implementation of Relations
 protected
   MessageType msg_type;
   Severity severity;
-  String msg_str;
-  ErrorID error_id;
+  String str, msg_str, file;
+  ErrorID error_id,sline,scol,eline,ecol;
+  Boolean isReadOnly;
   Util.TranslatableContent msg;
 algorithm
   if not Flags.getConfigBool(Flags.DEMO_MODE) then
+    (str,sline,scol,eline,ecol,isReadOnly,file) := getCurrentComponent();
     //print(" adding message: " + intString(error_id) + "\n");
     MESSAGE(error_id, msg_type, severity, msg) := inErrorMsg;
     msg_str := Util.translateContent(msg);
-    ErrorExt.addMessage(error_id, msg_type, severity, msg_str, inMessageTokens);
+    ErrorExt.addSourceMessage(error_id, msg_type, severity, sline, scol, eline, ecol, isReadOnly, Util.testsuiteFriendly(file), str+msg_str, inMessageTokens);
     //print(" succ add " + msg_type_str + " " + severity_string + ",  " + msg + "\n");
   end if;
 end addMessage;
@@ -1029,7 +1176,9 @@ algorithm
     // Multiple infos left, print a trace with the first info.
     case (_, _, info :: rest_info)
       equation
-        addSourceMessage(ERROR_FROM_HERE, {}, info);
+        if not listMember(info, rest_info) then
+          addSourceMessage(ERROR_FROM_HERE, {}, info);
+        end if;
         addMultiSourceMessage(inErrorMsg, inMessageTokens, rest_info);
       then
         ();
@@ -1279,8 +1428,15 @@ public function addInternalError "
   Used to make an internal error"
   input String message;
   input SourceInfo info;
+protected
+  String filename;
 algorithm
-  addSourceMessage(INTERNAL_ERROR, {message}, info);
+  if Config.getRunningTestsuite() then
+    SOURCEINFO(fileName=filename):=info;
+    addSourceMessage(INTERNAL_ERROR, {message}, SOURCEINFO(filename,false,0,0,0,0,0));
+  else
+    addSourceMessage(INTERNAL_ERROR, {message}, info);
+  end if;
 end addInternalError;
 
 annotation(__OpenModelica_Interface="util");

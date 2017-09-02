@@ -31,9 +31,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#include <float.h>
 
 #include "division.h"
+#include "omc_msvc.h"
 #include "omc_error.h"
+
+int valid_number(double a)
+{
+  return !isnan(a) && !isinf(a);
+}
+
 
 modelica_real division_error_equation_time(threadData_t *threadData, modelica_real a, modelica_real b, const char *msg, const int *indexes, modelica_real time, modelica_boolean noThrow)
 {
@@ -73,11 +81,6 @@ modelica_real division_error(threadData_t *threadData, modelica_real b, const ch
 #endif
   return b;
 }
-
-#if defined(_MSC_VER)
-#include <float.h>
-#define isnan _isnan
-#endif
 
 modelica_real isnan_error(threadData_t *threadData,modelica_real b, const char* division_str, const char* file, long line)
 {

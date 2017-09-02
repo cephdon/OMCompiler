@@ -34,7 +34,11 @@ extern "C" {
 #include <stdio.h>
 #include <stdlib.h>
 #include "openmodelica.h"
-#include "modelica.h"
+#include "util/read_write.h"
+#include "util/real_array.h"
+#include "util/string_array.h"
+#include "util/boolean_array.h"
+#include "util/integer_array.h"
 #include "systemimpl.h"
 #include "errorext.h"
 #include "meta_modelica_builtin.h"
@@ -95,7 +99,7 @@ static int value_to_type_desc(void *value, type_description *desc)
     void *data = MMC_STRUCTDATA(value)[UNBOX_OFFSET+1];
     void *names = MMC_STRUCTDATA(value)[UNBOX_OFFSET+2];
     void *index = MMC_STRUCTDATA(value)[UNBOX_OFFSET+3];
-    if (-1 != ((long)index >> 1)) {
+    if (-1 != ((mmc_sint_t)index >> 1)) {
       desc->type = TYPE_DESC_MMC;
       desc->data.mmc = value_to_mmc(value);
       break;
@@ -395,7 +399,7 @@ static int mmc_to_value(void* mmc, void** res)
       namelst = mmc_mk_cons(mmc_mk_scon(t != NULL ? (const char*) t : "(null)"), namelst);
     }
     *res = (void *) Values__RECORD(name_to_path(desc->path),
-                                   varlst, namelst, mmc_mk_icon(((long)ctor)-3));
+                                   varlst, namelst, mmc_mk_icon(((mmc_sint_t)ctor)-3));
     return 0;
   }
 
@@ -461,7 +465,7 @@ static void *value_to_mmc(void* value)
     void *data = MMC_STRUCTDATA(value)[UNBOX_OFFSET+1];
     void *names = MMC_STRUCTDATA(value)[UNBOX_OFFSET+2];
     void *index = MMC_STRUCTDATA(value)[UNBOX_OFFSET+3];
-    int index_int = ((long)index >> 1);
+    int index_int = ((mmc_sint_t)index >> 1);
     int i=0;
     void *tmp = names;
     void **data_mmc;
@@ -524,7 +528,7 @@ static void *value_to_mmc(void* value)
     while (MMC_GETHDR(tmp) != MMC_NILHDR) {
       len++; tmp = MMC_CDR(tmp);
     }
-    res = mmc_mk_box_no_assign(len, 0);
+    res = mmc_mk_box_no_assign(len, 0, 0);
     len = 0;
     tmp = data;
     while (MMC_GETHDR(tmp) != MMC_NILHDR) {

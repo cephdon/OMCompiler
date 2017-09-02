@@ -34,7 +34,6 @@ encapsulated package FCore
   package:     FCore
   description: Structures to hold Modelica constructs
 
-  RCS: $Id: FCore.mo 14085 2012-11-27 12:12:40Z adrpo $
 
   This module holds types used in FNode, FGraph and all the other F* packages
 "
@@ -42,13 +41,13 @@ encapsulated package FCore
 
 public
 import Absyn;
+import AvlSetCR;
 import DAE;
+import Mutable;
 import SCode;
 import Prefix;
-import HashTable;
 
 protected
-import BaseHashTable;
 import DAEUtil;
 import Config;
 
@@ -242,30 +241,35 @@ end Data;
 type Refs = list<Ref>;
 type Parents = Refs;
 type Scope = Refs;
-type Children = CAvlTree;
-
-public type CAvlKey = Name;
-public type CAvlValue = Ref;
+type Children = RefTree.Tree;
 
 public constant Scope emptyScope = {} "empty scope";
 
-uniontype CAvlTree "The binary tree data structure for children"
-  record CAVLTREENODE
-    Option<CAvlTreeValue> value "Value" ;
-    Integer height "heigth of tree, used for balancing";
-    Option<CAvlTree> left "left subtree" ;
-    Option<CAvlTree> right "right subtree" ;
-  end CAVLTREENODE;
-end CAvlTree;
+encapsulated package RefTree
+  import BaseAvlTree;
+  import FCore.Name;
+  import FCore.Ref;
+  import FCore.Node;
+  extends BaseAvlTree;
 
-uniontype CAvlTreeValue "Each node in the binary tree can have a value associated with it."
-  record CAVLTREEVALUE
-    CAvlKey key "Key" ;
-    CAvlValue value "Value" ;
-  end CAVLTREEVALUE;
-end CAvlTreeValue;
+  redeclare type Key = Name;
+  redeclare type Value = Ref;
 
-constant CAvlTree emptyCAvlTree = CAVLTREENODE(NONE(),0,NONE(),NONE());
+  redeclare function extends keyStr
+  algorithm
+    outString := inKey;
+  end keyStr;
+
+  redeclare function extends valueStr
+  algorithm
+    Node.N(name = outString) := arrayGet(inValue, 1);
+  end valueStr;
+
+  redeclare function extends keyCompare
+  algorithm
+    outResult := stringCompare(inKey1, inKey2);
+  end keyCompare;
+end RefTree;
 
 uniontype Kind
   record USERDEFINED end USERDEFINED;
@@ -287,6 +291,9 @@ and finally instantiated to produce the DAE. These three states are indicated by
   record VAR_DAE "Typed variables that also have been instantiated to generate dae. Required to distinguish
                   between typed variables without DAE to know when to skip multiply declared dae elements"
   end VAR_DAE;
+
+  record VAR_DELETED "A conditional variable that was deleted."
+  end VAR_DELETED;
 
   record CLS_UNTYPED "just added to the env"
   end CLS_UNTYPED;
@@ -372,12 +379,8 @@ end Extra;
 uniontype Graph "graph"
 
   record G "graph"
-    Name name "name of the graph";
-    Ref top "the top node";
+    Top top "the top node";
     Scope scope "current scope";
-    Visited visited "visited structure";
-    Extra extra "extra information";
-    Next next "next node id for this graph";
   end G;
 
   record EG "empty graph"
@@ -386,6 +389,15 @@ uniontype Graph "graph"
 
 end Graph;
 
+uniontype Top
+  record GTOP
+    array<Graph> graph;
+    Name name "name of the graph";
+    Ref node "the top node";
+    Extra extra "extra information";
+  end GTOP;
+end Top;
+
 public constant Id firstId = 0;
 
 // ************************ Cache structures ***************************
@@ -393,11 +405,11 @@ public constant Id firstId = 0;
 // ************************ Cache structures ***************************
 // ************************ Cache structures ***************************
 
-public type StructuralParameters = tuple<HashTable.HashTable,list<list<DAE.ComponentRef>>>;
+public type StructuralParameters = tuple<AvlSetCR.Tree,list<list<DAE.ComponentRef>>>;
 public uniontype Cache
   record CACHE
     Option<Graph> initialGraph "and the initial environment";
-    array<DAE.FunctionTree> functions "set of Option<DAE.Function>; NONE() means instantiation started; SOME() means it's finished";
+    Mutable<DAE.FunctionTree> functions "set of Option<DAE.Function>; NONE() means instantiation started; SOME() means it's finished";
     StructuralParameters evaluatedParams "ht of prefixed crefs and a stack of evaluated but not yet prefix crefs";
     Absyn.Path modelName "name of the model being instantiated";
     Absyn.Program program "send the program around if we don't have a symbol table";
@@ -426,11 +438,11 @@ public function emptyCache
 "returns an empty cache"
   output Cache cache;
 protected
-  array<DAE.FunctionTree> instFuncs;
+  Mutable<DAE.FunctionTree> instFuncs;
   StructuralParameters ht;
 algorithm
-  instFuncs := arrayCreate(1, DAE.emptyFuncTree);
-  ht := (HashTable.emptyHashTableSized(BaseHashTable.lowBucketSize),{});
+  instFuncs := Mutable.create(DAE.AvlTreePathFunction.Tree.EMPTY());
+  ht := (AvlSetCR.EMPTY(),{});
   cache := CACHE(NONE(),instFuncs,ht,Absyn.IDENT("##UNDEFINED##"),Absyn.dummyProgram);
 end emptyCache;
 
@@ -450,8 +462,8 @@ algorithm
   ocache := match (cache,var,cr)
     local
       Option<Graph> initialGraph;
-      array<DAE.FunctionTree> functions;
-      HashTable.HashTable ht;
+      Mutable<DAE.FunctionTree> functions;
+      AvlSetCR.Tree ht;
       list<list<DAE.ComponentRef>> st;
       list<DAE.ComponentRef> crs;
       Absyn.Path p;
@@ -460,6 +472,9 @@ algorithm
     case (CACHE(initialGraph,functions,(ht,crs::st),p,program),SCode.PARAM(),_)
       then CACHE(initialGraph,functions,(ht,(cr::crs)::st),p,program);
 
+    case (CACHE(initialGraph,functions,(ht,{}),p,program),SCode.PARAM(),_)
+      then CACHE(initialGraph,functions,(ht,{cr}::{}),p,program);
+
     else cache;
 
   end match;
@@ -467,7 +482,7 @@ end addEvaluatedCref;
 
 public function getEvaluatedParams
   input Cache cache;
-  output HashTable.HashTable ht;
+  output AvlSetCR.Tree ht;
 algorithm
   CACHE(evaluatedParams=(ht,_)) := cache;
 end getEvaluatedParams;
@@ -488,7 +503,7 @@ public function setCacheClassName
 algorithm
   outCache := match(inCache,p)
     local
-      array<DAE.FunctionTree> ef;
+      Mutable<DAE.FunctionTree> ef;
       StructuralParameters ht;
       Option<Graph> igraph;
       Absyn.Program program;
@@ -510,7 +525,7 @@ algorithm
 
     case (id) then stringGet(id,1) == 36; // "$"
 
-    case (_) then false;
+    else false;
 
   end matchcontinue;
 end isImplicitScope;
@@ -523,10 +538,10 @@ public function getCachedInstFunc
 algorithm
   func := match(inCache,path)
     local
-      array<DAE.FunctionTree> ef;
+      Mutable<DAE.FunctionTree> ef;
     case(CACHE(functions=ef),_)
       equation
-        SOME(func) = DAEUtil.avlTreeGet(arrayGet(ef,1),path);
+        SOME(func) = DAE.AvlTreePathFunction.get(Mutable.access(ef),path);
       then func;
   end match;
 end getCachedInstFunc;
@@ -538,9 +553,9 @@ public function checkCachedInstFuncGuard
 algorithm
   _ := match(inCache,path)
     local
-      array<DAE.FunctionTree> ef;
+      Mutable<DAE.FunctionTree> ef;
     case(CACHE(functions=ef),_) equation
-      _ = DAEUtil.avlTreeGet(arrayGet(ef,1),path);
+      DAE.AvlTreePathFunction.get(Mutable.access(ef),path);
     then ();
   end match;
 end checkCachedInstFuncGuard;
@@ -552,9 +567,9 @@ public function getFunctionTree
 algorithm
   ft := match cache
     local
-      array<DAE.FunctionTree> ef;
-    case CACHE(functions = ef) then arrayGet(ef, 1);
-    else DAE.emptyFuncTree;
+      Mutable<DAE.FunctionTree> ef;
+    case CACHE(functions = ef) then Mutable.access(ef);
+    else DAE.AvlTreePathFunction.Tree.EMPTY();
   end match;
 end getFunctionTree;
 
@@ -567,7 +582,7 @@ This guards against recursive functions."
 algorithm
   outCache := matchcontinue(cache,func)
     local
-      array<DAE.FunctionTree> ef;
+      Mutable<DAE.FunctionTree> ef;
       Option<Graph> igraph;
       StructuralParameters ht;
       Absyn.Path p;
@@ -582,9 +597,9 @@ algorithm
 
     case (CACHE(igraph,ef,ht,p,program),Absyn.FULLYQUALIFIED(_))
       equation
-        ef = arrayUpdate(ef,1,DAEUtil.avlTreeAdd(arrayGet(ef, 1),func,NONE()));
+        Mutable.update(ef,DAE.AvlTreePathFunction.add(Mutable.access(ef),func,NONE()));
         // print("Func quard [new]: " + Absyn.pathString(func) + "\n");
-      then CACHE(igraph,ef,ht,p,program);
+      then cache;
 
     // Non-FQ paths mean aliased functions; do not add these to the cache
     case (_,_)
@@ -603,7 +618,7 @@ public function addDaeFunction
 algorithm
   outCache := match(inCache,funcs)
     local
-      array<DAE.FunctionTree> ef;
+      Mutable<DAE.FunctionTree> ef;
       Option<Graph> igraph;
       StructuralParameters ht;
       Absyn.Path p;
@@ -611,8 +626,8 @@ algorithm
 
     case (CACHE(igraph,ef,ht,p,program),_)
       equation
-        ef = arrayUpdate(ef,1,DAEUtil.addDaeFunction(funcs, arrayGet(ef, 1)));
-      then CACHE(igraph,ef,ht,p,program);
+        Mutable.update(ef,DAEUtil.addDaeFunction(funcs, Mutable.access(ef)));
+      then inCache;
     else inCache;
 
   end match;
@@ -626,7 +641,7 @@ public function addDaeExtFunction
 algorithm
   outCache := match(inCache,funcs)
     local
-      array<DAE.FunctionTree> ef;
+      Mutable<DAE.FunctionTree> ef;
       Option<Graph> igraph;
       StructuralParameters ht;
       Absyn.Path p;
@@ -634,8 +649,8 @@ algorithm
 
     case (CACHE(igraph,ef,ht,p,program),_)
       equation
-        ef = arrayUpdate(ef,1,DAEUtil.addDaeExtFunction(funcs, arrayGet(ef,1)));
-      then CACHE(igraph,ef,ht,p,program);
+        Mutable.update(ef,DAEUtil.addDaeExtFunction(funcs, Mutable.access(ef)));
+      then inCache;
     else inCache;
 
   end match;
@@ -658,7 +673,7 @@ public function setProgramInCache
 algorithm
   outCache := match(inCache,program)
     local
-      array<DAE.FunctionTree> ef;
+      Mutable<DAE.FunctionTree> ef;
       StructuralParameters ht;
       Absyn.Path p;
       Option<Graph> ograph;
@@ -671,20 +686,13 @@ end setProgramInCache;
 public function setCachedFunctionTree
   input Cache inCache;
   input DAE.FunctionTree inFunctions;
-  output Cache outCache;
-protected
-  Option<Graph> og;
-  array<DAE.FunctionTree> ef;
-  StructuralParameters ht;
-  Absyn.Path p;
-  Absyn.Program program;
 algorithm
-  outCache := match (inCache,inFunctions)
-    case (CACHE(og, _, ht, p, program), _)
+  _ := match inCache
+    case CACHE()
       equation
-        ef = arrayCreate(1, inFunctions);
-      then CACHE(og, ef, ht, p, program);
-    else inCache;
+        Mutable.update(inCache.functions, inFunctions);
+      then ();
+    else ();
   end match;
 end setCachedFunctionTree;
 
@@ -695,11 +703,23 @@ public function isTyped
   input Status is;
   output Boolean b;
 algorithm
-  b := matchcontinue(is)
+  b := match(is)
     case(VAR_UNTYPED()) then false;
-    case(_) then true;
-  end matchcontinue;
+    else true;
+  end match;
 end isTyped;
+
+public function isDeletedComp
+  "Returns true if the status indicates a deleted conditional component,
+   otherwise false."
+  input Status status;
+  output Boolean isDeleted;
+algorithm
+  isDeleted := match status
+    case VAR_DELETED() then true;
+    else false;
+  end match;
+end isDeletedComp;
 
 public function getCachedInitialGraph "get the initial environment from the cache"
   input Cache cache;
@@ -711,19 +731,21 @@ algorithm
 end getCachedInitialGraph;
 
 public function setCachedInitialGraph "set the initial environment in the cache"
-  input Cache inCache;
+  input output Cache cache;
   input Graph g;
-  output Cache outCache;
 algorithm
-  outCache := match(inCache,g)
+  cache := match cache
     local
-      array<DAE.FunctionTree> ef;
+      Mutable<DAE.FunctionTree> ef;
       StructuralParameters ht;
       Absyn.Path p;
       Absyn.Program program;
 
-    case (CACHE(_,ef,ht,p,program),_) then CACHE(SOME(g),ef,ht,p,program);
-    else inCache;
+    case CACHE()
+      algorithm
+        cache.initialGraph := SOME(g);
+      then cache;
+    else cache;
 
   end match;
 end setCachedInitialGraph;
@@ -735,43 +757,22 @@ public function getRecordConstructorName
   input Name inName;
   output Name outName;
 algorithm
-  outName := matchcontinue(inName)
-
-    case (_)
-      equation
-        true = Config.acceptMetaModelicaGrammar();
-      then
-        inName;
-
-    else inName + recordConstructorSuffix;
-
-  end matchcontinue;
+  outName := if Config.acceptMetaModelicaGrammar() then inName else inName + recordConstructorSuffix;
 end getRecordConstructorName;
 
 public function getRecordConstructorPath
   input Absyn.Path inPath;
   output Absyn.Path outPath;
+protected
+  Name lastId;
 algorithm
-  outPath := matchcontinue(inPath)
-    local
-      Absyn.Path path;
-      Name lastId;
-
-    case (_)
-      equation
-        true = Config.acceptMetaModelicaGrammar();
-      then
-        inPath;
-
-    else
-     equation
-       lastId = Absyn.pathLastIdent(inPath);
-       lastId = getRecordConstructorName(lastId);
-       path = Absyn.pathSetLastIdent(inPath, Absyn.makeIdentPathFromString(lastId));
-     then
-       path;
-
-  end matchcontinue;
+  if Config.acceptMetaModelicaGrammar() then
+    outPath := inPath;
+  else
+    lastId := Absyn.pathLastIdent(inPath);
+    lastId := getRecordConstructorName(lastId);
+    outPath := Absyn.pathSetLastIdent(inPath, Absyn.makeIdentPathFromString(lastId));
+  end if;
 end getRecordConstructorPath;
 
 annotation(__OpenModelica_Interface="frontend");

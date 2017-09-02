@@ -55,10 +55,23 @@ static union MSVC_FLOAT_HACK __NAN = {{0x00, 0x00, 0xC0, 0x7F}};
 #define NAN (__NAN.Value)
 #endif
 
+/* for non GNU compilers */
+#ifndef __GNUC__
+#define __attribute__(x)
+#endif
+
 /* Compatibility header for MSVC compiler.
  * (Things that MinGW has but MSVC does not)
  */
 #if defined(_MSC_VER)
+
+#ifndef S_ISDIR
+#define S_ISDIR(mode)  (((mode) & S_IFMT) == S_IFDIR)
+#endif
+
+#ifndef S_ISREG
+#define S_ISREG(mode)  (((mode) & S_IFMT) == S_IFREG)
+#endif
 
 /* get rid of inline for MSVC */
 #define OMC_INLINE
@@ -67,13 +80,13 @@ static union MSVC_FLOAT_HACK __NAN = {{0x00, 0x00, 0xC0, 0x7F}};
 #define WIN32
 #endif
 
-#define round(dbl) ((dbl) < 0.0 ? ceil((dbl) - 0.5) : floor((dbl) + 0.5))
 #define geteuid(void) (-1)
 
-#if defined(_WIN32) || defined(_WIN64)
+#if _MSC_VER < 1800 /* VS 2013 */
+#define round(dbl) ((dbl) < 0.0 ? ceil((dbl) - 0.5) : floor((dbl) + 0.5))
 #define fmax(x, y) ((x>y)?x:y)
 #define fmin(x, y) ((x<y)?x:y)
-#define snprintf sprintf_s
+#define trunc(a) ((double)((int)(a)))
 #endif
 
 #define PATH_MAX _MAX_PATH
@@ -83,6 +96,19 @@ int asprintf(char **strp, const char *fmt, ...);
 int vasprintf(char **strp, const char *fmt, va_list ap);
 
 unsigned int alarm (unsigned int seconds);
+
+#include <float.h>
+#define isinf(d) (!_finite(d) && !_isnan(d))
+#define isnan _isnan
+#define fpu_error(x) (isinf(x) || isnan(x))
+
+
+#if _MSC_VER < 1900 /* VS 2015 */
+#define snprintf sprintf_s
+#if !defined(snprintf)
+#define snprintf snprintf_s
+#endif
+#endif
 
 #else /* not msvc */
 
@@ -99,13 +125,59 @@ int vasprintf(char **strp, const char *fmt, va_list ap);
 unsigned int alarm (unsigned int seconds);
 #endif
 
-#if defined(__MINGW32__) || defined(_MSC_VER)
-char *mkdtemp(char *tpl);
-#endif
+#if (defined(__MINGW32__) || defined(_MSC_VER)) && !defined(OMC_MINIMAL_RUNTIME)
 
-/* for non GNU compilers */
-#ifndef __GNUC__
-#define __attribute__(x)
+static int RTLD_LAZY __attribute__((unused)) = 0;
+
+/** definition of the return data for dladdr().
+ */
+typedef struct {
+	/** Filename of defining DLL or EXE */
+	const char *dli_fname;
+
+	/** Load address of the DLL or EXE that defines the object */
+	void *dli_fbase;
+
+	/** Name of nearest Symbol, string memory allocated possibly allocated
+	 *  on the heap. See #dli_salloc;
+	 */
+	const char *dli_sname;
+
+	/** Exact value of nearest symbol (Not implemented on Windows) */
+	void *dli_saddr;
+
+	/** Non-zero if the memory for dli_sname was allocated on the heap */
+	int dli_salloc;
+
+} Dl_info;
+
+char* mkdtemp(char *tpl);
+void* omc_dlopen(const char *filename, int flag);
+char* omc_dlerror();
+void* omc_dlsym(void *handle, const char *symbol);
+int omc_dlclose(void *handle);
+int omc_dladdr(void *addr, Dl_info *info);
+
+static OMC_INLINE void* dlopen(const char *filename, int flag) {
+  return omc_dlopen(filename, flag);
+}
+
+static OMC_INLINE char* dlerror() {
+  return omc_dlerror();
+}
+
+static OMC_INLINE void* dlsym(void *handle, const char *symbol) {
+  return omc_dlsym(handle, symbol);
+}
+
+static OMC_INLINE int dlclose(void *handle) {
+  return omc_dlclose(handle);
+}
+
+static OMC_INLINE int dladdr(void *addr, Dl_info *info) {
+  return omc_dladdr(addr, info);
+}
+
 #endif
 
 #ifdef __cplusplus

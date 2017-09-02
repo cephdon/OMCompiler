@@ -47,7 +47,6 @@
 // =============================================================================
 // With a delaration like:
 // parameter Real a = 1;
-// the bindValue Optional value of the BackendDAE.VAR
 // record is everytime empty.  Why?
 // =============================================================================
 
@@ -74,9 +73,8 @@
 encapsulated package XMLDump
 " file:        XMLDump.mo
   package:     XMLDump
-  description: Dumping of DAE as XML
+  description: Dumping of DAE as XML"
 
-  RCS: $Id$"
 
 public import Absyn;
 public import BackendDAE;
@@ -93,6 +91,7 @@ protected import ComponentReference;
 protected import Config;
 protected import DAEUtil;
 protected import Debug;
+protected import ElementSource;
 protected import Error;
 protected import Expression;
 protected import ExpressionDump;
@@ -102,9 +101,9 @@ protected import Print;
 protected import Util;
 protected import Types;
 protected import DAEDump;
-protected import ValuesUtil;
 protected import ClassInf;
 protected import System;        // for stringReplace
+import ZeroCrossings;
 
 
   protected constant String HEADER        = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>";
@@ -142,7 +141,6 @@ protected import System;        // for stringReplace
   protected constant String INTERVAL = "interval";
   protected constant String START = "start";
   protected constant String VALUE = "value";
-  protected constant String ELSE_WHEN_CLAUSE = "elseWhenClause";
 
 
   protected constant String LIST_ = "List";
@@ -257,14 +255,11 @@ protected import System;        // for stringReplace
   protected constant String VAR_ATTR_FIXED        = "fixed";
 
   //Name of the element containing the binding information
-  //for the variables (both expression (BindExpression) and value (BindValue).
+  //for the variables (bindExpression)
   //For example consider:
   //parameter Real a = 3*2+e; //With Real constant e = 3;
   //BindExpression 3*2+e
-  //BindValue = 9
-  protected constant String BIND_VALUE_EXPRESSION   = "bindValueExpression";
   protected constant String BIND_EXPRESSION         = "bindExpression";
-  protected constant String BIND_VALUE              = "bindValue";
 
   //Name of the element representing the subscript, for example the array's index.
   protected constant String SUBSCRIPT               = "subscript";
@@ -289,8 +284,6 @@ protected import System;        // for stringReplace
   protected constant String SOLVED_      = "Solved";
   protected constant String WHEN         = "when";
   protected constant String WHEN_        = "When";
-  protected constant String WHEN_CLAUSES = "WhenClauses";
-  protected constant String WHEN_CLAUSE = "WhenClause";
   protected constant String WHEN_OPERATORS = "WhenOperators";
   protected constant String WHEN_OPERATOR = "WhenOperator";
   protected constant String RESIDUAL     = "residual";
@@ -620,50 +613,29 @@ algorithm
   end match;
 end dumpBltInvolvedEquations1;
 
-protected function dumpBindValueExpression "
+protected function dumpBindExpression "
 This function is necessary for printing the
-BindValue and BindExpression of a variable,
-if present. If there are not DAE.Exp nor
-Values.Value passed as input nothing is
-printed.
+BindExpression of a variable, if present.
+If there is no DAE.Exp passed as input
+nothing is printed.
 "
   input Option<DAE.Exp> inOptExpExp;
-  input Option<Values.Value> inOptValuesValue;
   input Boolean addMathMLCode;
-
-  algorithm
-    _:=
-  matchcontinue (inOptExpExp,inOptValuesValue,addMathMLCode)
-      local
-        DAE.Exp e;
-        Values.Value b;
-        Boolean addMMLCode;
-  case(NONE(),NONE(),_)
-    equation
-    then();
-  case(SOME(_),NONE(),addMMLCode)
-    equation
-      dumpStrOpenTag(BIND_VALUE_EXPRESSION);
-      dumpOptExp(inOptExpExp,BIND_EXPRESSION,addMMLCode);
-      dumpStrCloseTag(BIND_VALUE_EXPRESSION);
-    then();
-  case(NONE(),SOME(_),addMMLCode)
-    equation
-      dumpStrOpenTag(BIND_VALUE_EXPRESSION);
-      dumpOptValue(inOptValuesValue,BIND_VALUE,addMMLCode);
-      dumpStrCloseTag(BIND_VALUE_EXPRESSION);
-    then();
-  case(SOME(_),SOME(_),addMMLCode)
-    equation
-      dumpStrOpenTag(BIND_VALUE_EXPRESSION);
-      dumpOptExp(inOptExpExp,BIND_EXPRESSION,addMMLCode);
-      dumpOptValue(inOptValuesValue,BIND_VALUE,addMMLCode);
-      dumpStrCloseTag(BIND_VALUE_EXPRESSION);
-    then();
-  case(_,_,_)
-    then ();
-  end matchcontinue;
-end dumpBindValueExpression;
+algorithm
+    _ := match (inOptExpExp)
+    case(NONE())
+      equation
+      then();
+    case(SOME(_))
+      equation
+        // dumpStrOpenTag(BIND_EXPRESSION);
+        dumpOptExp(inOptExpExp,BIND_EXPRESSION,addMathMLCode);
+        // dumpStrCloseTag(BIND_EXPRESSION);
+      then();
+    case(_)
+      then ();
+  end match;
+end dumpBindExpression;
 
 protected function dumpComment "
 Function for adding comments using the XML tag.
@@ -986,7 +958,6 @@ algorithm
       BackendDAE.Variables vars_knownVars;
       //VARIABLES record for vars.
       array<list<BackendDAE.CrefIndex>> crefIdxLstArr_knownVars;
-      BackendDAE.VariableArray varArr_knownVars;
       Integer bucketSize_knownVars;
       Integer numberOfVars_knownVars;
 
@@ -994,7 +965,6 @@ algorithm
       BackendDAE.Variables vars_externalObject;
       //VARIABLES record for vars.
       array<list<BackendDAE.CrefIndex>> crefIdxLstArr_externalObject;
-      BackendDAE.VariableArray varArr_externalObject;
       Integer bucketSize_externalObject;
       Integer numberOfVars_externalObject;
 
@@ -1002,7 +972,6 @@ algorithm
       BackendDAE.Variables vars_aliasVars;
       //VARIABLES record for aliasVars.
       array<list<BackendDAE.CrefIndex>> crefIdxLstArr_aliasVars;
-      BackendDAE.VariableArray varArr_aliasVars;
       Integer bucketSize_aliasVars;
       Integer numberOfVars_aliasVars;
 
@@ -1028,16 +997,18 @@ algorithm
     case (BackendDAE.DAE(systs,
                  BackendDAE.SHARED(
                  vars_knownVars as BackendDAE.VARIABLES(crefIndices=crefIdxLstArr_knownVars),
+                 _,
                  vars_externalObject as BackendDAE.VARIABLES(crefIndices=crefIdxLstArr_externalObject),
                  vars_aliasVars as BackendDAE.VARIABLES(crefIndices=crefIdxLstArr_aliasVars),
-                 ieqns,reqns,constrs,_,_,_,funcs,
-                 eventInfo,
+                 ieqns,_,constrs,_,_,_,funcs,eventInfo,
                  extObjCls,_,_,_)),addOrInMatrix,addSolInfo,addMML,dumpRes,false)
       equation
 
         knvars  = BackendVariable.varList(vars_knownVars);
         extvars = BackendVariable.varList(vars_externalObject);
         aliasvars = BackendVariable.varList(vars_aliasVars);
+
+        reqns = BackendDAEUtil.collapseRemovedEqs(inBackendDAE);
 
         Print.printBuf(HEADER);
         dumpStrOpenTag(DAE_OPEN);
@@ -1069,15 +1040,18 @@ algorithm
     case (BackendDAE.DAE(systs,
                  BackendDAE.SHARED(
                  vars_knownVars as BackendDAE.VARIABLES(crefIndices=crefIdxLstArr_knownVars),
+                 _,
                  vars_externalObject as BackendDAE.VARIABLES(crefIndices=crefIdxLstArr_externalObject),
                  vars_aliasVars as BackendDAE.VARIABLES(crefIndices=crefIdxLstArr_aliasVars),
-                 ieqns,reqns,constrs,_,_,_,funcs,
-                 eventInfo,extObjCls,_,_,_)),addOrInMatrix,addSolInfo,addMML,dumpRes,true)
+                 ieqns,_,constrs,_,_,_,funcs,eventInfo,
+                 extObjCls,_,_,_,_)),addOrInMatrix,addSolInfo,addMML,dumpRes,true)
       equation
 
         knvars  = BackendVariable.varList(vars_knownVars);
         extvars = BackendVariable.varList(vars_externalObject);
         aliasvars = BackendVariable.varList(vars_aliasVars);
+
+        reqns = BackendDAEUtil.collapseRemovedEqs(inBackendDAE);
 
         Print.printBuf(HEADER);
         dumpStrOpenTag(DAE_OPEN);
@@ -1124,16 +1098,13 @@ algorithm
   _ := match(inEventInfo, addMML)
     local
       list<BackendDAE.TimeEvent> timeEvents;
-      list<BackendDAE.WhenClause> whenClauseLst;
-      list<BackendDAE.ZeroCrossing> zc;
+      BackendDAE.ZeroCrossingSet zc;
 
     case (BackendDAE.EVENT_INFO(timeEvents=timeEvents,
-                                whenClauseLst=whenClauseLst,
-                                zeroCrossingLst=zc), _)
+                                zeroCrossings=zc), _)
       equation
         dumpTimeEvents(timeEvents, stringAppend(SAMPLES, LIST_), addMML);
-        dumpWhenClauses(whenClauseLst, stringAppend(WHEN_CLAUSES, LIST_), addMML);
-        dumpZeroCrossing(zc, stringAppend(ZERO_CROSSING, LIST_), addMML);
+        dumpZeroCrossing(ZeroCrossings.toList(zc), stringAppend(ZERO_CROSSING, LIST_), addMML);
       then
         ();
 
@@ -1190,20 +1161,21 @@ algorithm
     local
       Integer e,v;
       list<Integer> elst,vlst,vlst1,elst1;
+      list<list<Integer>> vlst1Lst;
       BackendDAE.StrongComponent comp;
       BackendDAE.StrongComponents rest;
       BackendDAE.Var var;
       BackendDAE.Equation eqn;
       list<BackendDAE.Var> inAccumVars, varlst, varlst1;
       list<BackendDAE.Equation> inAccumEqns, eqnlst, eqnlst1;
-      list<tuple<Integer,list<Integer>>> eqnsvartpllst;
+      BackendDAE.InnerEquations innerEquations;
       tuple<list<BackendDAE.Equation>, list<BackendDAE.Var>> eqnsVars;
       list<tuple<list<BackendDAE.Equation>, list<BackendDAE.Var>>> result;
     case ({},_,_,_)  then inAccum;
     case (BackendDAE.SINGLEEQUATION(eqn=e,var=v)::rest,_,_,_)
       equation
         var = BackendVariable.getVarAt(vars,v);
-        eqn = BackendEquation.equationNth1(eqns,e);
+        eqn = BackendEquation.get(eqns,e);
         result = listAppend(inAccum,{({eqn},{var})});
         result = getOrderedEqs2(rest,eqns,vars,result);
       then
@@ -1211,7 +1183,7 @@ algorithm
     case (BackendDAE.EQUATIONSYSTEM(eqns=elst,vars=vlst)::rest,_,_,_)
       equation
         varlst = List.map1r(vlst, BackendVariable.getVarAt, vars);
-        eqnlst = BackendEquation.getEqns(elst,eqns);
+        eqnlst = BackendEquation.getList(elst,eqns);
         result = listAppend(inAccum,{(eqnlst,varlst)});
         result = getOrderedEqs2(rest,eqns,vars,result);
       then
@@ -1219,7 +1191,7 @@ algorithm
     case (BackendDAE.SINGLEARRAY(eqn=e,vars=vlst)::rest,_,_,_)
       equation
         varlst = List.map1r(vlst, BackendVariable.getVarAt, vars);
-        eqn = BackendEquation.equationNth1(eqns,e);
+        eqn = BackendEquation.get(eqns,e);
         result = listAppend(inAccum,{({eqn},varlst)});
         result = getOrderedEqs2(rest,eqns,vars,result);
       then
@@ -1227,7 +1199,7 @@ algorithm
     case (BackendDAE.SINGLEIFEQUATION(eqn=e,vars=vlst)::rest,_,_,_)
       equation
         varlst = List.map1r(vlst, BackendVariable.getVarAt, vars);
-        eqn = BackendEquation.equationNth1(eqns,e);
+        eqn = BackendEquation.get(eqns,e);
         result = listAppend(inAccum,{({eqn},varlst)});
         result = getOrderedEqs2(rest,eqns,vars,result);
       then
@@ -1235,7 +1207,7 @@ algorithm
     case (BackendDAE.SINGLEALGORITHM(eqn=e,vars=vlst)::rest,_,_,_)
       equation
         varlst = List.map1r(vlst, BackendVariable.getVarAt, vars);
-        eqn = BackendEquation.equationNth1(eqns,e);
+        eqn = BackendEquation.get(eqns,e);
         result = listAppend(inAccum,{({eqn},varlst)});
         result = getOrderedEqs2(rest,eqns,vars,result);
       then
@@ -1243,7 +1215,7 @@ algorithm
     case (BackendDAE.SINGLECOMPLEXEQUATION(eqn=e,vars=vlst)::rest,_,_,_)
       equation
         varlst = List.map1r(vlst, BackendVariable.getVarAt, vars);
-        eqn = BackendEquation.equationNth1(eqns,e);
+        eqn = BackendEquation.get(eqns,e);
         result = listAppend(inAccum,{({eqn},varlst)});
         result = getOrderedEqs2(rest,eqns,vars,result);
       then
@@ -1251,20 +1223,20 @@ algorithm
     case (BackendDAE.SINGLEWHENEQUATION(eqn=e,vars=vlst)::rest,_,_,_)
       equation
         varlst = List.map1r(vlst, BackendVariable.getVarAt, vars);
-        eqn = BackendEquation.equationNth1(eqns,e);
+        eqn = BackendEquation.get(eqns,e);
         result = listAppend(inAccum,{({eqn},varlst)});
         result = getOrderedEqs2(rest,eqns,vars,result);
       then
         result;
-    case (BackendDAE.TORNSYSTEM(BackendDAE.TEARINGSET(tearingvars=vlst,residualequations=elst,otherEqnVarTpl=eqnsvartpllst))::rest,_,_,_)
+    case (BackendDAE.TORNSYSTEM(BackendDAE.TEARINGSET(tearingvars=vlst,residualequations=elst,innerEquations=innerEquations))::rest,_,_,_)
       equation
-        vlst1 = List.flatten(List.map(eqnsvartpllst,Util.tuple22));
+        (elst1,vlst1Lst,_) = List.map_3(innerEquations, BackendDAEUtil.getEqnAndVarsFromInnerEquation);
+        vlst1 = List.flatten(vlst1Lst);
         varlst1 = List.map1r(vlst1, BackendVariable.getVarAt, vars);
         varlst = List.map1r(vlst, BackendVariable.getVarAt, vars);
         varlst = listAppend(varlst1,varlst);
-        elst1 = List.map(eqnsvartpllst,Util.tuple21);
-        eqnlst1 = BackendEquation.getEqns(elst1,eqns);
-        eqnlst = BackendEquation.getEqns(elst,eqns);
+        eqnlst1 = BackendEquation.getList(elst1,eqns);
+        eqnlst = BackendEquation.getList(elst,eqns);
         eqnlst = listAppend(eqnlst1,eqnlst);
         result = listAppend(inAccum,{(eqnlst,varlst)});
         result = getOrderedEqs2(rest,eqns,vars,result);
@@ -1590,6 +1562,7 @@ algorithm
       Boolean addMMLCode;
       list<DAE.Statement> stmts;
       DAE.ElementSource source;
+      list<BackendDAE.WhenOperator> whenStmtLst;
 
     case (BackendDAE.EQUATION(exp = e1,scalar = e2),indexS,true)
       equation
@@ -1705,23 +1678,11 @@ algorithm
         dumpStrCloseTag(stringAppend(SOLVED,EQUATION_));
       then ();
 
-    case (BackendDAE.WHEN_EQUATION(whenEquation = BackendDAE.WHEN_EQ(condition = e1,left = cr,right = e2)),indexS,true)
+    case (BackendDAE.WHEN_EQUATION(whenEquation =  BackendDAE.WHEN_STMTS(condition = e1,whenStmtLst=whenStmtLst)),indexS,true)
       equation
-        s1 = ComponentReference.printComponentRefStr(cr);
-        s2 = printExpStr(e2);
         is = printExpStr(e1);
-        res = stringAppendList({s1," := ",s2});
         dumpStrOpenTagAttr(stringAppend(WHEN,EQUATION_),ID,indexS);
-        Print.printBuf(res);
-        dumpStrOpenTag(MathML);
-        dumpStrOpenTagAttr(MATH, MathMLXmlns, MathMLWeb);
-        dumpStrOpenTag(MathMLApply);
-        dumpStrVoidTag(MathMLEquivalent);
-        dumpStrMathMLVariable(s1);
-        dumpExp2(e2);
-        dumpStrCloseTag(MathMLApply);
-        dumpStrCloseTag(MATH);
-        dumpStrCloseTag(MathML);
+        dumpWhenOperatorLst(whenStmtLst, addMathMLCode);
 
         dumpStrOpenTag(stringAppend(stringAppend(WHEN,EQUATION_),CONDITION));
         Print.printBuf("\n");
@@ -1732,14 +1693,11 @@ algorithm
         dumpStrCloseTag(stringAppend(WHEN,EQUATION_));
       then ();
 
-    case (BackendDAE.WHEN_EQUATION(whenEquation = BackendDAE.WHEN_EQ(condition = e1,left = cr,right = e2)),indexS,false)
+    case (BackendDAE.WHEN_EQUATION(whenEquation = BackendDAE.WHEN_STMTS(condition = e1,whenStmtLst=whenStmtLst)),indexS,false)
       equation
-        s1 = ComponentReference.printComponentRefStr(cr);
-        s2 = printExpStr(e2);
         is = printExpStr(e1);
-        res = stringAppendList({s1," := ",s2});
         dumpStrOpenTagAttr(stringAppend(WHEN,EQUATION_),ID,indexS);
-        Print.printBuf(res);
+        dumpWhenOperatorLst(whenStmtLst, addMathMLCode);
         dumpStrTagContent(stringAppend(stringAppend(WHEN,EQUATION_),CONDITION),is);
         dumpStrCloseTag(stringAppend(WHEN,EQUATION_));
       then ();
@@ -2675,34 +2633,6 @@ algorithm
 end dumpOptionDAEStateSelect;
 
 
-protected function dumpOptValue "
- This function print an Optional Values.Value variable
-as one attribute of a within a specific XML element.
-It takes the optional Values.Value and element name
-as input an prints on a new line a string to the
-standard output like:
-<Content = \"ExpressionDump.printExpStr(ValuesUtil.valueExp(Optional<Values.Value>)/>
-"
-  input Option<Values.Value> inValueValueOption;
-  input String Content;
-  input Boolean addMathMLCode;
-algorithm
-  _ :=
-  match (inValueValueOption,Content,addMathMLCode)
-    local
-      Values.Value v;
-      Boolean addMMLCode;
-    case (NONE(),_,_)  then ();
-    case (SOME(v),_,addMMLCode)
-      equation
-        dumpStrOpenTagAttr(Content,EXP_STRING,printExpStr(ValuesUtil.valueExp(v)));
-        dumpExp(ValuesUtil.valueExp(v),addMMLCode);
-        dumpStrCloseTag(Content);
-      then ();
-  end match;
-end dumpOptValue;
-
-
 protected function dumpRow
 "Prints a list of expressions to a string."
   input list<DAE.Exp> es_1;
@@ -3325,7 +3255,6 @@ algorithm
                             varDirection = dir,
                             varType = var_type,
                             bindExp = e,
-                            bindValue = b,
                             source = source,
                             values = dae_var_attr,
                             comment = comment,
@@ -3334,11 +3263,11 @@ algorithm
         dumpVariable(intString(varno),ComponentReference.printComponentRefStr(cr),dumpKind(kind),dumpDirectionStr(dir),dumpTypeStr(var_type),
                      getIndex(kind),getDerName(kind),boolString(BackendVariable.varFixed(v)),dumpFlowStr(ct),
                      dumpStreamStr(ct),unparseCommentOptionNoAnnotation(comment));
-        dumpBindValueExpression(e,b,addMMLCode);
+        dumpBindExpression(e,addMMLCode);
         //The command below adds information to the XML about the dimension of the
         //containing vector, in the casse the variable is an element of a vector.
         //dumpDAEInstDims(arry_Dim,"ArrayDims");
-        paths = DAEUtil.getElementSourceTypes(source);
+        paths = ElementSource.getElementSourceTypes(source);
         dumpAbsynPathLst(paths,stringAppend(CLASSES,NAMES_));
         dumpDAEVariableAttributes(dae_var_attr,VAR_ATTRIBUTES_VALUES,addMMLCode);
         dumpStrCloseTag(VARIABLE);
@@ -3388,7 +3317,6 @@ algorithm
                             varDirection = dir,
                             varType = var_type,
                             bindExp = e,
-                            bindValue = b,
                             source = source,
                             values = dae_var_attr,
                             comment = comment,
@@ -3397,11 +3325,11 @@ algorithm
         dumpVariable(intString(varno),ComponentReference.printComponentRefStr(cr),dumpKind(kind),dumpDirectionStr(dir),dumpTypeStr(var_type),
                         getIndex(kind),getDerName(kind),boolString(BackendVariable.varFixed(v)),dumpFlowStr(ct),dumpStreamStr(ct),
                         DAEDump.dumpCommentAnnotationStr(comment));
-        dumpBindValueExpression(e,b,addMMLCode);
+        dumpBindExpression(e,addMMLCode);
         //The command below adds information to the XML about the dimension of the
         //containing vector, in the casse the variable is an element of a vector.
         //dumpDAEInstDims(arry_Dim,"ArrayDims");
-        paths = DAEUtil.getElementSourceTypes(source);
+        paths = ElementSource.getElementSourceTypes(source);
         dumpAbsynPathLst(paths,stringAppend(CLASSES,NAMES_));
         dumpDAEVariableAttributes(dae_var_attr,VAR_ATTRIBUTES_VALUES,addMMLCode);
         dumpVarsAdditionalInfo(crefIdxLstArr,varno);
@@ -3423,91 +3351,8 @@ algorithm
   end match;
 end dumpVarsAdds2;
 
-protected function dumpWhenClauses "
-This function prints the list of WhenClauses
-elements in a XML format. It takes also as input
-a string in order to know what is the content of
-the zero crossing list. The output is:
-<WhenClauses DIMENSION=...>
-...
-</WhenClauses>
-"
-  input list<BackendDAE.WhenClause> inWhenClauseLst;
-  input String inContent;
-  input Boolean addMathMLCode;
-algorithm
-  _:=
-  matchcontinue (inWhenClauseLst,inContent,addMathMLCode)
-    local
-      Integer len;
-      list<BackendDAE.WhenClause> lst;
-
-    case ({},_,_) then ();
-
-    case (lst, _, _)
-      equation
-        len = listLength(lst);
-        len >= 1 = false;
-      then ();
-
-    case (lst, _, _)
-      equation
-        len = listLength(lst);
-        len >= 1 = true;
-        dumpStrOpenTagAttr(inContent, DIMENSION, intString(len));
-        dumpWhenClauseLst(lst, 1, addMathMLCode);
-        dumpStrCloseTag(inContent);
-      then ();
-
-  end matchcontinue;
-end dumpWhenClauses;
-
-protected function dumpWhenClauseLst "
-This function prints the content of a when clause
- "
-  input list<BackendDAE.WhenClause> inWhenClauseLst;
-  input Integer inIndex;
-  input Boolean addMathMLCode;
-algorithm
-  _:=
-  match (inWhenClauseLst,inIndex,addMathMLCode)
-    local
-      DAE.Exp condition;
-      list<BackendDAE.WhenClause> lst;
-      list<BackendDAE.WhenOperator> whenOperators;
-      Option<Integer> elseClause;
-      String str;
-
-    case ({}, _, _) then ();
-
-    case (BackendDAE.WHEN_CLAUSE(condition = condition, reinitStmtLst = whenOperators, elseClause = elseClause) :: lst, _, _)
-      equation
-        str = printExpStr(condition);
-
-        dumpStrOpenTagAttr(WHEN_CLAUSE, INDEX, intString(inIndex));
-
-        dumpStrOpenTag(stringAppend(stringAppend(WHEN,EQUATION_),CONDITION));
-        Print.printBuf("\n");
-        Print.printBuf(str);
-        dumpExp(condition, addMathMLCode);
-        dumpStrCloseTag(stringAppend(stringAppend(WHEN,EQUATION_),CONDITION));
-
-        dumpWhenOperators(whenOperators, stringAppend(WHEN_OPERATORS, LIST_), addMathMLCode);
-
-        dumpOptInteger(elseClause, ELSE_WHEN_CLAUSE, addMathMLCode);
-
-        dumpStrCloseTag(WHEN_CLAUSE);
-
-        dumpWhenClauseLst(lst, inIndex + 1, addMathMLCode);
-
-      then
-        ();
-
-  end match;
-end dumpWhenClauseLst;
-
 protected function dumpWhenOperators "
-This function prints the list of WhenClauses
+This function prints the list of WhenOperators
 elements in a XML format. It takes also as input
 a string in order to know what is the content of
 the zero crossing list. The output is:
@@ -3557,13 +3402,56 @@ algorithm
   match (inWhenOperators,addMathMLCode)
     local
       DAE.ComponentRef stateVar;
-      DAE.Exp cond, msg, level, e, value, call;
+      DAE.Exp cond, msg, level, left, e, value, call;
       list<DAE.Exp> exps;
       list<BackendDAE.WhenOperator> lst;
-      String str;
+      String str, s1, s2;
       Absyn.Path fn;
 
     case ({}, _) then ();
+
+    case (BackendDAE.ASSIGN(left, value, _) :: lst, true)
+      equation
+        s1 = printExpStr(left);
+        s2 = printExpStr(value);
+        str = stringAppendList({s1," := ",s2});
+
+        dumpStrOpenTag(WHEN_OPERATOR);
+        Print.printBuf("\n");
+        Print.printBuf(str);
+        dumpStrCloseTag(WHEN_OPERATOR);
+
+        dumpStrOpenTag(MathML);
+        dumpStrOpenTagAttr(MATH, MathMLXmlns, MathMLWeb);
+        dumpStrOpenTag(MathMLApply);
+        dumpStrVoidTag(MathMLEquivalent);
+        dumpStrMathMLVariable(s1);
+        dumpExp2(value);
+        dumpStrCloseTag(MathMLApply);
+        dumpStrCloseTag(MATH);
+        dumpStrCloseTag(MathML);
+
+        dumpWhenOperatorLst(lst, addMathMLCode);
+
+      then
+        ();
+
+
+    case (BackendDAE.ASSIGN(left, value, _) :: lst, false)
+      equation
+        s1 = printExpStr(left);
+        s2 = printExpStr(value);
+        str = stringAppendList({s1," := ",s2});
+
+        dumpStrOpenTag(WHEN_OPERATOR);
+        Print.printBuf("\n");
+        Print.printBuf(str);
+        dumpStrCloseTag(WHEN_OPERATOR);
+
+        dumpWhenOperatorLst(lst, addMathMLCode);
+
+      then
+        ();
 
     case (BackendDAE.REINIT(stateVar, value, _) :: lst, _)
       equation
@@ -3795,12 +3683,11 @@ algorithm
 
     case ({},_) then ();
 
-    case (BackendDAE.ZERO_CROSSING(relation_ = e,occurEquLst = eq,occurWhenLst = wc) :: zcLst,addMMLCode)
+    case (BackendDAE.ZERO_CROSSING(relation_ = e,occurEquLst = eq) :: zcLst,addMMLCode)
       equation
         dumpStrOpenTagAttr(stringAppend(ZERO_CROSSING,ELEMENT_),EXP_STRING,printExpStr(e));
         dumpExp(e,addMMLCode);
         dumpLstIntAttr(eq,stringAppend(INVOLVED,EQUATIONS_),stringAppend(EQUATION,ID_));
-        dumpLstIntAttr(wc,stringAppend(INVOLVED,stringAppend(WHEN_,EQUATIONS_)),stringAppend(WHEN,stringAppend(EQUATION_,ID_)));
         dumpStrCloseTag(stringAppend(ZERO_CROSSING,ELEMENT_));
         dumpZcLst(zcLst,addMMLCode);
       then ();
@@ -4053,9 +3940,9 @@ algorithm
         dumpStrCloseTag(stringAppend(SOLVED,EQUATION_));
       then ();
 
-    case (BackendDAE.WHEN_EQUATION(whenEquation = BackendDAE.WHEN_EQ(condition = e1,left = cr,right = e2)),indexS,true)
+    case (BackendDAE.WHEN_EQUATION(whenEquation = BackendDAE.WHEN_STMTS(condition = e1,whenStmtLst={BackendDAE.ASSIGN(left = e,right = e2)})),indexS,true)
       equation
-        s1 = ComponentReference.printComponentRefStr(cr);
+        s1 = printExpStr(e);
         s2 = printExpStr(e2);
         is = printExpStr(e1);
         res = stringAppendList({s1," - (",s2,") := 0"});
@@ -4084,9 +3971,9 @@ algorithm
         dumpStrCloseTag(stringAppend(WHEN,EQUATION_));
       then ();
 
-    case (BackendDAE.WHEN_EQUATION(whenEquation = BackendDAE.WHEN_EQ(condition = e1,left = cr,right = e2)),indexS,false)
+    case (BackendDAE.WHEN_EQUATION(whenEquation = BackendDAE.WHEN_STMTS(condition = e1,whenStmtLst={BackendDAE.ASSIGN(left = e,right = e2)})),indexS,false)
       equation
-        s1 = ComponentReference.printComponentRefStr(cr);
+        s1 = printExpStr(e);
         s2 = printExpStr(e2);
         is = printExpStr(e1);
         res = stringAppendList({s1," - (",s2,") := 0"});

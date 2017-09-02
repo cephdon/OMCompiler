@@ -35,7 +35,6 @@ encapsulated package ErrorExt
   package:     ErrorExt
   description: Error handling External interface
 
-  RCS: $Id$
 
   This file contains the external interface to the error handling.
   Error messages are stored externally, impl. in C++."
@@ -49,27 +48,6 @@ function registerModelicaFormatError
 <p>Note: Only works in the bootstrapped compiler!</p>
 </html>"),Library = "omcruntime");
 end registerModelicaFormatError;
-
-function updateCurrentComponent
-  input String str;
-  input Boolean writeable;
-  input String fileName;
-  input Integer rowstart;
-  input Integer rowend;
-  input Integer colstart;
-  input Integer colend;
-  external "C" ErrorImpl__updateCurrentComponent(OpenModelica.threadData(),str,writeable,fileName,rowstart,rowend,colstart,colend) annotation(Library = "omcruntime");
-end updateCurrentComponent;
-
-function addMessage
-  input Error.ErrorID id;
-  input Error.MessageType msg_type;
-  input Error.Severity msg_severity;
-  input String msg;
-  input list<String> msg_tokens;
-
-  external "C" Error_addMessage(OpenModelica.threadData(),id,msg_type,msg_severity,msg,msg_tokens) annotation(Library = "omcruntime");
-end addMessage;
 
 function addSourceMessage
   input Error.ErrorID id;
@@ -121,6 +99,21 @@ end getMessages;
 function clearMessages
   external "C" ErrorImpl__clearMessages(OpenModelica.threadData()) annotation(Library = "omcruntime");
 end clearMessages;
+
+function getNumCheckpoints "Used to rollback/delete checkpoints without considering the identifier. Used to reset the error messages after a stack overflow exception."
+  output Integer n;
+  external "C" n=ErrorImpl__getNumCheckpoints(OpenModelica.threadData()) annotation(Library = "omcruntime");
+end getNumCheckpoints;
+
+function rollbackNumCheckpoints "Used to rollback/delete checkpoints without considering the identifier. Used to reset the error messages after a stack overflow exception."
+  input Integer n;
+  external "C" ErrorImpl__rollbackNumCheckpoints(OpenModelica.threadData(), n) annotation(Library = "omcruntime");
+end rollbackNumCheckpoints;
+
+function deleteNumCheckpoints "Used to rollback/delete checkpoints without considering the identifier. Used to reset the error messages after a stack overflow exception."
+  input Integer n;
+  external "C" ErrorImpl__deleteNumCheckpoints(OpenModelica.threadData(), n) annotation(Library = "omcruntime");
+end deleteNumCheckpoints;
 
 function setCheckpoint "sets a checkpoint for the error messages, so error messages can be rolled back (i.e. deleted) up to this point
 A unique identifier for this checkpoint must be provided. It is checked when doing rollback or deletion"

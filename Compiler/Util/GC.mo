@@ -47,6 +47,26 @@ function disable
 external "C" GC_disable() annotation(Library = {"omcgc"});
 end disable;
 
+function free<T>
+  input T data;
+external "C" omc_GC_free_ext(data) annotation(Include="
+void omc_GC_free_ext(void *data)
+{
+  /*  */
+  GC_free(MMC_UNTAGPTR(data));
+}
+",
+  Library = {"omcgc"}, Documentation(info="<html>
+<p>GC_free requires \"a pointer to the base of an object\".</p>
+<p>So the object passed to free must not be allocated by any of the list
+routines that allocate multiple elements with a single malloc call.</p>
+<p>Calling GC.free is very dangerous. You might be better off trying to
+set variables to a constant value if you want to GC them. Use this if
+you are concerned about temporary variables, etc remaining on the stack
+and not cleared for a long time.</p>
+</html>"));
+end free;
+
 function expandHeap
   input Real sz "To avoid the 32-bit signed limit on sizes";
   output Boolean success;
@@ -70,7 +90,7 @@ function setForceUnmapOnGcollect
   external "C" GC_set_force_unmap_on_gcollect(forceUnmap) annotation(Library = {"omcgc"});
 end setForceUnmapOnGcollect;
 
-uniontype ProfStats // TODO: Support regular records in the bootstrapped compiler to avoid allocation to return the stats in the GC...
+uniontype ProfStats "TODO: Support regular records in the bootstrapped compiler to avoid allocation to return the stats in the GC..."
   record PROFSTATS
     Integer heapsize_full, free_bytes_full, unmapped_bytes, bytes_allocd_since_gc, allocd_bytes_before_gc, non_gc_bytes, gc_no, markers_m1, bytes_reclaimed_since_gc, reclaimed_bytes_before_gc;
   end PROFSTATS;
@@ -90,6 +110,7 @@ algorithm
       "unmapped_bytes: " + intString(stats.unmapped_bytes) + delimiter +
       "bytes_allocd_since_gc: " + intString(stats.bytes_allocd_since_gc) + delimiter +
       "allocd_bytes_before_gc: " + intString(stats.allocd_bytes_before_gc) + delimiter +
+      "total_allocd_bytes: " + intString(stats.bytes_allocd_since_gc+stats.allocd_bytes_before_gc) + delimiter +
       "non_gc_bytes: " + intString(stats.non_gc_bytes) + delimiter +
       "gc_no: " + intString(stats.gc_no) + delimiter +
       "markers_m1: " + intString(stats.markers_m1) + delimiter +

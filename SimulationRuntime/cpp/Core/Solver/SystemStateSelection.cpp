@@ -15,6 +15,7 @@ SystemStateSelection::SystemStateSelection(IMixedSystem* system)
   ,_colPivot()
   ,_rowPivot()
   ,_initialized(false)
+
 {
 
   _state_selection = dynamic_cast<IStateSelection*>(system);
@@ -49,6 +50,7 @@ void SystemStateSelection::initialize()
       _colPivot[i][n] = _dimStateCanditates[i]-n-1;
   }
 
+
   _initialized = true;
 #endif
 }
@@ -76,8 +78,7 @@ return true;
   {
     boost::shared_array<int> oldColPivot(new int[_dimStateCanditates[i]]);
     boost::shared_array<int> oldRowPivot(new int[_dimDummyStates[i]]);
-    SparseMatrix stateset_matrix;
-    _system->getStateSetJacobian(i,stateset_matrix);
+    const matrix_t& stateset_matrix =  _system->getStateSetJacobian(i);
 
     /* call pivoting function to select the states */
 
@@ -86,21 +87,18 @@ return true;
     memcpy(oldColPivot.get(), _colPivot[i].get(), _dimStateCanditates[i]*sizeof(int));
     memcpy(oldRowPivot.get(), _rowPivot[i].get(), _dimDummyStates[i]*sizeof(int));
 
+    const double* jac =    stateset_matrix.data().begin();
+    int* piv=_colPivot[i].get();
+
+   double* jac_ = new double[_dimDummyStates[i]*_dimStateCanditates[i]];
+   memcpy(jac_, jac, _dimDummyStates[i]*_dimStateCanditates[i]*sizeof(double));
 
 
 
-    /*workarround for c array*/
-    double* jac = new double[_dimDummyStates[i]*_dimStateCanditates[i]];
-    for(int k=0;k<_dimStateCanditates[i];k++)
-      for(int j= 0;j<_dimDummyStates[i];j++)
-        jac[k*_dimDummyStates[i]+j]=stateset_matrix(k,j);
-
-
-    if((pivot(jac, _dimDummyStates[i], _dimStateCanditates[i], _rowPivot[i].get(), _colPivot[i].get()) != 0))
+    if((pivot(jac_, _dimDummyStates[i], _dimStateCanditates[i], _rowPivot[i].get(), _colPivot[i].get()) != 0))
     {
       throw ModelicaSimulationError(MATH_FUNCTION,"Error, singular Jacobian for dynamic state selection at time");
     }
-
     /* if we have a new set throw event for reinitialization
     and set the A matrix for set.x=A*(states) */
     res = comparePivot(oldColPivot.get(), _colPivot[i].get(), switchStates,i);
@@ -111,7 +109,7 @@ return true;
 
 
     }
-    delete [] jac;
+    delete [] jac_;
     if(res)
       changed = true;
     else

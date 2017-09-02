@@ -46,6 +46,7 @@ static inline void copy_JacVars(OptData *optData);
  * author: Vitalij Ruge
  */
 inline void allocate_der_struct(OptDataStructure *s, OptDataDim * dim, DATA* data, OptData *optData){
+  threadData_t *threadData = optData->threadData;
   const int nv = dim->nv;
   const int nsi = dim->nsi;
   const int np = dim->np;
@@ -73,10 +74,10 @@ inline void allocate_der_struct(OptDataStructure *s, OptDataDim * dim, DATA* dat
   s->indexABCD[3] = data->callback->INDEX_JAC_C;
   s->indexABCD[4] = data->callback->INDEX_JAC_D;
   s->matrix[0] = (modelica_boolean)0;
-  s->matrix[1] = (modelica_boolean)(data->callback->initialAnalyticJacobianA((void*) data) == 0);
-  s->matrix[2] = (modelica_boolean)(data->callback->initialAnalyticJacobianB((void*) data) == 0);
-  s->matrix[3] = (modelica_boolean)(data->callback->initialAnalyticJacobianC((void*) data) == 0);
-  s->matrix[4] = (modelica_boolean)(data->callback->initialAnalyticJacobianD((void*) data) == 0);
+  s->matrix[1] = (modelica_boolean)(data->callback->initialAnalyticJacobianA((void*) data, threadData) == 0);
+  s->matrix[2] = (modelica_boolean)(data->callback->initialAnalyticJacobianB((void*) data, threadData) == 0);
+  s->matrix[3] = (modelica_boolean)(data->callback->initialAnalyticJacobianC((void*) data, threadData) == 0);
+  s->matrix[4] = (modelica_boolean)(data->callback->initialAnalyticJacobianD((void*) data, threadData) == 0);
 
   dim->nJderx = 0;
   dim->nJfderx = 0;
@@ -223,17 +224,13 @@ static inline void local_jac_struct(DATA * data, OptDataDim * dim, OptDataStruct
       tmp_index = index-2;
       h_index = s->indexABCD[index];
       /******************************/
-      sizeCols = data->simulationInfo.analyticJacobians[h_index].sizeCols;
-      maxColors = data->simulationInfo.analyticJacobians[h_index].sparsePattern.maxColors + 1;
-      cC = (unsigned int*) data->simulationInfo.analyticJacobians[h_index].sparsePattern.colorCols;
-      lindex = (unsigned int*) data->simulationInfo.analyticJacobians[h_index].sparsePattern.leadindex;
-      pindex = data->simulationInfo.analyticJacobians[h_index].sparsePattern.index;
+      sizeCols = data->simulationInfo->analyticJacobians[h_index].sizeCols;
+      maxColors = data->simulationInfo->analyticJacobians[h_index].sparsePattern.maxColors + 1;
+      cC = (unsigned int*) data->simulationInfo->analyticJacobians[h_index].sparsePattern.colorCols;
+      lindex = (unsigned int*) data->simulationInfo->analyticJacobians[h_index].sparsePattern.leadindex;
+      pindex = data->simulationInfo->analyticJacobians[h_index].sparsePattern.index;
 
-      s->lindex[index] = (unsigned int*)calloc((sizeCols+1), sizeof(unsigned int));
-      memcpy(&s->lindex[index][1], lindex, sizeCols*sizeof(unsigned int));
-      lindex = s->lindex[index];
       s->seedVec[index] = (modelica_real **)malloc((maxColors)*sizeof(modelica_real*));
-      free(data->simulationInfo.analyticJacobians[h_index].sparsePattern.leadindex);
       /**********************/
       if(sizeCols > 0){
         for(ii = 1; ii < maxColors; ++ii){
@@ -261,7 +258,7 @@ static inline void local_jac_struct(DATA * data, OptDataDim * dim, OptDataStruct
         }
       }
       /**********************/
-      free(data->simulationInfo.analyticJacobians[h_index].seedVars);
+      free(data->simulationInfo->analyticJacobians[h_index].seedVars);
     }
   }
 
@@ -343,13 +340,13 @@ static inline void copy_JacVars(OptData *optData){
   dim->analyticJacobians_tmpVars = (modelica_real ****) malloc(nn*sizeof(modelica_real***));
   for(l = 0; l < nn ; ++l){
     if(s[l]){
-      dim->dim_tmpVars[l] = data->simulationInfo.analyticJacobians[indexBC[l]].sizeTmpVars;
+      dim->dim_tmpVars[l] = data->simulationInfo->analyticJacobians[indexBC[l]].sizeTmpVars;
       dim->analyticJacobians_tmpVars[l] = (modelica_real ***) malloc(nsi*sizeof(modelica_real**));
       for(i = 0; i< nsi; ++i){
         dim->analyticJacobians_tmpVars[l][i] = (modelica_real **) malloc(np*sizeof(modelica_real*));
         for(j = 0; j< np; ++j){
           dim->analyticJacobians_tmpVars[l][i][j] = (modelica_real *) malloc(dim->dim_tmpVars[l]*sizeof(modelica_real));
-          memcpy(dim->analyticJacobians_tmpVars[l][i][j],data->simulationInfo.analyticJacobians[indexBC[l]].tmpVars,dim->dim_tmpVars[l]*sizeof(modelica_real));
+          memcpy(dim->analyticJacobians_tmpVars[l][i][j],data->simulationInfo->analyticJacobians[indexBC[l]].tmpVars,dim->dim_tmpVars[l]*sizeof(modelica_real));
         }
       }
     }

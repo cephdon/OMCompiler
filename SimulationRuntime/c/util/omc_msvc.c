@@ -39,9 +39,6 @@ extern "C" {
 
 
 #if defined(__MINGW32__) || defined(_MSC_VER)
-#include <windows.h>
-#include <TlHelp32.h>
-#include <time.h>
 
 int asprintf(char **strp, const char *fmt, ...) {
   int len;
@@ -63,6 +60,12 @@ int vasprintf(char **strp, const char *fmt, va_list ap) {
   len = vsnprintf(*strp, len+1, fmt, ap);
   return len;
 }
+
+#if !defined(OMC_MINIMAL_RUNTIME)
+
+#include <windows.h>
+#include <tlhelp32.h>
+#include <time.h>
 
 #ifndef SIGALRM
 #define SIGALRM         SIGTERM
@@ -157,18 +160,22 @@ unsigned int alarm (unsigned int seconds)
   return (unsigned int)(unslept);
 }
 
+#endif /* !defined(OMC_MINIMAL_RUNTIME) */
+
 #endif
+
+
 
 #if defined(__MINGW32__) || defined(_MSC_VER)
 
 #if defined(__MINGW32__)
 #include <dirent.h>
 #include <unistd.h>
-#endif
+#endif /* defined(__MINGW32__) */
 
 #if defined(_MSC_VER)
 #include <direct.h> /* for mkdir */
-#endif
+#endif /* defined(_MSC_VER) */
 
 /* from "man mkdtemp":
   The mkdtemp() function generates a uniquely named temporary directory from
@@ -211,6 +218,130 @@ char *mkdtemp(char *tpl)
 
   return NULL;
 }
+
+#if (defined(__MINGW32__) || defined(_MSC_VER)) && !defined(OMC_MINIMAL_RUNTIME)
+void* omc_dlopen(const char *filename, int flag)
+{
+  return (void*) LoadLibrary(filename);
+}
+
+#include <windows.h>
+#include <imagehlp.h>
+
+static const char* GetLastErrorAsString()
+{
+  static char *str = NULL;
+  LPSTR messageBuffer = NULL;
+  size_t size = 0;
+  //Get the error message, if any.
+  DWORD errorMessageID = GetLastError();
+  if (errorMessageID == 0) {
+    return ""; //No error message has been recorded
+  }
+
+  size = FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                               NULL, errorMessageID, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&messageBuffer, 0, NULL);
+
+  if (str != NULL) {
+    free(str);
+    str = NULL;
+  }
+  str = malloc(size+1);
+  memcpy(str, messageBuffer, size);
+  str[size] = '\0';
+
+  //Free the buffer.
+  LocalFree(messageBuffer);
+
+  return str;
+}
+
+char* omc_dlerror()
+{
+  return GetLastErrorAsString();
+}
+
+void *omc_dlsym(void *handle, const char *symbol)
+{
+  return (void*) GetProcAddress(handle, symbol);
+}
+
+int omc_dlclose(void *handle)
+{
+  return FreeLibrary(handle);
+}
+
+
+#if defined(_MSC_VER)
+/* no dladdr on MSVC */
+int omc_dladdr(void *addr, Dl_info *info)
+{
+  return 0;
+}
+#else /* MINGW */
+
+/*
+ * used the implementation from:
+ * http://emfisis.physics.uiowa.edu/Software/C/librpwgse/rpwgse/GseWinSvc.c
+ * this is work in progress, we need to load the symbols and search in them
+ * using the function address (using something similar to what we have in backtrace.c)
+ */
+int omc_dladdr(void *addr, Dl_info *info)
+{
+  HANDLE hProcess;
+  DWORD dwModuleBase;
+  DWORD displacement;
+  char sModuleName[MAX_PATH + 1];
+  sModuleName[MAX_PATH] = '\0';
+
+  hProcess = GetCurrentProcess();
+
+  /* Init the structure to nothing */
+  info->dli_fname = NULL;
+  info->dli_fbase = NULL;
+  info->dli_sname = NULL;
+  info->dli_saddr = NULL;
+  info->dli_salloc = 0;
+
+  dwModuleBase = SymGetModuleBase(hProcess, (DWORD)addr);
+  info->dli_fbase = (void*)dwModuleBase;
+  if(! GetModuleFileNameA((HMODULE)dwModuleBase, sModuleName, MAX_PATH)) return 0;
+
+  info->dli_fname = (const char*) calloc(MAX_PATH + 1, sizeof(char));
+  memcpy((char*)info->dli_fname, sModuleName, MAX_PATH);
+
+  /* First assume that name is in the current mingw compiled executable */
+  // here we should do something similar to backtrace.c find function
+
+  /* Name might be in a DLL, try to get it */
+  if(!(info->dli_sname)){
+
+    displacement = 0;
+    char symbol_buffer[sizeof(IMAGEHLP_SYMBOL) + 255];
+    symbol_buffer[sizeof(IMAGEHLP_SYMBOL) + 254] = '\0';
+
+    IMAGEHLP_SYMBOL* pSymbol = (IMAGEHLP_SYMBOL*)symbol_buffer;
+
+    pSymbol->SizeOfStruct = sizeof(IMAGEHLP_SYMBOL) + 255;
+    pSymbol->MaxNameLength = 254;
+
+    if(SymGetSymFromAddr(hProcess, (DWORD)addr, &displacement, pSymbol)) {
+      info->dli_sname = (const char*) calloc(pSymbol->MaxNameLength + 1, 1);
+      memcpy((char*)info->dli_sname, pSymbol->Name, pSymbol->MaxNameLength);
+      info->dli_salloc = 1;
+    }
+  }
+  if(!(info->dli_sname)){
+    info->dli_sname = "[unknown function name]";
+  }
+
+  return 1;
+}
+
+#endif /* #if (defined(__MINGW32__) || defined(_MSC_VER)) && !defined(OMC_MINIMAL_RUNTIME) */
+
+#endif /* #if defined(__MINGW32__) || defined(_MSC_VER)  */
+
 #endif
 
 #ifdef __cplusplus

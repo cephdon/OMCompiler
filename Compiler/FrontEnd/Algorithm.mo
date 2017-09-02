@@ -35,7 +35,6 @@ encapsulated package Algorithm
   package:     Algorithm
   description: Algorithm datatypes
 
-  RCS: $Id$
 
   This file contains data types and functions for managing
   algorithm sections. The algorithms in the AST are analyzed by the `Inst\'
@@ -55,6 +54,7 @@ public import SCode;
 protected import ComponentReference;
 protected import DAEUtil;
 protected import Debug;
+protected import ElementSource;
 protected import Error;
 protected import Expression;
 protected import ExpressionDump;
@@ -136,8 +136,8 @@ public function makeTupleAssignmentNoTypeCheck
 protected
   Boolean b1,b2;
 algorithm
-  b1 := List.fold(List.map(lhs, Expression.isWild), boolAnd, true);
-  b2 := List.fold(List.map(List.restOrEmpty(lhs), Expression.isWild), boolAnd, true);
+  b1 := List.mapBoolAnd(lhs, Expression.isWild);
+  b2 := List.mapBoolAnd(List.restOrEmpty(lhs), Expression.isWild);
   outStatement := makeTupleAssignmentNoTypeCheck2(b1,b2,ty,lhs,rhs,source);
 end makeTupleAssignmentNoTypeCheck;
 
@@ -207,7 +207,7 @@ algorithm
         DAE.C_PARAM() = Types.propAnyConst(lprop);
         lhs_str = ExpressionDump.printExpStr(lhs);
         rhs_str = ExpressionDump.printExpStr(rhs);
-        Error.addSourceMessage(Error.ASSIGN_PARAM_ERROR, {lhs_str, rhs_str}, DAEUtil.getElementSourceFileInfo(source));
+        Error.addSourceMessage(Error.ASSIGN_PARAM_ERROR, {lhs_str, rhs_str}, ElementSource.getElementSourceFileInfo(source));
       then
         fail();
 
@@ -215,7 +215,7 @@ algorithm
     case (lhs, _, _, _, DAE.ATTR(variability = SCode.CONST()), _, _)
       equation
         lhs_str = ExpressionDump.printExpStr(lhs);
-        Error.addSourceMessage(Error.ASSIGN_READONLY_ERROR, {"constant", lhs_str}, DAEUtil.getElementSourceFileInfo(source));
+        Error.addSourceMessage(Error.ASSIGN_READONLY_ERROR, {"constant", lhs_str}, ElementSource.getElementSourceFileInfo(source));
       then
         fail();
 
@@ -242,7 +242,7 @@ algorithm
         rhs_str = ExpressionDump.printExpStr(rhs);
         lt_str = Types.unparseTypeNoAttr(lt);
         rt_str = Types.unparseTypeNoAttr(rt);
-        info = DAEUtil.getElementSourceFileInfo(source);
+        info = ElementSource.getElementSourceFileInfo(source);
         Types.typeErrorSanityCheck(lt_str, rt_str, info);
         Error.addSourceMessage(Error.ASSIGN_TYPE_MISMATCH_ERROR,
           {lhs_str, rhs_str, lt_str, rt_str}, info);
@@ -272,17 +272,29 @@ protected function makeAssignment2
   input DAE.ElementSource source;
   output DAE.Statement outStatement;
 algorithm
-  outStatement := match (lhs, lhprop, rhs, rhprop, source)
+  outStatement := match lhs
     local
       DAE.ComponentRef c;
       DAE.Exp rhs_1, e3, e1;
       DAE.Type t, ty;
       list<DAE.Exp> ea2;
 
-    case (DAE.CREF(), _, _, _, _) guard not Types.isPropArray(lhprop)
-      equation
-        (rhs_1, _) = Types.matchProp(rhs, rhprop, lhprop, true);
-        t = getPropExpType(lhprop);
+    case DAE.CREF() guard not Types.isPropArray(lhprop)
+      algorithm
+        rhs_1 := Types.matchProp(rhs, rhprop, lhprop, true);
+        t := getPropExpType(lhprop);
+        _ := match rhs_1
+          case DAE.CALL(attr=DAE.CALL_ATTR(builtin=true), path=Absyn.IDENT("listAppend"), expLst=(e1 as DAE.CREF())::_)
+            guard Expression.expEqual(lhs, e1)
+            algorithm
+              print(stringDelimitList(list(SCodeDump.printCommentAndAnnotationStr(comment) for comment in ElementSource.getCommentsFromSource(source)), "\n"));
+              if Flags.isSet(Flags.LIST_REVERSE_WRONG_ORDER) and not max(SCode.commentHasBooleanNamedAnnotation(comment, "__OpenModelica_DisableListAppendWarning") for comment in ElementSource.getCommentsFromSource(source)) then
+                Error.addSourceMessage(Error.LIST_REVERSE_WRONG_ORDER, {ExpressionDump.printExpStr(e1)}, ElementSource.getElementSourceFileInfo(source));
+                fail();
+              end if;
+            then ();
+          else ();
+        end match;
       then
         DAE.STMT_ASSIGN(t, lhs, rhs_1, source);
         /* TODO: Use this when we have fixed states in BackendDAE .lower(...)
@@ -294,7 +306,7 @@ algorithm
       then
         DAE.STMT_ASSIGN(t, e1, rhs_1);
       */
-    case (DAE.CREF(), _, _, _, _) // guard Types.isPropArray(lhprop)
+    case DAE.CREF() // guard Types.isPropArray(lhprop)
       equation
         (rhs_1, _) = Types.matchProp(rhs, rhprop, lhprop, false /* Don't duplicate errors */);
         ty = Types.getPropType(lhprop);
@@ -302,7 +314,7 @@ algorithm
       then
         DAE.STMT_ASSIGN_ARR(t, lhs, rhs_1, source);
 
-    case(e3 as DAE.ASUB(_, _), _, _, _, _)
+    case e3 as DAE.ASUB(_, _)
       equation
         (rhs_1, _) = Types.matchProp(rhs, rhprop, lhprop, true);
         //false = Types.isPropArray(lhprop);
@@ -355,6 +367,51 @@ algorithm
   end match;
 end makeAssignmentsList;
 
+public function checkLHSWritable
+"@author: adrpo
+ check if the parameters on rhs have fixed = false
+ and fail otherwise"
+  input list<DAE.Exp> lhs;
+  input list<DAE.Properties> props;
+  input DAE.Exp rhs;
+  input DAE.ElementSource source;
+protected
+  DAE.Type ty;
+  Integer i = 1;
+  String c, l, r;
+algorithm
+  for p in props loop
+    _ := matchcontinue p
+      // variables is fine
+      case DAE.PROP(constFlag = DAE.C_VAR()) then ();
+      // constant
+      case DAE.PROP(_, DAE.C_CONST())
+        equation
+          l = stringAppendList({"(", stringDelimitList(List.map(lhs, ExpressionDump.printExpStr), ", "), ")"});
+          r = ExpressionDump.printExpStr(rhs);
+          Error.addSourceMessage(Error.ASSIGN_CONSTANT_ERROR, {l, r}, ElementSource.getElementSourceFileInfo(source));
+          fail();
+        then
+          ();
+      // parameters
+      case DAE.PROP(ty, DAE.C_PARAM())
+        equation
+          if Types.getFixedVarAttributeParameterOrConstant(ty) then
+            l = stringAppendList({"(", stringDelimitList(List.map(lhs, ExpressionDump.printExpStr), ", "), ")"});
+            r = ExpressionDump.printExpStr(rhs);
+            c = ExpressionDump.printExpStr(listGet(lhs, i));
+            Error.addSourceMessage(Error.ASSIGN_PARAM_FIXED_ERROR, {c, l, r}, ElementSource.getElementSourceFileInfo(source));
+            fail();
+          end if;
+        then
+          ();
+      // tuples? TODO! FIXME! can we get tuple here? maybe only for MetaModelica
+      case DAE.PROP_TUPLE(_, _) then ();
+    end matchcontinue;
+    i := i + 1;
+  end for;
+end checkLHSWritable;
+
 public function makeTupleAssignment "This function creates an `DAE.STMT_TUPLE_ASSIGN\' construct, and checks that the
   assignment is semantically valid, which means that the component
   being assigned is not constant, and that the types match."
@@ -378,6 +435,7 @@ algorithm
       list<DAE.Type> lhrtypes, tpl;
       list<DAE.TupleConst> clist;
       DAE.Type ty;
+      DAE.Const const;
 
     case (lhs, lprop, rhs, _, _, _)
       equation
@@ -387,7 +445,7 @@ algorithm
         s = stringDelimitList(sl, ", ");
         lhs_str = stringAppendList({"(", s, ")"});
         rhs_str = ExpressionDump.printExpStr(rhs);
-        Error.addSourceMessage(Error.ASSIGN_CONSTANT_ERROR, {lhs_str, rhs_str}, DAEUtil.getElementSourceFileInfo(source));
+        Error.addSourceMessage(Error.ASSIGN_CONSTANT_ERROR, {lhs_str, rhs_str}, ElementSource.getElementSourceFileInfo(source));
       then
         fail();
     case (lhs, lprop, rhs, _, SCode.NON_INITIAL(), _)
@@ -398,14 +456,13 @@ algorithm
         s = stringDelimitList(sl, ", ");
         lhs_str = stringAppendList({"(", s, ")"});
         rhs_str = ExpressionDump.printExpStr(rhs);
-        Error.addSourceMessage(Error.ASSIGN_PARAM_ERROR, {lhs_str, rhs_str}, DAEUtil.getElementSourceFileInfo(source));
+        Error.addSourceMessage(Error.ASSIGN_PARAM_ERROR, {lhs_str, rhs_str}, ElementSource.getElementSourceFileInfo(source));
       then
         fail();
     // a normal prop in rhs that contains a T_TUPLE!
     case (expl, lhprops, rhs, DAE.PROP(type_ = ty as DAE.T_TUPLE(types = tpl)), _, _)
       equation
-        bvals = List.map(lhprops, Types.propAnyConst);
-        DAE.C_VAR() = List.reduce(bvals, Types.constOr);
+        checkLHSWritable(expl, lhprops, rhs, source);
         lhrtypes = List.map(lhprops, Types.getPropType);
         Types.matchTypeTupleCall(rhs, tpl, lhrtypes);
          /* Don\'t use new rhs\', since type conversions of
@@ -414,8 +471,7 @@ algorithm
     // a tuple in rhs
     case (expl, lhprops, rhs, DAE.PROP_TUPLE(type_ = ty as DAE.T_TUPLE(types = tpl), tupleConst = DAE.TUPLE_CONST()), _, _)
       equation
-        bvals = List.map(lhprops, Types.propAnyConst);
-        DAE.C_VAR() = List.reduce(bvals, Types.constOr);
+        checkLHSWritable(expl, lhprops, rhs, source);
         lhrtypes = List.map(lhprops, Types.getPropType);
         Types.matchTypeTupleCall(rhs, tpl, lhrtypes);
          /* Don\'t use new rhs\', since type conversions of several output args are not clearly defined. */
@@ -487,7 +543,7 @@ algorithm
       equation
         e_str = ExpressionDump.printExpStr(e);
         t_str = Types.unparseTypeNoAttr(t);
-        Error.addSourceMessage(Error.IF_CONDITION_TYPE_ERROR, {e_str, t_str}, DAEUtil.getElementSourceFileInfo(source));
+        Error.addSourceMessage(Error.IF_CONDITION_TYPE_ERROR, {e_str, t_str}, ElementSource.getElementSourceFileInfo(source));
       then
         fail();
   end matchcontinue;
@@ -600,7 +656,7 @@ algorithm
       equation
         e_str = ExpressionDump.printExpStr(e);
         t_str = Types.unparseTypeNoAttr(t);
-        info = DAEUtil.getElementSourceFileInfo(inSource);
+        info = ElementSource.getElementSourceFileInfo(inSource);
         Error.addSourceMessage(Error.IF_CONDITION_TYPE_ERROR, {e_str, t_str}, info);
       then
         fail();
@@ -645,7 +701,7 @@ algorithm
       equation
         e_str = ExpressionDump.printExpStr(e);
         t_str = Types.unparseTypeNoAttr(t);
-        Error.addSourceMessage(Error.FOR_EXPRESSION_TYPE_ERROR, {e_str, t_str}, DAEUtil.getElementSourceFileInfo(source));
+        Error.addSourceMessage(Error.FOR_EXPRESSION_TYPE_ERROR, {e_str, t_str}, ElementSource.getElementSourceFileInfo(source));
       then
         fail();
   end matchcontinue;
@@ -682,7 +738,7 @@ algorithm
       equation
         e_str = ExpressionDump.printExpStr(e);
         t_str = Types.unparseTypeNoAttr(t);
-        Error.addSourceMessage(Error.FOR_EXPRESSION_TYPE_ERROR, {e_str, t_str}, DAEUtil.getElementSourceFileInfo(source));
+        Error.addSourceMessage(Error.FOR_EXPRESSION_TYPE_ERROR, {e_str, t_str}, ElementSource.getElementSourceFileInfo(source));
       then
         fail();
   end matchcontinue;
@@ -708,7 +764,7 @@ algorithm
       equation
         e_str = ExpressionDump.printExpStr(e);
         t_str = Types.unparseTypeNoAttr(t);
-        Error.addSourceMessage(Error.WHILE_CONDITION_TYPE_ERROR, {e_str, t_str}, DAEUtil.getElementSourceFileInfo(source));
+        Error.addSourceMessage(Error.WHILE_CONDITION_TYPE_ERROR, {e_str, t_str}, ElementSource.getElementSourceFileInfo(source));
       then
         fail();
   end matchcontinue;
@@ -737,7 +793,7 @@ algorithm
       equation
         e_str = ExpressionDump.printExpStr(e);
         t_str = Types.unparseTypeNoAttr(t);
-        Error.addSourceMessage(Error.WHEN_CONDITION_TYPE_ERROR, {e_str, t_str}, DAEUtil.getElementSourceFileInfo(source));
+        Error.addSourceMessage(Error.WHEN_CONDITION_TYPE_ERROR, {e_str, t_str}, ElementSource.getElementSourceFileInfo(source));
       then
         fail();
   end matchcontinue;
@@ -767,7 +823,7 @@ algorithm
 
     else
       equation
-        Error.addSourceMessage(Error.INTERNAL_ERROR, {"reinit called with wrong args"}, DAEUtil.getElementSourceFileInfo(source));
+        Error.addSourceMessage(Error.INTERNAL_ERROR, {"reinit called with wrong args"}, ElementSource.getElementSourceFileInfo(source));
       then
         fail();
 
@@ -797,7 +853,7 @@ algorithm
       then {DAE.STMT_ASSERT(cond, msg, level, source)};
     case (_, _, _, DAE.PROP(type_ = t1), DAE.PROP(type_ = t2), DAE.PROP(type_ = t3), _)
       equation
-        info = DAEUtil.getElementSourceFileInfo(source);
+        info = ElementSource.getElementSourceFileInfo(source);
         strExp = ExpressionDump.printExpStr(cond);
         strTy = Types.unparseType(t1);
         Error.assertionOrAddSourceMessage(Types.isBooleanOrSubTypeBoolean(t1), Error.EXP_TYPE_MISMATCH, {strExp, "Boolean", strTy}, info);

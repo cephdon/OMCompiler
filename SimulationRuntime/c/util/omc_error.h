@@ -84,6 +84,8 @@ enum LOG_STREAM
   LOG_DEBUG,
   LOG_DSS,
   LOG_DSS_JAC,
+  LOG_DT,
+  LOG_DT_CONS,
   LOG_EVENTS,
   LOG_EVENTS_V,
   LOG_INIT,
@@ -101,9 +103,13 @@ enum LOG_STREAM
   LOG_NLS_JAC,
   LOG_NLS_JAC_TEST,
   LOG_NLS_RES,
+  LOG_NLS_EXTRAPOLATE,
   LOG_RES_INIT,
+  LOG_RT,
   LOG_SIMULATION,
   LOG_SOLVER,
+  LOG_SOLVER_V,
+  LOG_SOLVER_CONTEXT,
   LOG_SOTI,
   LOG_STATS,
   LOG_STATS_V,
@@ -116,11 +122,6 @@ enum LOG_STREAM
   SIM_LOG_MAX
 };
 
-extern const int firstOMCErrorStream;
-extern const char *LOG_STREAM_NAME[SIM_LOG_MAX];
-extern const char *LOG_STREAM_DESC[SIM_LOG_MAX];
-extern const char *LOG_STREAM_DETAILED_DESC[SIM_LOG_MAX];
-
 enum LOG_TYPE
 {
   LOG_TYPE_UNKNOWN = 0,
@@ -132,14 +133,18 @@ enum LOG_TYPE
   LOG_TYPE_MAX
 };
 
+extern const int firstOMCErrorStream;
+extern const char *LOG_STREAM_NAME[SIM_LOG_MAX];
+extern const char *LOG_STREAM_DESC[SIM_LOG_MAX];
+extern const char *LOG_STREAM_DETAILED_DESC[SIM_LOG_MAX];
+extern const char *LOG_TYPE_DESC[LOG_TYPE_MAX];
+
 extern int useStream[SIM_LOG_MAX];
 extern int level[SIM_LOG_MAX];
 extern int lastType[SIM_LOG_MAX];
 extern int lastStream;
 extern int showAllWarnings;
 extern char logBuffer[2048];
-
-void setStreamPrintXML(int isXML);
 
 #define ACTIVE_STREAM(stream)    (useStream[stream])
 #define ACTIVE_WARNING_STREAM(stream)    (showAllWarnings || useStream[stream])
@@ -160,8 +165,11 @@ void setStreamPrintXML(int isXML);
   #define TRACE_POP
 #endif
 
+extern void (*messageFunction)(int type, int stream, int indentNext, char *msg, int subline, const int *indexes);
 extern void (*messageClose)(int stream);
 extern void (*messageCloseWarning)(int stream);
+
+#if !defined(OMC_MINIMAL_LOGGING)
 extern void va_infoStreamPrint(int stream, int indentNext, const char *format, va_list ap);
 extern void infoStreamPrint(int stream, int indentNext, const char *format, ...) __attribute__ ((format (printf, 3, 4)));
 extern void infoStreamPrintWithEquationIndexes(int stream, int indentNext, const int *indexes, const char *format, ...) __attribute__ ((format (printf, 4, 5)));
@@ -172,11 +180,24 @@ extern void va_warningStreamPrintWithEquationIndexes(int stream, int indentNext,
 extern void errorStreamPrint(int stream, int indentNext, const char *format, ...) __attribute__ ((format (printf, 3, 4)));
 extern void va_errorStreamPrint(int stream, int indentNext, const char *format, va_list ap);
 extern void va_errorStreamPrintWithEquationIndexes(int stream, int indentNext, const int *indexes, const char *format,va_list ap);
+#else
+static inline void va_infoStreamPrint(int stream, int indentNext, const char *format, va_list ap) {}
+static inline void infoStreamPrint(int stream, int indentNext, const char *format, ...) {}
+static inline void infoStreamPrintWithEquationIndexes(int stream, int indentNext, const int *indexes, const char *format, ...) {}
+static inline void warningStreamPrint(int stream, int indentNext, const char *format, ...) {}
+static inline void va_warningStreamPrint(int stream, int indentNext, const char *format,va_list ap) {}
+static inline void warningStreamPrintWithEquationIndexes(int stream, int indentNext, const int *indexes, const char *format, ...) {}
+static inline void va_warningStreamPrintWithEquationIndexes(int stream, int indentNext, const int *indexes, const char *format,va_list ap) {}
+static inline void errorStreamPrint(int stream, int indentNext, const char *format, ...) {}
+static inline void va_errorStreamPrint(int stream, int indentNext, const char *format, va_list ap) {}
+static inline void va_errorStreamPrintWithEquationIndexes(int stream, int indentNext, const int *indexes, const char *format,va_list ap) {}
+#endif
+
 extern void va_throwStreamPrint(threadData_t *threadData, const char *format, va_list ap) __attribute__ ((noreturn));
 extern void throwStreamPrint(threadData_t *threadData, const char *format, ...) __attribute__ ((format (printf, 2, 3), noreturn));
 extern void throwStreamPrintWithEquationIndexes(threadData_t *threadData, const int *indexes, const char *format, ...) __attribute__ ((format (printf, 3, 4), noreturn));
 #ifdef HAVE_VA_MACROS
-#define assertStreamPrint(threadData, cond, ...) (cond) ? (void) 0 : throwStreamPrint((threadData), __VA_ARGS__)
+#define assertStreamPrint(threadData, cond, ...) if (!(cond)) {throwStreamPrint((threadData), __VA_ARGS__); assert(0);}
 #else
 static void OMC_INLINE assertStreamPrint(threadData_t *threadData, int cond, const char *format, ...) __attribute__ ((format (printf, 3, 4)));
 static void OMC_INLINE assertStreamPrint(threadData_t *threadData, int cond, const char *format, ...)

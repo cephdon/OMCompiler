@@ -7,6 +7,23 @@ package builtin
     replaceable type T subtypeof Any;
   end listReverse;
 
+  function boolAnd
+    input Boolean b1;
+    input Boolean b2;
+    output Boolean b;
+  end boolAnd;
+
+  function boolOr
+    input Boolean a;
+    input Boolean b;
+    output Boolean c;
+  end boolOr;
+
+  function boolNot
+    input Boolean b;
+    output Boolean nb;
+  end boolNot;
+
   uniontype SourceInfo
     record SOURCEINFO
       String fileName;
@@ -308,6 +325,12 @@ package Absyn
       Exp rightSide;
     end EQ_EQUALS;
 
+    record EQ_PDE
+      Exp leftSide;
+      Exp rightSide;
+      ComponentRef domain;
+    end EQ_PDE;
+
     record EQ_CONNECT
       ComponentRef connector1;
       ComponentRef connector2;
@@ -438,10 +461,16 @@ package Absyn
       Boolean streamPrefix;
       Parallelism parallelism;
       Variability variability;
+      IsField isField;
       Direction direction;
       ArrayDim arrayDim;
     end ATTR;
   end ElementAttributes;
+
+  uniontype IsField "Is field"
+    record NONFIELD "variable is not a field"  end NONFIELD;
+    record FIELD "variable is a field"         end FIELD;
+  end IsField;
 
   uniontype Parallelism
     record PARGLOBAL end PARGLOBAL;
@@ -466,6 +495,7 @@ package Absyn
     record INPUT end INPUT;
     record OUTPUT end OUTPUT;
     record BIDIR end BIDIR;
+    record INPUT_OUTPUT end INPUT_OUTPUT;
   end Direction;
 
   uniontype ForIterator
@@ -786,6 +816,7 @@ package Absyn
       Path name;
       Integer index;
       Boolean singleton;
+      list<String> typeVars;
     end R_METARECORD;
     record R_UNKNOWN  end R_UNKNOWN;
   end Restriction;
@@ -828,6 +859,12 @@ package Absyn
       Option<Annotation> annotation_;
     end EXTERNALDECL;
   end ExternalDecl;
+
+  function isClassdef
+    input Element inElement;
+    output Boolean b;
+  end isClassdef;
+
 end Absyn;
 
 package Config
@@ -877,5 +914,15 @@ package Tpl
     input String inErrMsg;
   end addTemplateError;
 end Tpl;
+
+package Flags
+  uniontype ConfigFlag end ConfigFlag;
+  constant ConfigFlag MODELICA_OUTPUT;
+  function getConfigBool
+    input ConfigFlag inFlag;
+    output Boolean outValue;
+  end getConfigBool;
+end Flags;
+
 
 end AbsynDumpTV;

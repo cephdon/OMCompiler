@@ -37,8 +37,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-pthread_key_t mmc_thread_data_key = 0;
-
 /*
 void* mmc_mk_rcon(double d)
 {
@@ -72,12 +70,12 @@ void* mmc_mk_modelica_array(base_array_t arr)
   return cpy;
 }
 
-void* mmc_mk_box_arr(int slots, unsigned int ctor, void** args)
+void* mmc_mk_box_arr(mmc_sint_t slots, mmc_uint_t ctor, void** args)
 {
-    int i;
+    mmc_sint_t i;
     struct mmc_struct *p = (struct mmc_struct*)mmc_alloc_words(slots + 1);
     p->header = MMC_STRUCTHDR(slots, ctor);
-    for (i=0; i<slots; i++) {
+    for (i = 0; i < slots; i++) {
       p->data[i] = (void*) args[i];
     }
 #ifdef MMC_MK_DEBUG
@@ -88,8 +86,8 @@ void* mmc_mk_box_arr(int slots, unsigned int ctor, void** args)
 
 char* mmc_mk_scon_len_ret_ptr(size_t nbytes)
 {
-    unsigned int header = MMC_STRINGHDR(nbytes);
-    unsigned int nwords = MMC_HDRSLOTS(header) + 1;
+    mmc_uint_t header = MMC_STRINGHDR(nbytes);
+    mmc_uint_t nwords = MMC_HDRSLOTS(header) + 1;
     struct mmc_string *p;
     void *res;
     p = (struct mmc_string *)mmc_alloc_words_atomic(nwords);
@@ -100,43 +98,62 @@ char* mmc_mk_scon_len_ret_ptr(size_t nbytes)
 
 modelica_boolean valueEq(modelica_metatype lhs, modelica_metatype rhs)
 {
+  return 0==valueCompare(lhs, rhs);
+}
+
+static int intCompare(int i1, int i2)
+{
+  return i1==i2 ? 0 : i1>i2 ? 1 : -1;
+}
+
+static double realCompare(double r1, double r2)
+{
+  return r1==r2 ? 0 : r1>r2 ? 1 : -1;
+}
+
+modelica_integer valueCompare(modelica_metatype lhs, modelica_metatype rhs)
+{
   mmc_uint_t h_lhs;
   mmc_uint_t h_rhs;
-  int numslots;
-  unsigned int ctor;
-  int i;
+  mmc_sint_t numslots;
+  mmc_uint_t ctor;
+  mmc_sint_t i;
+  int res;
 
   if (lhs == rhs) {
-    return 1;
+    return 0;
   }
 
-  if (MMC_IS_INTEGER(lhs) != MMC_IS_INTEGER(rhs)) {
+  res = intCompare(MMC_IS_INTEGER(lhs), MMC_IS_INTEGER(rhs));
+  if (0 != res) {
     /* Should trigger an assertion for most code */
-    return 0;
+    return res;
   }
 
   if (MMC_IS_INTEGER(lhs)) {
-    return 0;
+    return intCompare(mmc_unbox_integer(lhs), mmc_unbox_integer(rhs));
   }
 
   h_lhs = MMC_GETHDR(lhs);
   h_rhs = MMC_GETHDR(rhs);
 
-  if (h_lhs != h_rhs)
-    return 0;
+  res = intCompare(h_lhs, h_rhs);
+
+  if (0 != res) {
+    return res;
+  }
 
   if (h_lhs == MMC_NILHDR) {
-    return 1;
+    return 0;
   }
 
   if (h_lhs == MMC_REALHDR) {
-    double d1,d2;
-    d1 = mmc_prim_get_real(lhs);
-    d2 = mmc_prim_get_real(rhs);
-    return d1 == d2;
+    return realCompare(mmc_prim_get_real(lhs), mmc_prim_get_real(rhs));
   }
+
   if (MMC_HDRISSTRING(h_lhs)) {
-    return 0 == strcmp(MMC_STRINGDATA(lhs),MMC_STRINGDATA(rhs));
+    res = intCompare(MMC_STRLEN(lhs), MMC_STRLEN(rhs));
+    return res==0 ? strcmp(MMC_STRINGDATA(lhs),MMC_STRINGDATA(rhs)) : res;
   }
 
   numslots = MMC_HDRSLOTS(h_lhs);
@@ -149,52 +166,55 @@ modelica_boolean valueEq(modelica_metatype lhs, modelica_metatype rhs)
     if (0 != strcmp(lhs_desc->name,rhs_desc->name))
       return 0;
     */
-    for (i=2; i<=numslots; i++) {
+    for (i = 2; i <= numslots; i++) {
       void * lhs_data = MMC_FETCH(MMC_OFFSET(MMC_UNTAGPTR(lhs),i));
       void * rhs_data = MMC_FETCH(MMC_OFFSET(MMC_UNTAGPTR(rhs),i));
-      if (0 == valueEq(lhs_data,rhs_data)) {
-        return 0;
+      res = valueCompare(lhs_data,rhs_data);
+      if (0 != res) {
+        return res;
       }
     }
-    return 1;
+    return 0;
   }
 
   if (numslots>0 && ctor == 0) { /* TUPLE */
-    for (i=0; i<numslots; i++) {
+    for (i = 0; i < numslots; i++) {
       void *tlhs, *trhs;
       tlhs = MMC_FETCH(MMC_OFFSET(MMC_UNTAGPTR(lhs),i+1));
       trhs = MMC_FETCH(MMC_OFFSET(MMC_UNTAGPTR(rhs),i+1));
-      if (0 == valueEq(tlhs,trhs)) {
-        return 0;
+      res = valueCompare(tlhs,trhs);
+      if (0 != res) {
+        return res;
       }
     }
-    return 1;
+    return 0;
   }
 
   if (numslots==0 && ctor==1) /* NONE() */ {
-    return 1;
+    return 0;
   }
 
   if (numslots==1 && ctor==1) /* SOME(x) */ {
-    return valueEq(MMC_FETCH(MMC_OFFSET(MMC_UNTAGPTR(lhs),1)),MMC_FETCH(MMC_OFFSET(MMC_UNTAGPTR(rhs),1)));
+    return valueCompare(MMC_FETCH(MMC_OFFSET(MMC_UNTAGPTR(lhs),1)),MMC_FETCH(MMC_OFFSET(MMC_UNTAGPTR(rhs),1)));
   }
 
   if (numslots==2 && ctor==1) { /* CONS-PAIR */
     while (!MMC_NILTEST(lhs) && !MMC_NILTEST(rhs)) {
-      if (!valueEq(MMC_CAR(lhs),MMC_CAR(rhs)))
-        return 0;
+      res = valueCompare(MMC_CAR(lhs),MMC_CAR(rhs));
+      if (0 != res) {
+        return res;
+      }
       lhs = MMC_CDR(lhs);
       rhs = MMC_CDR(rhs);
     }
-    return MMC_NILTEST(lhs) == MMC_NILTEST(rhs);
+    return intCompare(MMC_NILTEST(lhs), MMC_NILTEST(rhs));
   }
 
   if (numslots==0 && ctor == MMC_ARRAY_TAG) /* zero size array??!! */ {
-    return 1;
+    return 0;
   }
 
-
-  fprintf(stderr, "%s:%d: %d slots; ctor %u - FAILED to detect the type\n", __FILE__, __LINE__, numslots, ctor);
+  fprintf(stderr, "%s:%d: %ld slots; ctor %lu - FAILED to detect the type\n", __FILE__, __LINE__, (long) numslots, (unsigned long) ctor);
   EXIT(1);
 }
 
@@ -204,9 +224,9 @@ void debug__print(void* prefix, void* any)
 }
 
 static char *anyStringBuf = 0;
-int anyStringBufSize = 0;
+mmc_sint_t anyStringBufSize = 0;
 
-inline static void checkAnyStringBufSize(int ix, int szNewObject)
+inline static void checkAnyStringBufSize(mmc_sint_t ix, mmc_sint_t szNewObject)
 {
   if (anyStringBufSize-ix < szNewObject+1) {
     anyStringBuf = realloc(anyStringBuf, anyStringBufSize*2 + szNewObject);
@@ -224,18 +244,18 @@ void initializeStringBuffer(void)
   *anyStringBuf = '\0';
 }
 
-inline static int anyStringWork(void* any, int ix)
+inline static mmc_sint_t anyStringWork(void* any, mmc_sint_t ix)
 {
   mmc_uint_t hdr;
-  int numslots;
-  unsigned int ctor;
-  int i;
+  mmc_sint_t numslots;
+  mmc_uint_t ctor;
+  mmc_sint_t i;
   void *data;
   /* char buf[34] = {0}; */
 
   if (MMC_IS_INTEGER(any)) {
     checkAnyStringBufSize(ix,40);
-    ix += sprintf(anyStringBuf+ix, "%ld", (signed long) MMC_UNTAGFIXNUM(any));
+    ix += sprintf(anyStringBuf+ix, "%ld", (mmc_sint_t) MMC_UNTAGFIXNUM(any));
     return ix;
   }
 
@@ -279,13 +299,13 @@ inline static int anyStringWork(void* any, int ix)
 
   if (numslots>0 && ctor == MMC_FREE_OBJECT_CTOR) { /* FREE OBJECT! */
     checkAnyStringBufSize(ix,100);
-    ix += sprintf(anyStringBuf+ix, "FREE(%d)", numslots);
+    ix += sprintf(anyStringBuf+ix, "FREE(%ld)", (long) numslots);
     return ix;
   }
   if (numslots>=0 && ctor == MMC_ARRAY_TAG) { /* MetaModelica-style array */
     checkAnyStringBufSize(ix,40);
     ix += sprintf(anyStringBuf+ix, "MetaArray(");
-    for (i=1; i<=numslots; i++) {
+    for (i = 1; i <= numslots; i++) {
       data = MMC_FETCH(MMC_OFFSET(MMC_UNTAGPTR(any),i));
       ix = anyStringWork(data, ix);
       if (i!=numslots) {
@@ -301,7 +321,7 @@ inline static int anyStringWork(void* any, int ix)
     struct record_description * desc = MMC_FETCH(MMC_OFFSET(MMC_UNTAGPTR(any),1));
     checkAnyStringBufSize(ix,strlen(desc->name)+2);
     ix += sprintf(anyStringBuf+ix, "%s(", desc->name);
-    for (i=2; i<=numslots; i++) {
+    for (i = 2; i <= numslots; i++) {
       data = MMC_FETCH(MMC_OFFSET(MMC_UNTAGPTR(any),i));
       checkAnyStringBufSize(ix,strlen(desc->fieldNames[i-2])+3);
       ix += sprintf(anyStringBuf+ix, "%s = ", desc->fieldNames[i-2]);
@@ -316,12 +336,12 @@ inline static int anyStringWork(void* any, int ix)
     return ix;
   }
 
-  if (numslots>0 && ctor == 0) { /* TUPLE */
+  if (numslots > 0 && ctor == 0) { /* TUPLE */
     checkAnyStringBufSize(ix,2);
     ix += sprintf(anyStringBuf+ix, "(");
-    for (i=0; i<numslots; i++) {
+    for (i = 0; i < numslots; i++) {
       ix = anyStringWork(MMC_FETCH(MMC_OFFSET(MMC_UNTAGPTR(any),i+1)),ix);
-      if (i!=numslots-1) {
+      if (i != numslots-1) {
         checkAnyStringBufSize(ix,3);
         ix += sprintf(anyStringBuf+ix, ", ");
       }
@@ -331,7 +351,7 @@ inline static int anyStringWork(void* any, int ix)
     return ix;
   }
 
-  if (numslots==0 && ctor==1) /* NONE() */ {
+  if (numslots == 0 && ctor == 1) /* NONE() */ {
     checkAnyStringBufSize(ix,7);
     ix += sprintf(anyStringBuf+ix, "NONE()");
     return ix;
@@ -362,7 +382,7 @@ inline static int anyStringWork(void* any, int ix)
     return ix;
   }
 
-  fprintf(stderr, "%s:%d: %d slots; ctor %u - FAILED to detect the type\n", __FILE__, __LINE__, numslots, ctor);
+  fprintf(stderr, "%s:%d: %ld slots; ctor %lu - FAILED to detect the type\n", __FILE__, __LINE__, (long) numslots, (unsigned long) ctor);
   /* fprintf(stderr, "object: %032s||", ltoa((int)hdr, buf, 2)); */
   checkAnyStringBufSize(ix,5);
   ix += sprintf(anyStringBuf+ix, "UNK(");
@@ -412,11 +432,11 @@ void printAny(void* any)
 
 static int globalId;
 
-inline static int anyStringWorkCode(void* any, int ix, int id)
+inline static mmc_sint_t anyStringWorkCode(void* any, mmc_sint_t ix, mmc_sint_t id)
 {
   mmc_uint_t hdr;
-  int numslots;
-  unsigned int ctor;
+  mmc_sint_t numslots;
+  mmc_uint_t ctor;
   int i;
   void *data;
   int base_id;
@@ -424,7 +444,7 @@ inline static int anyStringWorkCode(void* any, int ix, int id)
 
   if (MMC_IS_IMMEDIATE(any)) {
     checkAnyStringBufSize(ix,400);
-    ix += sprintf(anyStringBuf+ix, "#define omc_tmp%d ((void*)%ld)\n", id, (signed long) any);
+    ix += sprintf(anyStringBuf+ix, "#define omc_tmp%ld ((void*)%" PRINT_MMC_SINT_T ")\n", (long) id, (mmc_sint_t) any);
     return ix;
   }
 
@@ -436,13 +456,13 @@ inline static int anyStringWorkCode(void* any, int ix, int id)
 
   if (hdr == MMC_NILHDR) {
     checkAnyStringBufSize(ix,400);
-    ix += sprintf(anyStringBuf+ix, "#define omc_tmp%d (MMC_REFSTRUCTLIT(mmc_nil))\n", id);
+    ix += sprintf(anyStringBuf+ix, "#define omc_tmp%ld (MMC_REFSTRUCTLIT(mmc_nil))\n", (long) id);
     return ix;
   }
 
   if (hdr == MMC_REALHDR) {
     checkAnyStringBufSize(ix,500);
-    ix += sprintf(anyStringBuf+ix, "static const MMC_DEFREALLIT(omc_tmp%d_data,%g);\n#define omc_tmp%d MMC_REFREALLIT(omc_tmp%d_data)\n", id, (double) mmc_prim_get_real(any), id, id);
+    ix += sprintf(anyStringBuf+ix, "static const MMC_DEFREALLIT(omc_tmp%ld_data,%g);\n#define omc_tmp%ld MMC_REFREALLIT(omc_tmp%ld_data)\n", (long) id, (double) mmc_prim_get_real(any), (long) id, (long) id);
     return ix;
   }
   if (MMC_HDRISSTRING(hdr)) {
@@ -452,10 +472,10 @@ inline static int anyStringWorkCode(void* any, int ix, int id)
     unescapedLength = strlen(MMC_STRINGDATA(any));
     str = omc__escapedString(MMC_STRINGDATA(any), 1);
     checkAnyStringBufSize(ix,unescapedLength+800);
-    ix += sprintf(anyStringBuf+ix, "#define omc_tmp%d_data \"%s\"\n", id, str ? str : MMC_STRINGDATA(any));
-    ix += sprintf(anyStringBuf+ix, "static const size_t omc_tmp%d_strlen = %d;\n", id, unescapedLength);
-    ix += sprintf(anyStringBuf+ix, "static const MMC_DEFSTRINGLIT(omc_tmp%d_data2,%d,omc_tmp%d_data);\n", id, unescapedLength, id);
-    ix += sprintf(anyStringBuf+ix, "#define omc_tmp%d MMC_REFSTRINGLIT(omc_tmp%d_data2)\n", id, id);
+    ix += sprintf(anyStringBuf+ix, "#define omc_tmp%ld_data \"%s\"\n", (long) id, str ? str : MMC_STRINGDATA(any));
+    ix += sprintf(anyStringBuf+ix, "static const size_t omc_tmp%ld_strlen = %d;\n", (long) id, unescapedLength);
+    ix += sprintf(anyStringBuf+ix, "static const MMC_DEFSTRINGLIT(omc_tmp%ld_data2,%d,omc_tmp%ld_data);\n", (long) id, unescapedLength, (long) id);
+    ix += sprintf(anyStringBuf+ix, "#define omc_tmp%ld MMC_REFSTRINGLIT(omc_tmp%ld_data2)\n", (long) id, (long) id);
     if (str) free(str);
     return ix;
   }
@@ -489,12 +509,12 @@ inline static int anyStringWorkCode(void* any, int ix, int id)
       ix = anyStringWorkCode(data,ix,base_id+i-1);
     }
     checkAnyStringBufSize(ix,numslots*100+400);
-    ix += sprintf(anyStringBuf+ix, "static const MMC_DEFSTRUCTLIT(omc_tmp%d_data,%d,%u) {&%s__desc", id, numslots, ctor, desc->path);
+    ix += sprintf(anyStringBuf+ix, "static const MMC_DEFSTRUCTLIT(omc_tmp%ld_data,%ld,%lu) {&%s__desc", (long) id, (long) numslots, (unsigned long) ctor, desc->path);
     for (i=2; i<=numslots; i++) {
       ix += sprintf(anyStringBuf+ix, ",omc_tmp%d", base_id+i-1);
     }
     ix += sprintf(anyStringBuf+ix, "}};\n");
-    ix += sprintf(anyStringBuf+ix, "#define omc_tmp%d MMC_REFSTRUCTLIT(omc_tmp%d_data)\n", id, id);
+    ix += sprintf(anyStringBuf+ix, "#define omc_tmp%ld MMC_REFSTRUCTLIT(omc_tmp%ld_data)\n", (long) id, (long) id);
     return ix;
   }
 
@@ -505,12 +525,12 @@ inline static int anyStringWorkCode(void* any, int ix, int id)
     ix = anyStringWorkCode(data,ix,base_id+i);
   }
   checkAnyStringBufSize(ix,numslots*100+400);
-  ix += sprintf(anyStringBuf+ix, "static const MMC_DEFSTRUCTLIT(omc_tmp%d_data,%d,%u) {", id, numslots, ctor);
+  ix += sprintf(anyStringBuf+ix, "static const MMC_DEFSTRUCTLIT(omc_tmp%ld_data,%ld,%lu) {", (long) id, (long) numslots, (unsigned long) ctor);
   for (i=1; i<=numslots; i++) {
     ix += sprintf(anyStringBuf+ix, "%somc_tmp%d", i==1 ? "" : ",", base_id+i);
   }
   ix += sprintf(anyStringBuf+ix, "}};\n");
-  ix += sprintf(anyStringBuf+ix, "#define omc_tmp%d MMC_REFSTRUCTLIT(omc_tmp%d_data)\n", id, id);
+  ix += sprintf(anyStringBuf+ix, "#define omc_tmp%ld MMC_REFSTRUCTLIT(omc_tmp%ld_data)\n", (long) id, (long) id);
   return ix;
 }
 
@@ -626,14 +646,14 @@ void printTypeOfAny(void* any) /* for debugging */
   EXIT(1);
 }
 
-inline static int getTypeOfAnyWork(void* any, int ix)  /* for debugging */
+inline static int getTypeOfAnyWork(void* any, int ix, int inRecord)  /* for debugging */
 {
   mmc_uint_t hdr;
   int numslots;
   unsigned int ctor;
   int i;
 
-  if (any == NULL) {
+  if (any == NULL && !inRecord) {  // To handle integer inside Record.
     checkAnyStringBufSize(ix,21);
     ix += sprintf(anyStringBuf+ix, "%s", "replaceable type Any");
     return ix;
@@ -680,7 +700,7 @@ inline static int getTypeOfAnyWork(void* any, int ix)  /* for debugging */
   if (numslots>0 && ctor == MMC_ARRAY_TAG) {
     checkAnyStringBufSize(ix,7);
     ix += sprintf(anyStringBuf+ix, "Array<");
-    ix = getTypeOfAnyWork(MMC_FETCH(MMC_OFFSET(MMC_UNTAGPTR(any),1)), ix);
+    ix = getTypeOfAnyWork(MMC_FETCH(MMC_OFFSET(MMC_UNTAGPTR(any),1)), ix, inRecord);
     checkAnyStringBufSize(ix,2);
     ix += sprintf(anyStringBuf+ix, ">");
     return ix;
@@ -697,7 +717,7 @@ inline static int getTypeOfAnyWork(void* any, int ix)  /* for debugging */
     checkAnyStringBufSize(ix,7);
     ix += sprintf(anyStringBuf+ix, "tuple<");
     for (i=0; i<numslots; i++) {
-      ix = getTypeOfAnyWork(MMC_FETCH(MMC_OFFSET(MMC_UNTAGPTR(any),i+1)), ix);
+      ix = getTypeOfAnyWork(MMC_FETCH(MMC_OFFSET(MMC_UNTAGPTR(any),i+1)), ix, inRecord);
       if (i!=numslots-1) {
         checkAnyStringBufSize(ix,3);
         ix += sprintf(anyStringBuf+ix, ", ");
@@ -718,7 +738,7 @@ inline static int getTypeOfAnyWork(void* any, int ix)  /* for debugging */
     checkAnyStringBufSize(ix,8);
     ix += sprintf(anyStringBuf+ix, "Option<");
     for (i=0; i<numslots; i++) {
-      ix = getTypeOfAnyWork(MMC_FETCH(MMC_OFFSET(MMC_UNTAGPTR(any),i+1)), ix);
+      ix = getTypeOfAnyWork(MMC_FETCH(MMC_OFFSET(MMC_UNTAGPTR(any),i+1)), ix, inRecord);
       if (i!=numslots-1) {
         checkAnyStringBufSize(ix,3);
         ix += sprintf(anyStringBuf+ix, ", ");
@@ -732,7 +752,7 @@ inline static int getTypeOfAnyWork(void* any, int ix)  /* for debugging */
   if (numslots==2 && ctor==1) { /* CONS-PAIR */
     checkAnyStringBufSize(ix,6);
     ix += sprintf(anyStringBuf+ix, "list<");
-    ix = getTypeOfAnyWork(MMC_CAR(any), ix);
+    ix = getTypeOfAnyWork(MMC_CAR(any), ix, inRecord);
     checkAnyStringBufSize(ix,2);
     ix += sprintf(anyStringBuf+ix, ">");
     return ix;
@@ -742,10 +762,10 @@ inline static int getTypeOfAnyWork(void* any, int ix)  /* for debugging */
   return ix;
 }
 
-char* getTypeOfAny(void* any) /* for debugging */
+char* getTypeOfAny(void* any, int inRecord) /* for debugging */
 {
   initializeStringBuffer();
-  getTypeOfAnyWork(any,0);
+  getTypeOfAnyWork(any,0, inRecord);
   return anyStringBuf;
 }
 
@@ -819,19 +839,29 @@ char* getMetaTypeElement(modelica_metatype arr, modelica_integer i, metaType mt)
   }
 
   /* get the type of the element */
-  getTypeOfAny(name);
+  if (mt == record_metaType) {
+    getTypeOfAny(name, 1);
+  } else {
+    getTypeOfAny(name, 0);
+  }
   ty = malloc(strlen(anyStringBuf) + 1);
   strcpy(ty, anyStringBuf);
-
   /* format the anyStringBuf as array to return it */
-  if (mt == record_metaType) {
+  /* if Integer then unbox the pointer */
+  if (strcmp(ty, "Integer") == 0) {
+    name = (char*)anyString(name);
+    formatString = "^done,omc_element={name=\"%s\",displayName=\"%s\",type=\"%s\"}";
+    if (-1 == GC_asprintf(&formattedString, formatString, name, displayName, ty)) {
+      assert(0);
+    }
+  } else if (mt == record_metaType) {
     formatString = "^done,omc_element={name=\"%ld\",displayName=\"%s\",type=\"%s\"}";
-    if (-1 == GC_asprintf(&formattedString, formatString, (long)name, displayName, ty)) {
+    if (-1 == GC_asprintf(&formattedString, formatString, (mmc_uint_t)name, displayName, ty)) {
       assert(0);
     }
   } else {
     formatString = "^done,omc_element={name=\"%ld\",displayName=\"[%d]\",type=\"%s\"}";
-    if (-1 == GC_asprintf(&formattedString, formatString, (long)name, (int)i, ty)) {
+    if (-1 == GC_asprintf(&formattedString, formatString, (mmc_uint_t)name, (int)i, ty)) {
       assert(0);
     }
   }
@@ -852,7 +882,7 @@ char* getMetaTypeElement(modelica_metatype arr, modelica_integer i, metaType mt)
   return anyStringBuf;
 }
 
-static inline unsigned long djb2_hash_iter(const unsigned char *str /* data; not null-terminated */, int len, unsigned long hash /* start at 5381 */)
+static inline mmc_uint_t djb2_hash_iter(const unsigned char *str /* data; not null-terminated */, int len, mmc_uint_t hash /* start at 5381 */)
 {
   int i;
   for (i=0; i<len; i++) {
@@ -861,15 +891,15 @@ static inline unsigned long djb2_hash_iter(const unsigned char *str /* data; not
   return hash;
 }
 
-unsigned long mmc_prim_hash(void *p,unsigned long hash /* start at 5381 */)
+mmc_uint_t mmc_prim_hash(void *p, mmc_uint_t hash /* start at 5381 */)
 {
   mmc_uint_t phdr = 0;
 
   mmc_prim_hash_tail_recur:
   if (MMC_IS_INTEGER(p))
   {
-    unsigned long l = (unsigned long)MMC_UNTAGFIXNUM(p);
-    return djb2_hash_iter((unsigned char*)&l, sizeof(unsigned long), hash);
+    mmc_uint_t l = (mmc_uint_t)MMC_UNTAGFIXNUM(p);
+    return djb2_hash_iter((unsigned char*)&l, sizeof(mmc_uint_t), hash);
   }
 
   phdr = MMC_GETHDR(p);
@@ -905,26 +935,11 @@ unsigned long mmc_prim_hash(void *p,unsigned long hash /* start at 5381 */)
 
 modelica_integer valueHashMod(void *p, modelica_integer mod)
 {
-  modelica_integer res = mmc_prim_hash(p,5381) % (unsigned long) mod;
+  modelica_integer res = mmc_prim_hash(p,5381) % (mmc_uint_t) mod;
   return res;
 }
 
 void* boxptr_valueHashMod(threadData_t *threadData,void *p, void *mod)
 {
-  return mmc_mk_icon(mmc_prim_hash(p,5381) % (unsigned long) mmc_unbox_integer(mod));
-}
-
-pthread_once_t mmc_init_once = PTHREAD_ONCE_INIT;
-
-void mmc_init_nogc()
-{
-  pthread_key_create(&mmc_thread_data_key,NULL);
-  init_metamodelica_segv_handler();
-  MMC_INIT_STACK_OVERFLOW();
-}
-
-void mmc_init(int withgc)
-{
-  mmc_init_nogc();
-  mmc_GC_init();
+  return mmc_mk_icon(mmc_prim_hash(p,5381) % (mmc_uint_t) mmc_unbox_integer(mod));
 }

@@ -34,7 +34,6 @@ encapsulated package NFSCodeCheck
   package:     NFSCodeCheck
   description: SCode checking
 
-  RCS: $Id$
 
   This module checks the SCode representation for conformance "
 
@@ -49,6 +48,8 @@ protected import Error;
 protected import Flags;
 protected import NFInstDump;
 protected import SCodeDump;
+
+import NFSCodeEnv.EnvTree;
 
 public function checkRecursiveShortDefinition
   input Absyn.TypeSpec inTypeSpec;
@@ -300,7 +301,7 @@ protected function checkCompRedeclarationReplaceable
   input SourceInfo inOriginInfo;
   input SourceInfo inInfo;
 algorithm
-  _ := matchcontinue(inName, inReplaceable, inType1, inType2, inOriginInfo, inInfo)
+  _ := match(inName, inReplaceable, inType1, inType2, inOriginInfo, inInfo)
     local
       SCode.Element var;
       Absyn.TypeSpec ty1, ty2;
@@ -308,9 +309,8 @@ algorithm
     case (_, SCode.REPLACEABLE(), _, _, _, _) then ();
 
     case (_, SCode.NOT_REPLACEABLE(), _, _, _, _)
-      equation
-        true = Absyn.pathEqual(Absyn.typeSpecPath(inType1),
-                               Absyn.typeSpecPath(inType2));
+      guard Absyn.pathEqual(Absyn.typeSpecPath(inType1),
+                            Absyn.typeSpecPath(inType2))
       then
         ();
 
@@ -321,7 +321,7 @@ algorithm
           {"component", inName}, inInfo);
       then
         ();
-  end matchcontinue;
+  end match;
 end checkCompRedeclarationReplaceable;
 
 protected function checkRedeclarationFinal
@@ -398,10 +398,8 @@ public function checkValidEnumLiteral
   input String inLiteral;
   input SourceInfo inInfo;
 algorithm
-  _ := matchcontinue(inLiteral, inInfo)
-    case (_, _)
-      equation
-        false = listMember(inLiteral, {"quantity", "min", "max", "start", "fixed"});
+  _ := match(inLiteral, inInfo)
+    case (_, _) guard not listMember(inLiteral, {"quantity", "min", "max", "start", "fixed"})
       then ();
 
     else
@@ -409,7 +407,7 @@ algorithm
         Error.addSourceMessage(Error.INVALID_ENUM_LITERAL, {inLiteral}, inInfo);
       then
         fail();
-  end matchcontinue;
+  end match;
 end checkValidEnumLiteral;
 
 public function checkDuplicateRedeclarations
@@ -478,7 +476,7 @@ algorithm
       inComponentEnv)
     local
       String cls_name, ty_name;
-      NFSCodeEnv.AvlTree tree;
+      EnvTree.Tree tree;
       SCode.Element el;
 
     // No environment means one of the basic types.
@@ -496,7 +494,7 @@ algorithm
     case (_, _, _, _, NFSCodeEnv.FRAME(name = SOME(cls_name)) ::
         NFSCodeEnv.FRAME(clsAndVars = tree) :: _)
       equation
-        NFSCodeEnv.CLASS(cls = el) = NFSCodeEnv.avlTreeGet(tree, cls_name);
+        NFSCodeEnv.CLASS(cls = el) = EnvTree.get(tree, cls_name);
         true = SCode.isFunction(el);
       then
         ();

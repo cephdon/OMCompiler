@@ -34,7 +34,6 @@ encapsulated package FLookup
   package:     FLookup
   description: Scoping rules
 
-  RCS: $Id: FLookup.mo 18328 2013-11-28 03:05:41Z vitalij $
 
 "
 
@@ -350,8 +349,8 @@ algorithm
       equation
         refs = FNode.extendsRefs(inRef);
         false = listEmpty(refs);
-        refs = List.map(List.map(refs, FNode.fromRef), FNode.target);
-        // print("Searching for: " + inName + " in extends targets:\n\t" + stringDelimitList(List.map(List.map(refs, FNode.fromRef), FNode.toPathStr), "\n\t") + "\n");
+        refs = List.mapMap(refs, FNode.fromRef, FNode.target);
+        // print("Searching for: " + inName + " in extends targets:\n\t" + stringDelimitList(List.mapMap(refs, FNode.fromRef, FNode.toPathStr), "\n\t") + "\n");
         (g, r) = search(g, refs, inName, ignoreParentsAndImports, inMsg);
       then
         (g, r);
@@ -429,7 +428,7 @@ algorithm
     case (g, _, _, Absyn.NAMED_IMPORT(name = name, path = path) :: _, _, _)
       equation
         true = stringEqual(inName, name);
-        (g, r) = fq(g, inRef, path, inOptions, inMsg);
+        (g, r) = fq(g, path, inOptions, inMsg);
       then
         (g, r);
 
@@ -469,7 +468,7 @@ algorithm
     case (g, _, _, Absyn.UNQUAL_IMPORT(path = path) :: _, _, _)
       equation
         // Look up the import path.
-        (g, r) = fq(g, inRef, path, inOptions, inMsg);
+        (g, r) = fq(g, path, inOptions, inMsg);
         // Look up the name among the public member of the found package.
         (g, r) = id(g, r, inName, ignoreParents, inMsg);
       then
@@ -487,7 +486,6 @@ end imp_unqual;
 public function fq
 "Looks up a fully qualified path in ref"
   input Graph inGraph;
-  input Ref inRef;
   input Absyn.Path inName;
   input Options inOptions;
   input Msg inMsg "Message flag, SOME() outputs lookup error messages";

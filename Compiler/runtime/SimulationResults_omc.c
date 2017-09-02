@@ -28,6 +28,11 @@
  *
  */
 
+#if defined(_MSC_VER) || defined(__MINGW32__)
+ #define WIN32_LEAN_AND_MEAN
+ #include <windows.h>
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -65,6 +70,12 @@ double SimulationResults_val(const char *filename, const char *varname, double t
 void* SimulationResults_cmpSimulationResults(int runningTestsuite, const char *filename,const char *reffilename,const char *logfilename, double refTol, double absTol, void *vars)
 {
   return SimulationResultsCmp_compareResults(1,runningTestsuite,filename,reffilename,logfilename,refTol,absTol,0,0,vars,0,NULL,0,NULL);
+}
+
+double SimulationResults_deltaSimulationResults(const char *filename,const char *reffilename, const char *methodname, void *vars)
+{
+  double res = SimulationResultsCmp_deltaResults(filename,reffilename,methodname,vars);
+  return res;
 }
 
 void* SimulationResults_diffSimulationResults(int runningTestsuite, const char *filename,const char *reffilename,const char *logfilename, double refTol, double reltolDiffMaxMin, double rangeDelta, void *vars, int keepEqualResults, int *success)

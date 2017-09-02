@@ -1,15 +1,15 @@
-cmake_minimum_required (VERSION 2.8.6)
+cmake_minimum_required (VERSION 2.8.9)
 
 project(${ModelicaName})
 
-#FIX RUNTIME_STATIC_LINKING
-add_library(${ModelicaName}_static STATIC Modelica.cpp )
-target_link_libraries (${ModelicaName}_static ${Boost_LIBRARIES})
-set_target_properties(${ModelicaName}_static PROPERTIES COMPILE_DEFINITIONS "RUNTIME_STATIC_LINKING")
-include_directories(${SUNDIALS_INCLUDE_DIR}/cvodes ${SUNDIALS_INCLUDE_DIR}/nvector  ${SUNDIALS_INCLUDE_DIR}/sundials ${SUNDIALS_INCLUDE_DIR})
+# this library is only for the precompiled header
+add_library( ${ModelicaName}  STATIC Modelica.cpp)
 
-add_library(${ModelicaName} SHARED Modelica.cpp)
-target_link_libraries (${ModelicaName} ${Boost_LIBRARIES})
+if(NOT BUILD_SHARED_LIBS)
+  set_target_properties(${ModelicaName} PROPERTIES COMPILE_DEFINITIONS "RUNTIME_STATIC_LINKING")
+endif(NOT BUILD_SHARED_LIBS)
+
+target_link_libraries(${ModelicaName} ${Boost_LIBRARIES})
 
 GET_TARGET_PROPERTY(libModelicaSystem ${ModelicaName} LOCATION)
 GET_FILENAME_COMPONENT(libModelicaSystemNameExt ${libModelicaSystem} EXT)
@@ -80,7 +80,7 @@ IF(CMAKE_BUILD_TYPE)
 				IF(${f} MATCHES "optimized")
 					SET(SKIP_ENTRY ON)
 				ELSEIF(${f} MATCHES "debug")
-				
+
 				ELSE(${f} MATCHES "optimized")
 					LIST(APPEND Boost_LIBRARIES_NEW ${f})
 				ENDIF(${f} MATCHES "optimized")
@@ -96,7 +96,7 @@ IF(CMAKE_BUILD_TYPE)
 				IF(${f} MATCHES "debug")
 					SET(SKIP_ENTRY ON)
 				ELSEIF(${f} MATCHES "optimized")
-				
+
 				ELSE(${f} MATCHES "debug")
 					LIST(APPEND Boost_LIBRARIES_NEW ${f})
 				ENDIF(${f} MATCHES "debug")
@@ -112,9 +112,14 @@ ENDIF(CMAKE_BUILD_TYPE)
 
 IF(WIN32)
 	SET(Boost_LIBS_ "$(OMHOME)/bin")
-	SET(Boost_INCLUDE_ "$(OMHOME)/include/omc/cpp")
+	IF(MSVC)
+		SET(Boost_INCLUDE_ "$(OMHOME)/include/omc/cpp/3rdParty/boost/msvc/")
+	ELSE(MSVC)
+		SET(Boost_INCLUDE_ "$(OMHOME)/include/omc/cpp/3rdParty/boost/gcc/")
+	ENDIF(MSVC)
+
 	SET(SUNDIALS_LIBS_ "$(OMHOME)/bin")
-	SET(SUNDIALS_INCLUDE_DIR_ "$(OMHOME)/include/omc/cpp")
+	SET(SUNDIALS_INCLUDE_DIR_ "$(OMHOME)/include/omc/cpp/sundials")
 	SET(LAPACK_LIBS_ "$(OMHOME)/bin")
 ELSE(WIN32)
 	IF("${Boost_LIBRARY_DIR}" STREQUAL "")
@@ -122,7 +127,9 @@ ELSE(WIN32)
 	ELSE()
 		SET(Boost_LIBS_ ${Boost_LIBRARY_DIR})
 	ENDIF()
-	IF("${Boost_INCLUDE_DIR}" STREQUAL "")
+	IF("${Boost_INCLUDE_DIR}" STREQUAL "" OR
+	   "${Boost_INCLUDE_DIR}" STREQUAL "/usr/include")
+		# standard /usr/include collides with cross compilation
 		SET(Boost_INCLUDE_ ".")
 	ELSE()
 		SET(Boost_INCLUDE_ ${Boost_INCLUDE_DIR})
@@ -132,7 +139,9 @@ ELSE(WIN32)
 	ELSE()
 		SET(SUNDIALS_LIBS_ ${SUNDIALS_LIBS})
 	ENDIF()
-	IF("${SUNDIALS_INCLUDE_DIR}" STREQUAL "")
+	IF("${SUNDIALS_INCLUDE_DIR}" STREQUAL "" OR
+	   "${SUNDIALS_INCLUDE_DIR}" STREQUAL "/usr/include")
+		# standard /usr/include collides with cross compilation
 		SET(SUNDIALS_INCLUDE_DIR_ ".")
 	ELSE()
 		SET(SUNDIALS_INCLUDE_DIR_ ${SUNDIALS_INCLUDE_DIR})
@@ -187,9 +196,11 @@ FOREACH(lib ${LAPACK_LIBRARIES})
 ENDFOREACH(lib ${LAPACK_LIBRARIES})
 
 SET(INTEL_TBB_LIBS "")
-foreach(lib ${TBB_LIBRARIES})
-	set(INTEL_TBB_LIBS "${INTEL_TBB_LIBS} ${lib}")
-endforeach(lib ${TBB_LIBRARIES})
+FOREACH(lib ${TBB_LIBRARIES})
+	GET_FILENAME_COMPONENT(libNew "${lib}" NAME_WE)
+	STRING(REGEX REPLACE "^lib" "" libNew ${libNew})
+	set(INTEL_TBB_LIBS "${INTEL_TBB_LIBS} ${LINKER_LIB_PREFIX}${libNew}")
+ENDFOREACH(lib ${TBB_LIBRARIES})
 
 SET(UMFPACK_LIBS "")
 FOREACH(lib ${SUITESPARSE_UMFPACK_LIBRARIES_OMC})
@@ -214,8 +225,14 @@ MESSAGE(STATUS "--UMFPACK_INCLUDE = ${UMFPACK_INCLUDE_}")
 MESSAGE(STATUS "--UMFPACK_LIBRARIES = ${UMFPACK_LIBRARIES_}")
 MESSAGE(STATUS " ")
 
-create_precompiled_header(${ModelicaName} Include/Core/Modelica.h )
+if(BUILD_SHARED_LIBS)
+  create_precompiled_header(${ModelicaName} Include/Core/Modelica.h)
+endif(BUILD_SHARED_LIBS)
+
 IF(MSVC)
+ GET_TARGET_PROPERTY(libModelica ${ModelicaName} LOCATION)
+ GET_FILENAME_COMPONENT(libModelicaName ${libModelica} NAME)
+ set(PCH_LIB ${libModelicaName})
  configure_file (
   "ModelicaConfig_msvc.inc.in"
   "${PROJECT_BINARY_DIR}/ModelicaConfig_msvc.inc"
@@ -223,6 +240,14 @@ IF(MSVC)
   install (FILES
 				${PROJECT_BINARY_DIR}/ModelicaConfig_msvc.inc
 				DESTINATION include/omc/cpp)
+
+  configure_file (
+   "ModelicaLibraryConfig_msvc.inc.in"
+   "${PROJECT_BINARY_DIR}/ModelicaLibraryConfig_msvc.inc"
+   )
+  install (FILES
+  				${PROJECT_BINARY_DIR}/ModelicaLibraryConfig_msvc.inc
+  				DESTINATION include/omc/cpp)
 ENDIF(MSVC)
 
 IF("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU" OR "${CMAKE_CXX_COMPILER_ID}" STREQUAL "Intel" OR "${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang")
@@ -232,21 +257,21 @@ configure_file (
   )
 install (FILES
 				${PROJECT_BINARY_DIR}/ModelicaConfig_gcc.inc
-				DESTINATION include/omc/cpp)  
-ENDIF("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU" OR "${CMAKE_CXX_COMPILER_ID}" STREQUAL "Intel" OR "${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang")
-
-configure_file (
- "ModelicaLibraryConfig.inc.in"
- "${PROJECT_BINARY_DIR}/ModelicaLibraryConfig.inc"
- )
-install (FILES
-				${PROJECT_BINARY_DIR}/ModelicaLibraryConfig.inc
 				DESTINATION include/omc/cpp)
 
+  configure_file (
+   "ModelicaLibraryConfig_gcc.inc.in"
+   "${PROJECT_BINARY_DIR}/ModelicaLibraryConfig_gcc.inc"
+   )
+  install (FILES
+  				${PROJECT_BINARY_DIR}/ModelicaLibraryConfig_gcc.inc
+  				DESTINATION include/omc/cpp)
+ENDIF("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU" OR "${CMAKE_CXX_COMPILER_ID}" STREQUAL "Intel" OR "${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang")
 
-              
-                
-install (FILES  ${CMAKE_SOURCE_DIR}/Include/Core/HistoryImpl.h  ${CMAKE_SOURCE_DIR}/Include/Core/Modelica.h ${CMAKE_SOURCE_DIR}/Include/Core/ModelicaDefine.h DESTINATION include/omc/cpp/Core)
+
+
+install(TARGETS ${ModelicaName} DESTINATION ${LIBINSTALLEXT})
+install (FILES  ${CMAKE_SOURCE_DIR}/Include/Core/Modelica.h ${CMAKE_SOURCE_DIR}/Include/Core/ModelicaDefine.h DESTINATION include/omc/cpp/Core)
 install (FILES  ${CMAKE_SOURCE_DIR}/Include/Core/DataExchange/Policies/TextfileWriter.h DESTINATION include/omc/cpp/Core/DataExchange/Policies)
 install (FILES  ${CMAKE_SOURCE_DIR}/Include/Core/DataExchange/Policies/MatfileWriter.h DESTINATION include/omc/cpp/Core/DataExchange/Policies)
 install (FILES  ${CMAKE_SOURCE_DIR}/Include/Core/DataExchange/Policies/BufferReaderWriter.h DESTINATION include/omc/cpp/Core/DataExchange/Policies)

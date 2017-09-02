@@ -3,18 +3,6 @@
  *  Core module for all algebraic and ode systems
  *  @{
  */
-/*includes removed for static linking not needed any more
-#ifdef RUNTIME_STATIC_LINKING
-#include <Core/Math/Functions.h>
-#include <Core/System/EventHandling.h>
-#include <boost/any.hpp>
-#include <boost/unordered_map.hpp>
-#include <boost/circular_buffer.hpp>
-#include <iostream>
-#include <Core/System/IContinuous.h>
-#include <Core/SimulationSettings/IGlobalSettings.h>
-#endif
-*/
 /*****************************************************************************/
 /**
 
@@ -36,27 +24,26 @@ for Open Modelica", September, 10 th, 2008
 Copyright (c) 2008, OSMC
 *****************************************************************************/
 
-//typedef boost::unordered_map<std::string, boost::any> SValuesMap;
+#define MODELICA_TERMINATE(msg) Terminate(msg)
+
+//typedef unordered_map<std::string, boost::any> SValuesMap;
 
 template <class T>
 class InitVars
 {
 public:
-  void setStartValue(T& variable,T val);
+  void setStartValue(T& variable,T val,bool overwriteOldValue);
   T& getGetStartValue(T& variable);
 
 private:
-  boost::unordered_map<T*, T> _start_values;
+  unordered_map<T*, T> _start_values;
 };
-/*
-#ifdef RUNTIME_STATIC_LINKING
-class SystemDefaultImplementation
-#else*/
+
 class BOOST_EXTENSION_SYSTEM_DECL SystemDefaultImplementation
-/*#endif*/
 {
 public:
-  SystemDefaultImplementation(IGlobalSettings* globalSettings,boost::shared_ptr<ISimData> sim_data, boost::shared_ptr<ISimVars> sim_vars);
+  SystemDefaultImplementation(IGlobalSettings* globalSettings, shared_ptr<ISimObjects> sim_objects, string modelName);
+  SystemDefaultImplementation(SystemDefaultImplementation &instance);
   virtual ~SystemDefaultImplementation();
 
   /// Provide number (dimension) of boolean variables
@@ -64,7 +51,7 @@ public:
 
   /// Provide number (dimension) of states
   virtual int getDimContinuousStates() const;
-
+  virtual int getDimAE() const;
   /// Provide number (dimension) of integer variables
   virtual int getDimInteger() const;
 
@@ -73,6 +60,9 @@ public:
 
   /// Provide number (dimension) of string variables
   virtual int getDimString() const;
+
+  /// Provide number (dimension) of clocks
+  virtual int getDimClock() const;
 
   /// Provide number (dimension) of right hand sides (equations and/or residuals) according to the index
   virtual int getDimRHS() const;
@@ -89,14 +79,24 @@ public:
   /// Provide real variables
   virtual void getReal(double* z);
 
-  /// Provide real variables
+  /// Provide string variables
   virtual void getString(std::string* z);
+
+  /// Provide clocks
+  virtual void getClock(bool* z);
+
+  /// Provide clock intervals
+  virtual double *clockInterval();
+
+  /// Provide clock shifts
+  virtual double *clockShift();
 
   /// Provide the right hand side
   virtual void getRHS(double* f);
-
+  virtual void getResidual(double* f);
   virtual void  setConditions(bool* c);
   virtual void getConditions(bool* c);
+  virtual void getClockConditions(bool* c);
   /// Provide boolean variables
   virtual void setBoolean(const bool* z);
 
@@ -109,19 +109,46 @@ public:
   /// Provide real variables
   virtual void setReal(const double* z);
 
-  /// Provide real variables
+  /// Provide string variables
   virtual void setString(const std::string* z);
 
+  /// Provide clocks
+  virtual void setClock(const bool* tick, const bool* subactive);
+
   /// Provide the right hand side
-  virtual void setRHS(const double* f);
+  virtual void setStateDerivatives(const double* f);
 
   /// (Re-) initialize the system of equations
   void initialize();
   /// Set current integration time
   void setTime(const double& t);
+  double getTime();
 
   IGlobalSettings* getGlobalSettings();
 
+  shared_ptr<ISimObjects> getSimObjects() const;
+  string getModelName() const;
+
+  shared_ptr<ISimData> getSimData();
+  shared_ptr<ISimVars> getSimVars();
+
+  double computeNextTimeEvents(double currTime, std::pair<double, double>* timeEventPairs);
+  void computeTimeEventConditions(double currTime);
+  void setIntervalInTimEventData(int clockIdx, double interval);
+  void resetTimeConditions();
+
+  virtual double& getRealStartValue(double& var);
+  virtual bool& getBoolStartValue(bool& var);
+  virtual int& getIntStartValue(int& var);
+  virtual string& getStringStartValue(string& var);
+  virtual void setRealStartValue(double& var,double val);
+  virtual void setRealStartValue(double& var,double val,bool overwriteOldValue);
+  virtual void setBoolStartValue(bool& var,bool val);
+  virtual void setBoolStartValue(bool& var,bool val,bool overwriteOldValue);
+  virtual void setIntStartValue(int& var,int val);
+  virtual void setIntStartValue(int& var,int val,bool overwriteOldValue);
+  virtual void setStringStartValue(string& var,string val);
+  virtual void setStringStartValue(string& var,string val,bool overwriteOldValue);
 protected:
     void Assert(bool cond, const string& msg);
     void Terminate(string msg);
@@ -131,20 +158,15 @@ protected:
     double delay(unsigned int expr_id,double expr_value, double delayTime, double delayMax);
     bool isConsistent();
 
-    double& getRealStartValue(double& var);
-    bool& getBoolStartValue(bool& var);
-    int& getIntStartValue(int& var);
-    string& getStringStartValue(string& var);
-    void setRealStartValue(double& var,double val);
-    void setBoolStartValue(bool& var,bool val);
-    void setIntStartValue(int& var,int val);
-    void setStringStartValue(string& var,string val);
+    shared_ptr<ISimObjects> _simObjects;
+
     double
         _simTime;             ///< current simulation time (given by the solver)
 
 
     bool
-        * _conditions,        ///< External conditions changed by the solver
+        * _conditions,   ///< External conditions changed by the solver
+        * _conditions0,
         * _time_conditions;
 
     int
@@ -156,10 +178,19 @@ protected:
         _dimString,           ///< Anzahl der stringwertigen Variablen
         _dimZeroFunc,         ///< Dimension (=Anzahl) Nullstellenfunktion
         _dimTimeEvent,        ///< Dimension (=Anzahl) Time event (start zeit und frequenz)
+        _dimClock,            ///< Dimension (=Anzahl) Clocks (active)
         _dimAE;               ///< Number (dimension) of algebraic equations (e.g. constraints from an algebraic loop)
 
-    int
-    * _time_event_counter;
+    std::pair<double, double>*
+        _timeEventData;
+    double* _currTimeEvents;
+
+    double *_clockInterval;   ///< time interval between clock ticks
+    double *_clockShift;      ///< time before first activation
+    double *_clockTime;       ///< time of clock ticks
+    bool *_clockCondition;    ///< clock tick active
+    bool *_clockStart;        ///< only active at clock start
+    bool *_clockSubactive;    ///< don't update states
     std::ostream *_outputStream;        ///< Output stream for results
 
     IContinuous::UPDATETYPE _callType;
@@ -175,15 +206,19 @@ protected:
     InitVars<string> _string_start_values;
    double
         *__z,                 ///< "Extended state vector", containing all states and algebraic variables of all types
-        *__zDot;              ///< "Extended vector of derivatives", containing all right hand sides of differential and algebraic equations
-
-    typedef boost::circular_buffer<double> buffer_type;
+        *__zDot,              ///< "Extended vector of derivatives", containing all right hand sides of differential and algebraic equations
+      *__daeResidual;
+    typedef std::deque<double> buffer_type;
+    typedef std::iterator_traits<buffer_type::iterator>::difference_type difference_type;
     map<unsigned int, buffer_type> _delay_buffer;
     buffer_type _time_buffer;
     double _delay_max;
     double _start_time;
-    boost::shared_ptr<ISimData> _sim_data;
-    boost::shared_ptr<ISimVars> _sim_vars;
     IGlobalSettings* _global_settings; //this should be a reference, but this is not working if the libraries are linked statically
+    IEvent* _event_system; //this pointer to event system
+    string _modelName;
+
+  bool _sparse;
+  bool _useAnalyticalJacobian;
 };
 /** @} */ // end of coreSystem

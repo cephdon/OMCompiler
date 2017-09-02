@@ -34,7 +34,6 @@ encapsulated package FGraph
   package:     FGraph
   description: Graph of program
 
-  RCS: $Id: FGraph.mo 19292 2014-02-25 06:23:22Z adrpo $
 
 "
 
@@ -47,7 +46,6 @@ import Prefix;
 import ClassInf;
 import FCore;
 import FNode;
-import FVisit;
 import InnerOuter;
 
 protected
@@ -62,6 +60,7 @@ import Config;
 import PrefixUtil;
 import Flags;
 import SCodeDump;
+import MetaModelica.Dangerous;
 import Mod;
 import Error;
 import ComponentReference;
@@ -77,9 +76,11 @@ type Data = FCore.Data;
 type Kind = FCore.Kind;
 type Ref = FCore.Ref;
 type Refs = FCore.Refs;
+type RefTree = FCore.RefTree;
 type Children = FCore.Children;
 type Parents = FCore.Parents;
 type Scope = FCore.Scope;
+type Top = FCore.Top;
 type Graph = FCore.Graph;
 type Extra = FCore.Extra;
 type Visited = FCore.Visited;
@@ -92,7 +93,9 @@ public function top
   input Graph inGraph;
   output Ref outRef;
 algorithm
-  FCore.G(top = outRef) := inGraph;
+  outRef := match inGraph
+    case FCore.G() then inGraph.top.node;
+  end match;
 end top;
 
 public function extra
@@ -100,7 +103,9 @@ public function extra
   input Graph inGraph;
   output Extra outExtra;
 algorithm
-  FCore.G(extra = outExtra) := inGraph;
+  outExtra := match inGraph
+    case FCore.G() then inGraph.top.extra;
+  end match;
 end extra;
 
 public function currentScope
@@ -122,23 +127,34 @@ algorithm
   outRef := listHead(currentScope(inGraph));
 end lastScopeRef;
 
+public function setLastScopeRef
+  input Ref inRef;
+  input Graph inGraph;
+  output Graph outGraph = inGraph;
+algorithm
+  outGraph := match outGraph
+    case FCore.G()
+      algorithm
+        outGraph.scope := inRef :: listRest(outGraph.scope);
+      then
+        outGraph;
+
+    else outGraph;
+  end match;
+end setLastScopeRef;
+
 public function stripLastScopeRef
 "remove the last ref from the current scope the graph"
   input Graph inGraph;
   output Graph outGraph;
   output Ref outRef;
 protected
-  Ref t;
+  Top t;
   Scope s;
-  Name gn;
-  Visited v;
-  Extra e;
-  Next next;
 algorithm
-  FCore.G(gn, t, s, v, e, next) := inGraph;
+  FCore.G(t, outRef::s) := inGraph;
   // strip the last scope ref
-  outRef::s := s;
-  outGraph := FCore.G(gn, t, s, v, e, next);
+  outGraph := FCore.G(t, s);
 end stripLastScopeRef;
 
 public function topScope
@@ -153,19 +169,11 @@ protected
   Extra e;
   Next next;
 algorithm
-  FCore.G(gn, t, s, v, e, next) := inGraph;
   // leave only the top scope
-  s := {t};
-  outGraph := FCore.G(gn, t, s, v, e, next);
+  outGraph := match inGraph
+    case FCore.G() then arrayGet(inGraph.top.graph, 1);
+  end match;
 end topScope;
-
-public function visited
-"get the visited info from the graph"
-  input Graph inGraph;
-  output Visited outVisited;
-algorithm
-  FCore.G(visited = outVisited) := inGraph;
-end visited;
 
 public function empty
 "make an empty graph"
@@ -186,63 +194,20 @@ protected
   Ref nr;
   Next next;
   Id id;
+  array<Graph> ag;
+  Top top;
 algorithm
   id := System.tmpTickIndex(Global.fgraph_nextId);
   n := FNode.new(FNode.topNodeName, id, {}, FCore.TOP());
   nr := FNode.toRef(n);
-  v := FVisit.new();
-  next := FCore.next(id);
   s := {nr};
-  outGraph := FCore.G(inGraphName,nr,s,v,FCore.EXTRA(inPath),next);
+  ag := Dangerous.arrayCreateNoInit(1, emptyGraph);
+  top := FCore.GTOP(ag,inGraphName,nr,FCore.EXTRA(inPath));
+  outGraph := FCore.G(top,s);
+  // Creates a cycle, but faster to get the initial environment
+  arrayUpdate(ag, 1, FCore.G(top, {nr}));
   FGraphStream.node(n);
 end new;
-
-public function visit
-"@autor: adrpo
- add the node to visited"
-  input Graph inGraph;
-  input Ref inRef;
-  output Graph outGraph;
-protected
-  Ref t;
-  Scope s;
-  Name gn;
-  Visited v;
-  Extra e;
-  Next next;
-algorithm
-  FCore.G(gn, t, s, v, e, next) := inGraph;
-  v := FVisit.visit(v, inRef);
-  outGraph := FCore.G(gn, t, s, v, e, next);
-end visit;
-
-public function nextId
-"@author:adrpo
- return the current FCore.G.next and then increments it"
-  input Graph inGraph;
-  output Graph outGraph;
-  output Id id;
-protected
-  Ref top;
-  Scope scope;
-  Name name;
-  Visited visited;
-  Extra extra;
-  Next next;
-algorithm
-  FCore.G(name = name, top = top, scope = scope, visited = visited, extra = extra, next = next) := inGraph;
-  id := next;
-  next := FCore.next(next);
-  outGraph := FCore.G(name, top, scope, visited, extra, next);
-end nextId;
-
-public function lastId
-"get the last id from the graph"
-  input Graph graph;
-  output Next next;
-algorithm
-  FCore.G(next = next) := graph;
-end lastId;
 
 public function node
 "make a new node in the graph"
@@ -263,7 +228,6 @@ algorithm
 
     case (g, _, _, _)
       equation
-        (g,_) = nextId(g);
         i = System.tmpTickIndex(Global.fgraph_nextId);
         n = FNode.new(inName, i, inParents, inData);
         FGraphStream.node(n);
@@ -288,27 +252,30 @@ algorithm
   outGraph := match(inGraph)
     local
       Graph g;
-      Ref t, nt;
+      Top t;
+      Ref nt;
       Name gn;
       Scope s;
       Visited v;
       Extra e;
       Next n "next node id for this graph";
+      array<Graph> ag;
 
-    case (FCore.G(gn, t, s, v, e, n))
+    case FCore.G(t, s)
       equation
         // make a new top
-        nt = FNode.toRef(FNode.fromRef(t));
-        v = FVisit.new();
+        nt = FNode.toRef(FNode.fromRef(t.node));
         // make new graph
-        g = FCore.G(gn, nt, s, v, e, n);
+        // g = FCore.G(t, s);
         // deep copy the top, clone the entire subtree, update references
-        (g, t) = FNode.copyRef(t, g);
+        (g, nt) = FNode.copyRef(nt, inGraph);
         // update scope references
-        s = List.map1r(s, FNode.lookupRefFromRef, t);
-        g = FCore.G(gn, t, s, v, e, n);
-      then
-        g;
+        s = List.map1r(s, FNode.lookupRefFromRef, nt);
+        ag = arrayCreate(1, emptyGraph);
+        t = FCore.GTOP(ag, t.name, nt, t.extra);
+        g = FCore.G(t, s);
+        arrayUpdate(ag, 1, g);
+      then g;
 
   end match;
 end clone;
@@ -584,12 +551,12 @@ algorithm
         c = SCode.COMPONENT(
               name,
               SCode.defaultPrefixes,
-              SCode.ATTR({}, SCode.POTENTIAL(), SCode.NON_PARALLEL(), SCode.CONST(), Absyn.BIDIR()),
+              SCode.ATTR({}, SCode.POTENTIAL(), SCode.NON_PARALLEL(), SCode.CONST(), Absyn.BIDIR(), Absyn.NONFIELD()),
               Absyn.TPATH(Absyn.IDENT(""), NONE()), SCode.NOMOD(),
               SCode.noComment, NONE(), Absyn.dummyInfo);
         v = DAE.TYPES_VAR(
               name,
-              DAE.ATTR(SCode.POTENTIAL(), SCode.NON_PARALLEL(), variability, Absyn.BIDIR(), Absyn.NOT_INNER_OUTER(), SCode.PUBLIC()),
+              DAE.ATTR(DAE.NON_CONNECTOR(), SCode.NON_PARALLEL(), variability, Absyn.BIDIR(), Absyn.NOT_INNER_OUTER(), SCode.PUBLIC()),
               ty,
               binding,
               constOfForIteratorRange);
@@ -620,7 +587,7 @@ algorithm
       then
         str;
 
-    case (_) then "<global scope>";
+    else "<global scope>";
 
   end matchcontinue;
 end printGraphPathStr;
@@ -664,22 +631,24 @@ public function openScope
 "Opening a new scope in the graph means adding a new node in the current scope."
   input Graph inGraph;
   input SCode.Encapsulated encapsulatedPrefix;
-  input Option<Name> inName;
+  input Name inName;
   input Option<FCore.ScopeType> inScopeType;
   output Graph outGraph;
+protected
+  Ref p;
 algorithm
+  p := lastScopeRef(inGraph);
   outGraph := matchcontinue(inGraph, encapsulatedPrefix, inName, inScopeType)
     local
       Graph g, gComp;
       Name n;
       Node no;
-      Ref r, p;
+      Ref r;
       Scope sc;
 
     // see if we have it as a class instance
-    case (g, _, SOME(n), _)
+    case (g, _, n, _)
       equation
-        p = lastScopeRef(g);
         r = FNode.child(p, n);
         FCore.CL(status = FCore.CLS_INSTANCE(_)) = FNode.refData(r);
         FNode.addChildRef(p, n, r);
@@ -688,9 +657,8 @@ algorithm
         g;
 
     // see if we have a child with the same name!
-    case (g, _, SOME(n), _)
+    case (g, _, n, _)
       equation
-        p = lastScopeRef(g);
         r = FNode.child(p, n);
         r = FNode.copyRefNoUpdate(r);
         // FNode.addChildRef(p, n, r);
@@ -699,9 +667,8 @@ algorithm
         g;
 
     // else open a new scope!
-    case (g, _, SOME(n), _)
+    case (g, _, n, _)
       equation
-        p = lastScopeRef(g);
         (g, no) = node(g, n, {p}, FCore.ND(inScopeType));
         r = FNode.toRef(no);
         // FNode.addChildRef(p, n, r);
@@ -711,7 +678,7 @@ algorithm
 
     else
       equation
-        Error.addCompilerError("FGraph.openScope: failed to open new scope in scope: " + getGraphNameStr(inGraph) + " name: " + Util.stringOption(inName) + "\n");
+        Error.addCompilerError("FGraph.openScope: failed to open new scope in scope: " + getGraphNameStr(inGraph) + " name: " + inName + "\n");
       then
         fail();
 
@@ -732,7 +699,7 @@ algorithm
         true = stringEq(name, FCore.forScopeName);
       then true;
 
-    case(_) then false;
+    else false;
 
   end matchcontinue;
 end inForLoopScope;
@@ -750,7 +717,7 @@ algorithm
         true = stringEq(name, FCore.forIterScopeName) or stringEq(name, FCore.parForIterScopeName);
       then true;
 
-    case(_) then false;
+    else false;
   end matchcontinue;
 end inForOrParforIterLoopScope;
 
@@ -781,7 +748,7 @@ algorithm
 end getScopePath;
 
 public function getGraphNameStr
-"Returns the FQ name of the environment, see also getGraphPath"
+"Returns the FQ name of the environment."
   input Graph inGraph;
   output String outString;
 algorithm
@@ -794,19 +761,24 @@ algorithm
 end getGraphNameStr;
 
 public function getGraphName
-"Returns the FQ name of the environment, see also getEnvPath"
+"Returns the FQ name of the environment."
   input Graph inGraph;
   output Absyn.Path outPath;
 protected
   Absyn.Path p;
   Scope s;
+  Ref r;
 algorithm
-  _::s := listReverse(currentScope(inGraph));
-  outPath := Absyn.stringListPath(List.map(s, FNode.refName));
+  r::s := currentScope(inGraph);
+  p := Absyn.makeIdentPathFromString(FNode.refName(r));
+  for r in s loop
+    p := Absyn.QUALIFIED(FNode.refName(r), p);
+  end for;
+  Absyn.QUALIFIED(_, outPath) := p;
 end getGraphName;
 
 public function getGraphNameNoImplicitScopes
-"Returns the FQ name of the environment, see also getEnvPath"
+"Returns the FQ name of the environment."
   input Graph inGraph;
   output Absyn.Path outPath;
 protected
@@ -820,69 +792,70 @@ end getGraphNameNoImplicitScopes;
 public function pushScopeRef
 "@author:adrpo
  push the given ref as first element in the graph scope list"
-  input Graph inGraph;
+  input output Graph graph;
   input Ref inRef;
-  output Graph outGraph;
-protected
-  Ref top;
-  Scope scope;
-  Name name;
-  Visited visited;
-  Extra extra;
-  Next next;
 algorithm
-  FCore.G(name = name, top = top, scope = scope, visited = visited, extra = extra, next = next) := inGraph;
-  outGraph := FCore.G(name, top, inRef::scope, visited, extra, next);
+  _ := match graph
+    case FCore.G()
+    algorithm
+      graph.scope := inRef::graph.scope;
+    then ();
+  end match;
 end pushScopeRef;
 
 public function pushScope
 "@author:adrpo
  put the given scope in the graph scope at the begining (listAppend(inScope, currentScope(graph)))"
-  input Graph inGraph;
+  input output Graph graph;
   input Scope inScope;
-  output Graph outGraph;
-protected
-  Ref top;
-  Scope scope;
-  Name name;
-  Visited visited;
-  Extra extra;
-  Next next;
 algorithm
-  FCore.G(name = name, top = top, scope = scope, visited = visited, extra = extra, next = next) := inGraph;
-  scope := listAppend(inScope, scope);
-  outGraph := FCore.G(name, top, scope, visited, extra, next);
+  _ := match graph
+    case FCore.G()
+    algorithm
+      graph.scope := listAppend(inScope, graph.scope);
+    then ();
+  end match;
 end pushScope;
 
 public function setScope
 "@author:adrpo
  replaces the graph scope with the given scope"
-  input Graph inGraph;
+  input output Graph graph;
   input Scope inScope;
-  output Graph outGraph;
-protected
-  Ref top;
-  Scope scope;
-  Name name;
-  Visited visited;
-  Extra extra;
-  Next next;
 algorithm
-  FCore.G(name = name, top = top, visited = visited, extra = extra, next = next) := inGraph;
-  outGraph := FCore.G(name, top, inScope, visited, extra, next);
+  _ := match graph
+    case FCore.G()
+    algorithm
+      graph.scope := inScope;
+    then ();
+  end match;
 end setScope;
 
 public function restrictionToScopeType
   input SCode.Restriction inRestriction;
   output Option<FCore.ScopeType> outType;
 algorithm
-  outType := matchcontinue(inRestriction)
+  outType := match(inRestriction)
     case SCode.R_FUNCTION(SCode.FR_PARALLEL_FUNCTION()) then SOME(FCore.PARALLEL_SCOPE());
     case SCode.R_FUNCTION(SCode.FR_KERNEL_FUNCTION()) then SOME(FCore.PARALLEL_SCOPE());
     case SCode.R_FUNCTION(_) then SOME(FCore.FUNCTION_SCOPE());
-    case _ then SOME(FCore.CLASS_SCOPE());
-  end matchcontinue;
+    else SOME(FCore.CLASS_SCOPE());
+  end match;
 end restrictionToScopeType;
+
+public function scopeTypeToRestriction
+  "Converts a ScopeType to a Restriction. Restriction is much more expressive
+   than ScopeType, so the returned Restriction is more of a rough indication of
+   what the original Restriction was."
+  input FCore.ScopeType inScopeType;
+  output SCode.Restriction outRestriction;
+algorithm
+  outRestriction := match inScopeType
+    case FCore.PARALLEL_SCOPE() then SCode.R_FUNCTION(SCode.FR_PARALLEL_FUNCTION());
+    case FCore.FUNCTION_SCOPE() then SCode.R_FUNCTION(SCode.FR_NORMAL_FUNCTION(false));
+    else SCode.R_CLASS();
+  end match;
+end scopeTypeToRestriction;
 
 public function isTopScope "Returns true if we are in the top-most scope"
   input Graph graph;
@@ -1036,33 +1009,27 @@ protected function pathStripGraphScopePrefix2
   input Boolean stripPartial;
   output Absyn.Path outPath;
 algorithm
-  outPath := matchcontinue(inPath, inEnvPath, stripPartial)
+  outPath := match(inPath, inEnvPath, stripPartial)
     local
       Absyn.Ident id1, id2;
       Absyn.Path path;
       Absyn.Path env_path;
 
     case (Absyn.QUALIFIED(name = id1, path = path),
-          Absyn.QUALIFIED(name = id2, path = env_path), _)
-      equation
-        true = stringEqual(id1, id2);
+          Absyn.QUALIFIED(name = id2, path = env_path), _) guard stringEqual(id1, id2)
       then
         pathStripGraphScopePrefix2(path, env_path, stripPartial);
 
     case (Absyn.QUALIFIED(name = id1, path = path),
-          Absyn.IDENT(name = id2), _)
-      equation
-        true = stringEqual(id1, id2);
+          Absyn.IDENT(name = id2), _) guard stringEqual(id1, id2)
       then
         path;
 
     // adrpo: leave it as stripped as you can if you can't match it above and stripPartial is true
-    case (Absyn.QUALIFIED(name = id1), env_path, true)
-      equation
-        false = stringEqual(id1, Absyn.pathFirstIdent(env_path));
+    case (Absyn.QUALIFIED(name = id1), env_path, true) guard not stringEqual(id1, Absyn.pathFirstIdent(env_path))
       then
         inPath;
-  end matchcontinue;
+  end match;
 end pathStripGraphScopePrefix2;
 
 public function mkComponentNode "This function adds a component to the graph."
@@ -1118,6 +1085,7 @@ public function mkClassNode
   input SCode.Element inClass;
   input Prefix.Prefix inPrefix;
   input DAE.Mod inMod;
+  input Boolean checkDuplicate = false;
   output Graph outGraph;
 algorithm
   outGraph := matchcontinue (inGraph, inClass, inPrefix, inMod)
@@ -1138,7 +1106,8 @@ algorithm
     case (g, SCode.CLASS(), _, _)
       equation
         r = lastScopeRef(g);
-        g = FGraphBuildEnv.mkClassNode(inClass, inPrefix, inMod, r, FCore.USERDEFINED(), g);
+        g = FGraphBuildEnv.mkClassNode(inClass, inPrefix, inMod, r,
+          FCore.USERDEFINED(), g, checkDuplicate);
       then
         g;
 
@@ -1219,10 +1188,10 @@ public function classInfToScopeType
   input ClassInf.State inState;
   output Option<FCore.ScopeType> outType;
 algorithm
-  outType := matchcontinue(inState)
+  outType := match(inState)
     case ClassInf.FUNCTION() then SOME(FCore.FUNCTION_SCOPE());
-    case _ then SOME(FCore.CLASS_SCOPE());
-  end matchcontinue;
+    else SOME(FCore.CLASS_SCOPE());
+  end match;
 end classInfToScopeType;
 
 public function isEmpty
@@ -1230,10 +1199,10 @@ public function isEmpty
   input Graph inGraph;
   output Boolean b;
 algorithm
-  b := matchcontinue(inGraph)
+  b := match(inGraph)
     case (FCore.EG(_)) then true;
     else false;
-  end matchcontinue;
+  end match;
 end isEmpty;
 
 public function isNotEmpty
@@ -1243,6 +1212,17 @@ public function isNotEmpty
 algorithm
   b := not isEmpty(inGraph);
 end isNotEmpty;
+
+public function isEmptyScope
+  input Graph graph;
+  output Boolean isEmpty;
+algorithm
+  try
+    isEmpty := RefTree.isEmpty(FNode.children(FNode.fromRef(lastScopeRef(graph))));
+  else
+    isEmpty := true;
+  end try;
+end isEmptyScope;
 
 public function printGraphStr
 "prints the graph"
@@ -1256,21 +1236,19 @@ public function inFunctionScope
   input Graph inGraph;
   output Boolean inFunction;
 algorithm
-  inFunction := matchcontinue(inGraph)
+  inFunction := match(inGraph)
     local
       Scope s;
       Ref r;
 
-    case FCore.G(scope = s)
-      equation
-        true = checkScopeType(s, SOME(FCore.FUNCTION_SCOPE())) or
-               checkScopeType(s, SOME(FCore.PARALLEL_SCOPE()));
+    case FCore.G(scope = s) guard checkScopeType(s, SOME(FCore.FUNCTION_SCOPE())) or
+                                  checkScopeType(s, SOME(FCore.PARALLEL_SCOPE()))
       then
         true;
 
-    case _ then false;
+    else false;
 
-  end matchcontinue;
+  end match;
 end inFunctionScope;
 
 public function getScopeName " Returns the name of a scope, if no name exist, the function fails."
@@ -1328,6 +1306,39 @@ algorithm
   end matchcontinue;
 end checkScopeType;
 
+public function lastScopeRestriction
+  input Graph inGraph;
+  output SCode.Restriction outRestriction;
+protected
+  Scope s;
+algorithm
+  FCore.G(scope = s) := inGraph;
+  outRestriction := getScopeRestriction(s);
+end lastScopeRestriction;
+
+public function getScopeRestriction
+  input Scope inScope;
+  output SCode.Restriction outRestriction;
+algorithm
+  outRestriction := matchcontinue inScope
+    local
+      Ref r;
+      FCore.ScopeType st;
+
+    case r :: _ guard(FNode.isRefClass(r))
+      then SCode.getClassRestriction(FNode.getElement(FNode.fromRef(r)));
+
+    case r :: _
+      algorithm
+        FCore.N(data = FCore.ND(SOME(st))) := FNode.fromRef(r);
+      then
+        scopeTypeToRestriction(st);
+
+    else getScopeRestriction(listRest(inScope));
+
+  end matchcontinue;
+end getScopeRestriction;
+
 public function getGraphPathNoImplicitScope
 "This function returns all partially instantiated parents as an Absyn.Path
  option I.e. it collects all identifiers of each frame until it reaches
@@ -1346,6 +1357,8 @@ protected function getGraphPathNoImplicitScope_dispatch
  NONE() is returned."
   input Scope inScope;
   output Option<Absyn.Path> outAbsynPathOption;
+protected
+  Option<Absyn.Path> opath;
 algorithm
   outAbsynPathOption := matchcontinue (inScope)
     local
@@ -1355,33 +1368,26 @@ algorithm
       Ref ref;
 
     case (ref :: rest)
-      equation
-        false = FNode.isRefTop(ref);
-        id = FNode.refName(ref);
-        true = isImplicitScope(id);
+      guard
+        not FNode.isRefTop(ref)
+      algorithm
+        id := FNode.refName(ref);
+        if isImplicitScope(id) then
+          opath := getGraphPathNoImplicitScope_dispatch(rest);
+        else
+          opath := getGraphPathNoImplicitScope_dispatch(rest);
+          if isSome(opath) then
+            SOME(path) := opath;
+            path_1 := Absyn.joinPaths(path, Absyn.IDENT(id));
+            opath := SOME(path_1);
+          else
+            opath := SOME(Absyn.IDENT(id));
+          end if;
+        end if;
       then
-        getGraphPathNoImplicitScope_dispatch(rest);
+        opath;
 
-    case (ref :: rest)
-      equation
-        false = FNode.isRefTop(ref);
-        id = FNode.refName(ref);
-        false = isImplicitScope(id);
-        SOME(path) = getGraphPathNoImplicitScope_dispatch(rest);
-        path_1 = Absyn.joinPaths(path, Absyn.IDENT(id));
-      then
-        SOME(path_1);
-
-    case (ref ::rest)
-      equation
-        false = FNode.isRefTop(ref);
-        id = FNode.refName(ref);
-        false = isImplicitScope(id);
-        NONE() = getGraphPathNoImplicitScope_dispatch(rest);
-      then
-        SOME(Absyn.IDENT(id));
-
-    case (_) then NONE();
+    else NONE();
 
   end matchcontinue;
 end getGraphPathNoImplicitScope_dispatch;
@@ -1397,24 +1403,17 @@ public function joinScopePath "Used to join an Graph scope with an Absyn.Path (p
   input Graph inGraph;
   input Absyn.Path inPath;
   output Absyn.Path outPath;
+protected
+  Option<Absyn.Path> opath;
+  Absyn.Path envPath;
 algorithm
-  outPath := matchcontinue(inGraph,inPath)
-    local
-      Absyn.Path envPath;
-
-    case (_,_)
-      equation
-        SOME(envPath) = getScopePath(inGraph);
-        //envPath = Absyn.makeFullyQualified(Absyn.joinPaths(envPath,inPath));
-        envPath = Absyn.joinPaths(envPath,inPath);
-      then envPath;
-
-    case (_,_)
-      equation
-        NONE() = getScopePath(inGraph);
-      then inPath;
-
-  end matchcontinue;
+  opath := getScopePath(inGraph);
+  if isSome(opath) then
+    SOME(envPath) := opath;
+    outPath := Absyn.joinPaths(envPath,inPath);
+  else
+    outPath := inPath;
+  end if;
 end joinScopePath;
 
 public function splitGraphScope
@@ -1433,7 +1432,7 @@ public function splitGraphScope_dispatch
   output Graph outRealGraph;
   output Scope outForScope;
 algorithm
-  (outRealGraph, outForScope) := matchcontinue(inGraph, inAcc)
+  (outRealGraph, outForScope) := match(inGraph, inAcc)
     local
       Graph g;
       Ref r;
@@ -1443,19 +1442,17 @@ algorithm
 
     case (FCore.G(scope = r::_), _)
       equation
-        true = FNode.isImplicitRefName(r);
-        (g, _) = stripLastScopeRef(inGraph);
-        (g, s) = splitGraphScope_dispatch(g, r::inAcc);
+        if FNode.isImplicitRefName(r) then
+          (g, _) = stripLastScopeRef(inGraph);
+          (g, s) = splitGraphScope_dispatch(g, r::inAcc);
+        else
+          g = inGraph;
+          s = listReverse(inAcc);
+        end if;
       then
         (g, s);
 
-    case (FCore.G(scope = r::_), _)
-      equation
-        false = FNode.isImplicitRefName(r);
-      then
-        (inGraph, listReverse(inAcc));
-
-  end matchcontinue;
+  end match;
 end splitGraphScope_dispatch;
 
 public function getVariablesFromGraphScope
@@ -1497,7 +1494,7 @@ algorithm
   r := lastScopeRef(inGraph);
   r := FNode.copyRefNoUpdate(r);
   n := FNode.fromRef(r);
-  n := FNode.setChildren(n, FCore.emptyCAvlTree);
+  n := FNode.setChildren(n, RefTree.new());
   r := FNode.updateRef(r, n);
   (outGraph, _) := stripLastScopeRef(inGraph);
   outGraph := pushScopeRef(outGraph, r);
@@ -1654,6 +1651,13 @@ algorithm
       Graph gclass;
       SCode.Element c;
 
+    /*
+    case (_, _, _, _, _, _, _)
+      equation
+        print(Absyn.pathString(PrefixUtil.prefixToPath(inPrefix)) + " S:" + getGraphNameStr(inSourceEnv) + "/" + inSourceName + " ||| " + "T:" + getGraphNameStr(inTargetClassEnv) + "/" + SCode.elementName(inTargetClass) + "\n");
+      then
+        fail();*/
+
     // case (_, _, _, _, _, _, _) then (inTargetClassEnv, inTargetClass, inIH);
 
     // don't do this if there is no modifications on the class
@@ -1728,10 +1732,10 @@ algorithm
 
     case (_, _, _, _, _, _)
       equation
-        crefPrefix = PrefixUtil.prefixAdd(inSourceName,{},{},inPrefix,SCode.CONST(),ClassInf.UNKNOWN(Absyn.IDENT(""))); // variability doesn't matter
+        crefPrefix = PrefixUtil.prefixAdd(inSourceName,{},{},inPrefix,SCode.CONST(),ClassInf.UNKNOWN(Absyn.IDENT("")), Absyn.dummyInfo); // variability doesn't matter
 
         // name = inTargetClassName + "$" + ComponentReference.printComponentRefStr(PrefixUtil.prefixToCref(crefPrefix));
-        name = inTargetClassName + "$" + Absyn.pathString2NoLeadingDot(Absyn.stringListPath(listReverse(Absyn.pathToStringList(PrefixUtil.prefixToPath(crefPrefix)))), "$")
+        name = inTargetClassName + "$" + Absyn.pathString(Absyn.stringListPath(listReverse(Absyn.pathToStringList(PrefixUtil.prefixToPath(crefPrefix)))), "$", usefq=false)
                ; // + "$" + Absyn.pathString2NoLeadingDot(getGraphName(inSourceEnv), "$");
         // name = "'$" + inTargetClassName + "@" + Absyn.pathString(Absyn.stringListPath(listReverse(Absyn.pathToStringList(PrefixUtil.prefixToPath(crefPrefix))))) + "'";
         // name = "'$" + getGraphNameStr(inSourceEnv) + "." + Absyn.pathString(Absyn.stringListPath(listReverse(Absyn.pathToStringList(PrefixUtil.prefixToPath(crefPrefix))))) + "'";
@@ -1820,7 +1824,7 @@ public function graphPrefixOf2
   input Scope inEnv;
   output Boolean outIsPrefix;
 algorithm
-  outIsPrefix := matchcontinue(inPrefixEnv, inEnv)
+  outIsPrefix := match(inPrefixEnv, inEnv)
     local
       String n1, n2;
       Scope rest1, rest2;
@@ -1828,15 +1832,13 @@ algorithm
 
     case ({}, _::_) then true;
 
-    case (r1 :: rest1, r2 :: rest2)
-      equation
-        true = stringEq(FNode.refName(r1), FNode.refName(r2));
+    case (r1 :: rest1, r2 :: rest2) guard stringEq(FNode.refName(r1), FNode.refName(r2))
       then
         graphPrefixOf2(rest1, rest2);
 
     else false;
 
-  end matchcontinue;
+  end match;
 end graphPrefixOf2;
 
 public function setStatus
@@ -1851,36 +1853,23 @@ algorithm
       Node n;
       Ref ref, refParent;
 
-    // child does not exist, do nothing, is an import or extends
     case (g, _, _)
       equation
         refParent = lastScopeRef(g);
-        false = FNode.refHasChild(refParent, inName);
-      then
-        g;
-
-    // child exists and has a status node
-    case (g, _, _)
-      equation
-        refParent = lastScopeRef(g);
-        true = FNode.refHasChild(refParent, inName);
-        ref = FNode.child(refParent, inName);
-        true = FNode.refHasChild(ref, FNode.statusNodeName);
-        ref = FNode.child(ref, FNode.statusNodeName);
-        n = FNode.setData(FNode.fromRef(ref), inStatus);
-        ref = FNode.updateRef(ref, n);
-      then
-        g;
-
-    // child exists but has no status node
-    case (g, _, _)
-      equation
-        refParent = lastScopeRef(g);
-        true = FNode.refHasChild(refParent, inName);
-        ref = FNode.child(refParent, inName);
-        false = FNode.refHasChild(ref, FNode.statusNodeName);
-        (g, n) = node(g, FNode.statusNodeName, {ref}, inStatus);
-        FNode.addChildRef(ref, FNode.statusNodeName, FNode.toRef(n));
+        if FNode.refHasChild(refParent, inName) then
+          ref = FNode.child(refParent, inName);
+          if FNode.refHasChild(ref, FNode.statusNodeName) then
+            // child exists and has a status node
+            ref = FNode.child(ref, FNode.statusNodeName);
+            n = FNode.setData(FNode.fromRef(ref), inStatus);
+            ref = FNode.updateRef(ref, n);
+          else
+            // child exists but has no status node
+            (g, n) = node(g, FNode.statusNodeName, {ref}, inStatus);
+            FNode.addChildRef(ref, FNode.statusNodeName, FNode.toRef(n));
+          end if;
+        //else child does not exist, do nothing, is an import or extends
+        end if;
       then
         g;
 
@@ -1959,6 +1948,46 @@ algorithm
 
   end match;
 end selectScope;
+
+public function makeScopePartial
+  input Graph inEnv;
+  output Graph outEnv = inEnv;
+protected
+  Node node;
+  Data data;
+  SCode.Element el;
+algorithm
+  try
+    node := FNode.fromRef(lastScopeRef(inEnv));
+    node := match node
+      case FCore.N(data = data as FCore.CL(e = el))
+        algorithm
+          el := SCode.makeClassPartial(el);
+          data.e := el;
+          node.data := data;
+        then
+          node;
+
+      else node;
+    end match;
+    outEnv := setLastScopeRef(FNode.toRef(node), outEnv);
+  else
+  end try;
+end makeScopePartial;
+
+public function isPartialScope
+  input Graph inEnv;
+  output Boolean outIsPartial;
+protected
+  SCode.Element el;
+algorithm
+  try
+    FCore.N(data = FCore.CL(e = el)) := FNode.fromRef(lastScopeRef(inEnv));
+    outIsPartial := SCode.isPartial(el);
+  else
+    outIsPartial := false;
+  end try;
+end isPartialScope;
 
 annotation(__OpenModelica_Interface="frontend");
 end FGraph;

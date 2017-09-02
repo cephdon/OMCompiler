@@ -19,9 +19,10 @@ FC = g77
 #include the sundials, ipopt from OMDev and the top_builddir for revision.h
 CONFIG_CFLAGS = -O2 -falign-functions -msse2 -mfpmath=sse \
 -I$(OMDEV)/lib/3rdParty/Ipopt/include/ \
--I$(OMDEV)/lib/3rdParty/Sundials/include \
+-I$(top_builddir)/3rdParty/sundials/build/include \
 -I$(OMDEV)/include/lis -I$(top_builddir)/ -I$(builddir_inc)/ \
 -Wall -Wno-unused-variable
+CXXFLAGS = $(CFLAGS)
 
 # Not needed since we already set fpmath
 FPMATHFORTRAN =
@@ -31,6 +32,9 @@ CONFIG_H=$(top_builddir)/Compiler/runtime/config.h
 LIBSIMULATION=libSimulationRuntimeC.a
 LIBRUNTIME=libOpenModelicaRuntimeC.a
 LIBFMIRUNTIME=libOpenModelicaFMIRuntimeC.a
-OBJ_EXT = .o
+OBJ_EXT=.o
+
+defaultMakefileTarget = Makefile.omdev.mingw
 
 include Makefile.common
+

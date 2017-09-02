@@ -34,7 +34,6 @@ encapsulated package BackendDAEFunc
   package:     BackendDAEFunc
   description: BackendDAEFunc defines the partial functions (interfaces) to function pointers that are sent around.
 
-  RCS: $Id: BackendDAEFunc.mo 17568 2013-10-07 01:59:38Z adrpo $
 "
 
 public import BackendDAE;
@@ -44,17 +43,11 @@ public import BackendDAE;
 /*************************************/
 
 public
-partial function preOptimizationDAEModule "
-  This is the interface for pre-optimization modules."
+partial function optimizationModule
+ "This is the interface for pre/post-optimization modules."
   input BackendDAE.BackendDAE inDAE;
   output BackendDAE.BackendDAE outDAE;
-end preOptimizationDAEModule;
-
-partial function postOptimizationDAEModule "
-  This is the interface for post-optimization modules."
-  input BackendDAE.BackendDAE inDAE;
-  output BackendDAE.BackendDAE outDAE;
-end postOptimizationDAEModule;
+end optimizationModule;
 
 partial function stateDeselectionFunc
   input BackendDAE.BackendDAE inDAE;

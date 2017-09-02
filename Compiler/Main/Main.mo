@@ -34,7 +34,6 @@ encapsulated package Main
   package:     Main
   description: Modelica main program
 
-  RCS: $Id$
 
   This is the main program in the Modelica specification.
   It either translates a file given as a command line argument
@@ -74,11 +73,13 @@ import Print;
 import Settings;
 import SimCode;
 import SimCodeMain;
-import SimCodeFunctionUtil;
+import ExecStat.{execStat,execStatReset};
 import Socket;
+import StackOverflow;
 import System;
 import TplMain;
 import Util;
+import ZeroMQ;
 
 protected function serverLoop
 "This function is the main loop of the server listening
@@ -114,6 +115,40 @@ algorithm
       then serverLoop(b, shandle, newsymb);
   end match;
 end serverLoop;
+
+protected function serverLoopZMQ
+"This function is the main loop of the ZeroMQ server listening
+  to a port which recieves modelica expressions."
+  input Boolean cont;
+  input Option<Integer> inZMQSocket;
+  input GlobalScript.SymbolTable inInteractiveSymbolTable;
+  output GlobalScript.SymbolTable outInteractiveSymbolTable;
+algorithm
+  outInteractiveSymbolTable := match (cont,inZMQSocket,inInteractiveSymbolTable)
+    local
+      Boolean b;
+      String str,replystr;
+      GlobalScript.SymbolTable newsymb,ressymb,isymb;
+      Option<Integer> zmqSocket;
+    case (false,_,isymb) then isymb;
+    case (_,SOME(0),_) then fail();
+    case (_,zmqSocket,isymb)
+      equation
+        str = ZeroMQ.handleRequest(zmqSocket);
+        if Flags.isSet(Flags.INTERACTIVE_DUMP) then
+          Debug.trace("------- Recieved Data from client -----\n");
+          Debug.trace(str);
+          Debug.trace("------- End recieved Data-----\n");
+        end if;
+        (b,replystr,newsymb) = handleCommand(str, isymb) "Print.clearErrorBuf &" ;
+        replystr = if b then replystr else "quit requested, shutting server down\n";
+        ZeroMQ.sendReply(zmqSocket, replystr);
+        if not b then
+          ZeroMQ.close(zmqSocket);
+        end if;
+      then serverLoopZMQ(b, zmqSocket, newsymb);
+  end match;
+end serverLoopZMQ;
 
 protected function makeDebugResult
   input Flags.DebugFlag inFlag;
@@ -176,36 +211,25 @@ public function handleCommand
   input GlobalScript.SymbolTable inSymbolTable;
   output Boolean outContinue;
   output String outResult;
-  output GlobalScript.SymbolTable outSymbolTable;
+  output GlobalScript.SymbolTable outSymbolTable = inSymbolTable;
 protected
+  Option<GlobalScript.Statements> stmts;
+  Option<Absyn.Program> prog;
+  GlobalScript.SymbolTable st;
 algorithm
   Print.clearBuf();
 
-  (outContinue, outResult, outSymbolTable) :=
-  matchcontinue(inCommand, inSymbolTable)
-    local
-      Option<GlobalScript.Statements> stmts;
-      Option<Absyn.Program> prog;
-      GlobalScript.SymbolTable st;
-      String result;
+  if Util.strncmp("quit()", inCommand, 6) then
+    outContinue := false;
+    outResult := "Ok\n";
+  else
+    outContinue := true;
 
-    case (_, _)
-      equation
-        true = Util.strncmp("quit()", inCommand, 6);
-      then
-        (false, "Ok\n", inSymbolTable);
-
-    else
-      equation
-        (stmts, prog) = parseCommand(inCommand);
-        (result, st) = handleCommand2(stmts, prog, inCommand, inSymbolTable);
-        result = makeDebugResult(Flags.DUMP, result);
-        result = makeDebugResult(Flags.DUMP_GRAPHVIZ, result);
-      then
-        (true, result, st);
-
-  end matchcontinue;
-
+    (stmts, prog) := parseCommand(inCommand);
+    (outResult, outSymbolTable) := handleCommand2(stmts, prog, inCommand, outSymbolTable);
+    outResult := makeDebugResult(Flags.DUMP, outResult);
+    outResult := makeDebugResult(Flags.DUMP_GRAPHVIZ, outResult);
+  end if;
 end handleCommand;
 
 protected function handleCommand2
@@ -289,13 +313,13 @@ algorithm
       equation
         names = List.map(cls,Absyn.className);
         names = List.map1(names,Absyn.joinPaths,scope);
-        res = "{" + stringDelimitList(List.map(names,Absyn.pathString),",") + "}\n";
+        res = "{" + stringDelimitList(list(Absyn.pathString(n) for n in names),",") + "}\n";
       then res;
 
     case(Absyn.PROGRAM(classes=cls,within_=Absyn.TOP()))
       equation
         names = List.map(cls,Absyn.className);
-        res = "{" + stringDelimitList(List.map(names,Absyn.pathString),",") + "}\n";
+        res = "{" + stringDelimitList(list(Absyn.pathString(n) for n in names),",") + "}\n";
       then res;
 
   end match;
@@ -406,7 +430,7 @@ algorithm
       equation
         pnew = Parser.parse(inLib, "UTF-8");
         p = GlobalScriptUtil.getSymbolTableAST(inSymTab);
-        pnew = Interactive.updateProgram(pnew, p);
+        pnew = Interactive.mergeProgram(pnew, p);
         newst = GlobalScriptUtil.setSymbolTableAST(inSymTab, pnew);
       then
        newst;
@@ -465,8 +489,7 @@ algorithm
       equation
         //print("Class to instantiate: " + Config.classToInstantiate() + "\n");
         isEmptyOrFirstIsModelicaFile(libs);
-        System.realtimeTick(ClockIndexes.RT_CLOCK_EXECSTAT);
-        System.realtimeTick(ClockIndexes.RT_CLOCK_EXECSTAT_CUMULATIVE);
+        execStatReset();
         // Parse libraries and extra mo-files that might have been given at the command line.
         GlobalScript.SYMBOLTABLE(ast = p) = List.fold(libs, loadLib, GlobalScript.emptySymboltable);
         // Show any errors that occured during parsing.
@@ -481,7 +504,7 @@ algorithm
           DumpGraphviz.dump(p);
         end if;
 
-        SimCodeFunctionUtil.execStat("Parsed file");
+        execStat("Parsed file");
 
         // Instantiate the program.
         (cache, env, d, cname) = instantiate(p);
@@ -491,14 +514,14 @@ algorithm
         funcs = FCore.getFunctionTree(cache);
 
         Print.clearBuf();
-        SimCodeFunctionUtil.execStat("Transformations before Dump");
-        s = DAEDump.dumpStr(d, funcs);
-        SimCodeFunctionUtil.execStat("DAEDump done");
+        execStat("Transformations before Dump");
+        s = if Config.silent() then "" else DAEDump.dumpStr(d, funcs);
+        execStat("DAEDump done");
         Print.printBuf(s);
         if Flags.isSet(Flags.DAE_DUMP_GRAPHV) then
           DAEDump.dumpGraphviz(d);
         end if;
-        SimCodeFunctionUtil.execStat("Misc Dump");
+        execStat("Misc Dump");
 
         // Do any transformations required before going into code generation, e.g. if-equations to expressions.
         d = if boolNot(Flags.isSet(Flags.TRANSFORMS_BEFORE_DUMP)) then DAEUtil.transformationsBeforeBackend(cache,env,d) else  d;
@@ -506,7 +529,7 @@ algorithm
         if not Config.silent() then
           print(Print.getString());
         end if;
-        SimCodeFunctionUtil.execStat("Transformations before backend");
+        execStat("Transformations before backend");
 
         // Run the backend.
         optimizeDae(cache, env, d, p, cname);
@@ -592,21 +615,28 @@ protected function optimizeDae
 protected
   BackendDAE.ExtraInfo info;
   BackendDAE.BackendDAE dlow;
+  BackendDAE.BackendDAE initDAE;
+  Option<BackendDAE.BackendDAE> initDAE_lambda0;
+  Option<BackendDAE.InlineData> inlineData;
+  list<BackendDAE.Equation> removedInitialEquationLst;
 algorithm
   if Config.simulationCg() then
     info := BackendDAE.EXTRA_INFO(DAEUtil.daeDescription(dae), Absyn.pathString(inClassName));
     dlow := BackendDAECreate.lower(dae, inCache, inEnv, info);
-    dlow := BackendDAEUtil.getSolvedSystem(dlow,"");
-    simcodegen(dlow, inClassName, ap, dae);
+    (dlow, initDAE, initDAE_lambda0, inlineData, removedInitialEquationLst) := BackendDAEUtil.getSolvedSystem(dlow, "");
+    simcodegen(dlow, initDAE, initDAE_lambda0, inlineData, removedInitialEquationLst, inClassName, ap);
   end if;
 end optimizeDae;
 
 protected function simcodegen "
   Genereates simulation code using the SimCode module"
   input BackendDAE.BackendDAE inBackendDAE;
+  input BackendDAE.BackendDAE inInitDAE;
+  input Option<BackendDAE.BackendDAE> inInitDAE_lambda0;
+  input Option<BackendDAE.InlineData> inInlineData;
+  input list<BackendDAE.Equation> inRemovedInitialEquationLst;
   input Absyn.Path inClassName;
   input Absyn.Program inProgram;
-  input DAE.DAElist inDAE;
 protected
   String cname;
   SimCode.SimulationSettings sim_settings;
@@ -624,9 +654,9 @@ algorithm
       SimCodeMain.createSimulationSettings(0.0, 1.0, 500, 1e-6, "dassl", "", "mat", ".*", "");
 
     System.realtimeTock(ClockIndexes.RT_CLOCK_BACKEND); // Is this necessary?
-    SimCodeMain.generateModelCode(inBackendDAE, inProgram, inDAE, inClassName,
-      cname, SOME(sim_settings), Absyn.FUNCTIONARGS({}, {}));
-    SimCodeFunctionUtil.execStat("Codegen Done");
+    SimCodeMain.generateModelCode(inBackendDAE, inInitDAE, inInitDAE_lambda0, inInlineData, inRemovedInitialEquationLst, inProgram, inClassName, cname, SOME(sim_settings), Absyn.FUNCTIONARGS({}, {}));
+
+    execStat("Codegen Done");
   end if;
 end simcodegen;
 
@@ -634,7 +664,6 @@ protected function interactivemode
 "Initiate the interactive mode using socket communication."
   input GlobalScript.SymbolTable symbolTable;
 algorithm
-  print("Opening a socket on port " + intString(29500) + "\n");
   serverLoop(true, Socket.waitforconnect(29500), symbolTable);
 end interactivemode;
 
@@ -650,6 +679,13 @@ algorithm
     Print.printBuf("Exiting!\n");
   end try;
 end interactivemodeCorba;
+
+protected function interactivemodeZMQ
+"Initiate the interactive mode using ZMQ communication."
+  input GlobalScript.SymbolTable symbolTable;
+algorithm
+  serverLoopZMQ(true, ZeroMQ.initialize(), symbolTable);
+end interactivemodeZMQ;
 
 protected function serverLoopCorba
 "This function is the main loop of the server for a CORBA impl."
@@ -718,64 +754,44 @@ public function setWindowsPaths
               changes you will need to change here!"
   input String inOMHome;
 algorithm
-  _ := matchcontinue(inOMHome)
+  _ := match(inOMHome)
     local
-      String oldPath,newPath,omHome,omdevPath;
+      String oldPath, newPath, omHome, omdevPath, mingwDir, binDir, libBinDir, msysBinDir;
+      Boolean hasBinDir, hasLibBinDir;
 
     // check if we have OMDEV set
     case (omHome)
       equation
-        _ = System.setEnv("OPENMODELICAHOME",omHome,true);
+        System.setEnv("OPENMODELICAHOME",omHome,true);
         omdevPath = Util.makeValueOrDefault(System.readEnv,"OMDEV","");
-        // we have something!
-        false = stringEq(omdevPath, "");
-        // do we have bin?
-        true = System.directoryExists(omdevPath + "\\tools\\mingw\\bin");
-        // do we have the correct libexec stuff?
-        true = System.directoryExists(omdevPath + "\\tools\\mingw\\libexec\\gcc\\mingw32\\4.4.0");
-        oldPath = System.readEnv("PATH");
-        newPath = stringAppendList({omHome,"\\bin;",
-                                    omHome,"\\lib;",
-                                    omdevPath,"\\tools\\mingw\\bin;",
-                                    omdevPath,"\\tools\\mingw\\libexec\\gcc\\mingw32\\4.4.0\\;",
-                                    oldPath});
-        _ = System.setEnv("PATH",newPath,true);
-      then
-        ();
-
-    case (omHome)
-      equation
-        _ = System.setEnv("OPENMODELICAHOME",omHome,true);
-        oldPath = System.readEnv("PATH");
-        // do we have bin?
-        true = System.directoryExists(omHome + "\\mingw\\bin");
-        // do we have the correct libexec stuff?
-        true = System.directoryExists(omHome + "\\mingw\\libexec\\gcc\\mingw32\\4.4.0");
-        newPath = stringAppendList({omHome,"\\bin;",
-                                    omHome,"\\lib;",
-                                    omHome,"\\mingw\\bin;",
-                                    omHome,"\\mingw\\libexec\\gcc\\mingw32\\4.4.0\\;",
-                                    oldPath});
-        _ = System.setEnv("PATH",newPath,true);
-      then
-        ();
-
-    // do not display anything if +d=disableWindowsPathCheckWarning
-    case (_)
-      equation
-        true = Flags.isSet(Flags.DISABLE_WINDOWS_PATH_CHECK_WARNING);
-      then
-        ();
-
-    else
-      equation
-        print("We could not find any of:\n");
-        print("\t$OPENMODELICAHOME/MinGW/bin and $OPENMODELICAHOME/MinGW/libexec/gcc/mingw32/4.4.0\n");
-        print("\t$OMDEV/tools/MinGW/bin and $OMDEV/tools/MinGW/libexec/gcc/mingw32/4.4.0\n");
-      then
-        ();
-
-  end matchcontinue;
+        mingwDir = System.openModelicaPlatform();
+        // if we don't have something in OMDEV use OMHOME
+        if stringEq(omdevPath, "") then
+          omdevPath = omHome;
+        end if;
+        msysBinDir = omdevPath + "\\tools\\msys\\usr\\bin";
+        binDir = omdevPath + "\\tools\\msys\\" + mingwDir + "\\bin";
+        libBinDir = omdevPath + "\\tools\\msys\\" + mingwDir + "\\lib\\gcc\\" + System.gccDumpMachine() + "\\" + System.gccVersion();
+        // do we have bin and lib bin?
+        hasBinDir = System.directoryExists(binDir);
+        hasLibBinDir = System.directoryExists(libBinDir);
+        if hasBinDir and hasLibBinDir
+        then
+          oldPath = System.readEnv("PATH");
+          newPath = stringAppendList({omHome, "\\bin;", omHome, "\\lib;", binDir + ";", libBinDir + ";", msysBinDir + ";"});
+          newPath = System.stringReplace(newPath, "/", "\\") + oldPath;
+          // print("Path set: " + newPath + "\n");
+          System.setEnv("PATH",newPath,true);
+        else
+          // do not display anything if +d=disableWindowsPathCheckWarning
+          if not Flags.isSet(Flags.DISABLE_WINDOWS_PATH_CHECK_WARNING) then
+            print("We could not find some needed MINGW paths in $OPENMODELICAHOME or $OMDEV. Searched for paths:\n");
+            print("\t" + binDir + (if hasBinDir then " [found] " else " [not found] ") + "\n");
+            print("\t" + libBinDir + (if hasLibBinDir then " [found] " else " [not found] ") + "\n");
+          end if;
+        end if;
+      then ();
+  end match;
 end setWindowsPaths;
 
 protected function setDefaultCC "Reads the environment variable CC to change the default CC"
@@ -819,11 +835,17 @@ public function main
 protected
   list<String> args_1;
   GC.ProfStats stats;
+  Integer seconds;
 algorithm
+  try
   try
     args_1 := init(args);
     if Flags.isSet(Flags.GC_PROF) then
       print(GC.profStatsStr(GC.getProfStats(), head="GC stats after initialization:") + "\n");
+    end if;
+    seconds := Flags.getConfigInt(Flags.ALARM);
+    if seconds > 0 then
+      System.alarm(seconds);
     end if;
     main2(args_1);
   else
@@ -835,12 +857,21 @@ algorithm
   if Flags.isSet(Flags.GC_PROF) then
     print(GC.profStatsStr(GC.getProfStats(), head="GC stats at end of program:") + "\n");
   end if;
+  else
+    print("Stack overflow detected and was not caught.\nSend us a bug report at https://trac.openmodelica.org/OpenModelica/newticket\n    Include the following trace:\n");
+    for s in StackOverflow.readableStacktraceMessages() loop
+      print(s);
+      print("\n");
+    end for;
+  end try annotation(__OpenModelica_stackOverflowCheckpoint=true);
 end main;
 
 protected function main2
   "This is the main function that the MetaModelica Compiler (MMC) runtime system calls to
    start the translation."
   input list<String> args;
+protected
+  String interactiveMode;
 algorithm
   // Version requested using --version.
   if Config.versionRequest() then
@@ -849,7 +880,9 @@ algorithm
   end if;
 
   // Don't allow running omc as root due to security risks.
-  if System.userIsRoot() and (Flags.isSet(Flags.INTERACTIVE) or Flags.isSet(Flags.INTERACTIVE_CORBA)) then
+  interactiveMode := Flags.getConfigString(Flags.INTERACTIVE);
+  if System.userIsRoot() and (Flags.isSet(Flags.INTERACTIVE_TCP) or Flags.isSet(Flags.INTERACTIVE_CORBA)
+     or interactiveMode == "corba" or interactiveMode == "tcp" or interactiveMode == "zmq") then
     Error.addMessage(Error.ROOT_USER_INTERACTIVE, {});
     print(ErrorExt.printMessagesStr(false));
     fail();
@@ -865,10 +898,18 @@ algorithm
   try
     Settings.getInstallationDirectoryPath();
 
-    if Flags.isSet(Flags.INTERACTIVE) then
+    if Flags.isSet(Flags.INTERACTIVE_TCP) then
+      print("The flag -d=interactive is depreciated. Please use --interactive=tcp\n");
+      interactivemode(readSettings(args));
+    elseif interactiveMode == "tcp" then
       interactivemode(readSettings(args));
     elseif Flags.isSet(Flags.INTERACTIVE_CORBA) then
+      print("The flag -d=interactiveCorba is depreciated. Please use --interactive=corba\n");
       interactivemodeCorba(readSettings(args));
+    elseif interactiveMode == "corba" then
+      interactivemodeCorba(readSettings(args));
+    elseif interactiveMode == "zmq" then
+      interactivemodeZMQ(readSettings(args));
     else // No interactive flag given, try to flatten the file.
       readSettings(args);
       FGraphStream.start();
@@ -903,4 +944,3 @@ end main2;
 
 annotation(__OpenModelica_Interface="backend");
 end Main;
-

@@ -34,10 +34,9 @@ encapsulated package SimCode
   package:     SimCode
   description: Code generation using Susan templates
 
-  RCS: $Id: SimCode.mo 25853 2015-04-30 14:04:02Z vwaurich $
 
   The entry points to this module are the translateModel function and the
-  translateFunctions fuction.
+  translateFunctions function.
 
   Except for the entry points, the only other public functions are those that
   can be imported and called from templates.
@@ -52,31 +51,49 @@ encapsulated package SimCode
 "
 
 // public imports
-public import Absyn;
-public import BackendDAE;
-public import DAE;
-public import HashTableCrILst;
-public import HashTableCrIListArray;
-public import HpcOmSimCode;
-public import SimCodeVar;
-public import SCode;
+import Absyn;
+import BackendDAE;
+import DAE;
+import HashTable;
+import HashTableCrILst;
+import HashTableCrIListArray;
+import HashTableCrefSimVar;
+import HpcOmSimCode;
+import SimCodeFunction;
+import SimCodeVar;
 
-public
 type ExtConstructor = tuple<DAE.ComponentRef, String, list<DAE.Exp>>;
 type ExtDestructor = tuple<String, DAE.ComponentRef>;
 type ExtAlias = tuple<DAE.ComponentRef, DAE.ComponentRef>;
-type JacobianColumn = tuple<list<SimEqSystem>, list<SimCodeVar.SimVar>, String>;     // column equations, column vars, column length
-type JacobianMatrix = tuple<list<JacobianColumn>,                         // column
-                            list<SimCodeVar.SimVar>,                      // seed vars
-                            String,                                       // matrix name
-                            tuple<list< tuple<Integer, list<Integer>>>,list< tuple<Integer, list<Integer>>>>,    // sparse pattern
-                            list<list<Integer>>,                          // colored cols
-                            Integer,                                      // max color used
-                            Integer>;                                     // jacobian index
 
+type SparsityPattern = list< tuple<Integer, list<Integer>> >;
 
-public constant list<DAE.Exp> listExpLength1 = {DAE.ICONST(0)} "For CodegenC.tpl";
-public constant list<Variable> boxedRecordOutVars = VARIABLE(DAE.CREF_IDENT("",DAE.T_COMPLEX_DEFAULT_RECORD,{}),DAE.T_COMPLEX_DEFAULT_RECORD,NONE(),{},DAE.NON_PARALLEL(),DAE.VARIABLE())::{} "For CodegenC.tpl";
+uniontype JacobianColumn
+  record JAC_COLUMN
+    list<SimEqSystem> columnEqns;       // column equations equals in size to column vars
+    list<SimCodeVar.SimVar> columnVars; // all column vars, none results vars index -1, the other corresponding to rows index
+    Integer numberOfResultVars;         // corresponds to the number of rows
+  end JAC_COLUMN;
+end JacobianColumn;
+
+uniontype JacobianMatrix
+  record JAC_MATRIX
+    list<JacobianColumn> columns;       // columns equations and variables
+    list<SimCodeVar.SimVar> seedVars;   // corresponds to the number of columns
+    String matrixName;                  // unique matrix name
+    SparsityPattern sparsity;
+    SparsityPattern sparsityT;
+    list<list<Integer>> coloredCols;
+    Integer maxColorCols;
+    Integer jacobianIndex;
+    Integer partitionIndex;
+  end JAC_MATRIX;
+end JacobianMatrix;
+
+constant JacobianMatrix emptyJacobian = JAC_MATRIX({}, {}, "", {}, {}, {}, 0, -1, 0);
+
+constant PartitionData emptyPartitionData = PARTITIONDATA(-1,{},{},{});
+
 
 uniontype SimCode
   "Root data structure containing information required for templates to
@@ -84,15 +101,15 @@ uniontype SimCode
   record SIMCODE
     ModelInfo modelInfo;
     list<DAE.Exp> literals "shared literals";
-    list<RecordDeclaration> recordDecls;
+    list<SimCodeFunction.RecordDeclaration> recordDecls;
     list<String> externalFunctionIncludes;
+    list<SimEqSystem> localKnownVars "state and input dependent variables, that are not inserted into any partion";
     list<SimEqSystem> allEquations;
     list<list<SimEqSystem>> odeEquations;
     list<list<SimEqSystem>> algebraicEquations;
-    list<BackendDAE.BaseClockPartitionKind> partitionsKind;
-    list<DAE.ClockKind> baseClocks;
-    Boolean useHomotopy "true if homotopy(...) is used during initialization";
+    list<ClockedPartition> clockedPartitions;
     list<SimEqSystem> initialEquations;
+    list<SimEqSystem> initialEquations_lambda0;
     list<SimEqSystem> removedInitialEquations;
     list<SimEqSystem> startValueEquations;
     list<SimEqSystem> nominalValueEquations;
@@ -110,14 +127,13 @@ uniontype SimCode
     list<BackendDAE.ZeroCrossing> zeroCrossings;
     list<BackendDAE.ZeroCrossing> relations "only used by c runtime";
     list<BackendDAE.TimeEvent> timeEvents "only used by c runtime yet";
-    list<SimWhenClause> whenClauses;
     list<DAE.ComponentRef> discreteModelVars;
     ExtObjInfo extObjInfo;
-    MakefileParams makefileParams;
+    SimCodeFunction.MakefileParams makefileParams;
     DelayedExpression delayedExps;
     list<JacobianMatrix> jacobianMatrixes;
     Option<SimulationSettings> simulationSettingsOpt;
-    String fileNamePrefix;
+    String fileNamePrefix, fullPathPrefix "Used in FMI where files are generated in a special directory";
     HpcOmSimCode.HpcOmData hpcomData;
     //maps each variable to an array of storage indices (with this information, arrays must not be unrolled) and a list for the array-dimensions
     //if the variable is not part of an array (if it is a scalar value), then the array has size 1
@@ -125,11 +141,32 @@ uniontype SimCode
     //*** a protected section *** not exported to SimCodeTV
     HashTableCrILst.HashTable varToIndexMapping;
     HashTableCrefToSimVar crefToSimVarHT "hidden from typeview - used by cref2simvar() for cref -> SIMVAR lookup available in templates.";
+    HashTable.HashTable crefToClockIndexHT "map variables to clock indices";
     Option<BackendMapping> backendMapping;
     //FMI 2.0 data for model structure
     Option<FmiModelStructure> modelStructure;
+    PartitionData partitionData;
+    Option<DaeModeData> daeModeData;
+    list<SimEqSystem> inlineEquations;
   end SIMCODE;
 end SimCode;
+
+public uniontype ClockedPartition
+  record CLOCKED_PARTITION
+    DAE.ClockKind baseClock;
+    list<SubPartition> subPartitions;
+  end CLOCKED_PARTITION;
+end ClockedPartition;
+
+public uniontype SubPartition
+  record SUBPARTITION
+    list<tuple<SimCodeVar.SimVar, Boolean /*previous*/>> vars;
+    list<SimEqSystem> equations;
+    list<SimEqSystem> removedEquations;
+    BackendDAE.SubClock subClock;
+    Boolean holdEvents;
+  end SUBPARTITION;
+end SubPartition;
 
 public
 uniontype BackendMapping
@@ -147,6 +184,15 @@ uniontype BackendMapping
   end NO_MAPPING;
 end BackendMapping;
 
+public uniontype PartitionData
+  record PARTITIONDATA
+    Integer numPartitions;
+    list<list<Integer>> partitions; // which equations are assigned to the partitions
+    list<list<Integer>> activatorsForPartitions; // which activators can activate each partition
+    list<Integer> stateToActivators; // which states belong to which activator, important if various states are gathered in one partition/activator
+  end PARTITIONDATA;
+end PartitionData;
+
 uniontype DelayedExpression
   "Delayed expressions type"
   record DELAYED_EXPRESSIONS
@@ -155,20 +201,6 @@ uniontype DelayedExpression
   end DELAYED_EXPRESSIONS;
 end DelayedExpression;
 
-uniontype FunctionCode
-  "Root data structure containing information required for templates to
-  generate C functions for Modelica/MetaModelica functions."
-  record FUNCTIONCODE
-    String name;
-    Option<Function> mainFunction "This function is special; the 'in'-function should be generated for it";
-    list<Function> functions;
-    list<DAE.Exp> literals "shared literals";
-    list<String> externalFunctionIncludes;
-    MakefileParams makefileParams;
-    list<RecordDeclaration> extraRecordDecls;
-  end FUNCTIONCODE;
-end FunctionCode;
-
 uniontype ModelInfo "Container for metadata about a Modelica model."
   record MODELINFO
     Absyn.Path name;
@@ -176,10 +208,12 @@ uniontype ModelInfo "Container for metadata about a Modelica model."
     String directory;
     VarInfo varInfo;
     SimCodeVar.SimVars vars;
-    list<Function> functions;
+    list<SimCodeFunction.Function> functions;
     list<String> labels;
     //Files files "all the files from SourceInfo and DAE.ELementSource";
-    Integer maxDer "the highest derivative in the model";
+    Integer nClocks;
+    Integer nSubClocks;
+    Boolean hasLargeLinearEquationSystems; // True if model has large linear eq. systems that are crucial for performance.
   end MODELINFO;
 end ModelInfo;
 
@@ -228,133 +262,25 @@ uniontype VarInfo "Number of variables of various types in a Modelica model."
     Integer numJacobians;
     Integer numOptimizeConstraints;
     Integer numOptimizeFinalConstraints;
+    Integer numSensitivityParameters;
   end VARINFO;
 end VarInfo;
 
-// TODO: I believe some of these fields can be removed. Check to see what is
-//       used in templates.
-uniontype Function
-  "Represents a Modelica or MetaModelica function."
-  record FUNCTION
-    Absyn.Path name;
-    list<Variable> outVars;
-    list<Variable> functionArguments;
-    list<Variable> variableDeclarations;
-    list<Statement> body;
-    SCode.Visibility visibility;
-    SourceInfo info;
-  end FUNCTION;
+uniontype DaeModeConfig
+  record ALL_EQUATIONS end ALL_EQUATIONS;
+  record DYNAMIC_EQUATIONS end DYNAMIC_EQUATIONS;
+end DaeModeConfig;
 
-  record PARALLEL_FUNCTION
-    Absyn.Path name;
-    list<Variable> outVars;
-    list<Variable> functionArguments;
-    list<Variable> variableDeclarations;
-    list<Statement> body;
-    SourceInfo info;
-  end PARALLEL_FUNCTION;
-
-  record KERNEL_FUNCTION
-    Absyn.Path name;
-    list<Variable> outVars;
-    list<Variable> functionArguments;
-    list<Variable> variableDeclarations;
-    list<Statement> body;
-    SourceInfo info;
-  end KERNEL_FUNCTION;
-
-  record EXTERNAL_FUNCTION
-    Absyn.Path name;
-    String extName;
-    list<Variable> funArgs;
-    list<SimExtArg> extArgs;
-    SimExtArg extReturn;
-    list<Variable> inVars;
-    list<Variable> outVars;
-    list<Variable> biVars;
-    list<String> includes "this one is needed so that we know if we should generate the external function prototype or not";
-    list<String> libs "need this one for C#";
-    String language "C or Fortran";
-    SCode.Visibility visibility;
-    SourceInfo info;
-    Boolean dynamicLoad;
-  end EXTERNAL_FUNCTION;
-
-  record RECORD_CONSTRUCTOR
-    Absyn.Path name;
-    list<Variable> funArgs;
-    list<Variable> locals;
-    SCode.Visibility visibility;
-    SourceInfo info;
-    DAE.VarKind kind;
-  end RECORD_CONSTRUCTOR;
-end Function;
-
-uniontype RecordDeclaration
-
-  record RECORD_DECL_FULL
-    String name "struct (record) name ? encoded";
-    Option<String> aliasName "alias of struct (record) name ? encoded. Code generators can generate an aliasing typedef using this, and avoid problems when casting a record from one type to another (*(othertype*)(&var)), which only works if you have a lhs value.";
-    Absyn.Path defPath "definition path";
-    list<Variable> variables "only name and type";
-  end RECORD_DECL_FULL;
-
-  record RECORD_DECL_DEF
-    Absyn.Path path "definition path .. encoded?";
-    list<String> fieldNames;
-  end RECORD_DECL_DEF;
-
-end RecordDeclaration;
-
-uniontype SimExtArg
-  "Information about an argument to an external function."
-  record SIMEXTARG
-    DAE.ComponentRef cref;
-    Boolean isInput;
-    Integer outputIndex "> 0 if output";
-    Boolean isArray;
-    Boolean hasBinding "avoid double allocation";
-    DAE.Type type_;
-  end SIMEXTARG;
-  record SIMEXTARGEXP
-    DAE.Exp exp;
-    DAE.Type type_;
-  end SIMEXTARGEXP;
-  record SIMEXTARGSIZE
-    DAE.ComponentRef cref;
-    Boolean isInput;
-    Integer outputIndex "> 0 if output";
-    DAE.Type type_;
-    DAE.Exp exp;
-  end SIMEXTARGSIZE;
-  record SIMNOEXTARG end SIMNOEXTARG;
-end SimExtArg;
-
-uniontype Variable
-  "a variable represents a name, a type and a possible default value"
-  record VARIABLE
-    DAE.ComponentRef name;
-    DAE.Type ty;
-    Option<DAE.Exp> value "default value";
-    list<DAE.Exp> instDims;
-    DAE.VarParallelism parallelism;
-    DAE.VarKind kind;
-  end VARIABLE;
-
-  record FUNCTION_PTR
-    String name;
-    list<DAE.Type> tys;
-    list<Variable> args;
-    Option<DAE.Exp> defaultValue "default value";
-  end FUNCTION_PTR;
-end Variable;
-
-// TODO: Replace Statement with just list<DAE.Statement>?
-uniontype Statement
-  record ALGORITHM
-    list<DAE.Statement> statementLst; // in functions
-  end ALGORITHM;
-end Statement;
+uniontype DaeModeData
+  "contains data that belongs to the dae mode"
+  record DAEMODEDATA
+    list<list<SimEqSystem>> daeEquations "daeModel residuals equations";
+    Option<JacobianMatrix> sparsityPattern "contains the sparsity pattern for the daeMode";
+    list<SimCodeVar.SimVar> residualVars;  // variable used to calculate residuals of a DAE form, they are real
+    list<SimCodeVar.SimVar> algebraicDAEVars;  // variable used to calculate residuals of a DAE form, they are real
+    DaeModeConfig modeCreated; // indicates the mode in which
+  end DAEMODEDATA;
+end DaeModeData;
 
 uniontype SimEqSystem
   "Represents a single equation or a system of equations that must be solved together."
@@ -370,6 +296,15 @@ uniontype SimEqSystem
     DAE.Exp exp;
     DAE.ElementSource source;
   end SES_SIMPLE_ASSIGN;
+
+  record SES_SIMPLE_ASSIGN_CONSTRAINTS
+    "Solved inner equation of (casual) tearing set (Dynamic Tearing) with constraints on the solvability"
+    Integer index;
+    DAE.ComponentRef cref;
+    DAE.Exp exp;
+    DAE.ElementSource source;
+    BackendDAE.Constraints cons;
+  end SES_SIMPLE_ASSIGN_CONSTRAINTS;
 
   record SES_ARRAY_CALL_ASSIGN
     Integer index;
@@ -419,8 +354,7 @@ uniontype SimEqSystem
     Integer index;
     list<DAE.ComponentRef> conditions "list of boolean variables as conditions";
     Boolean initialCall "true, if top-level branch with initial()";
-    DAE.ComponentRef left;
-    DAE.Exp right;
+    list<BackendDAE.WhenOperator> whenStmtLst;
     Option<SimEqSystem> elseWhen;
     DAE.ElementSource source;
   end SES_WHEN;
@@ -442,6 +376,7 @@ uniontype LinearSystem
   record LINEARSYSTEM
     Integer index;
     Boolean partOfMixed;
+    Boolean tornSystem;
     list<SimCodeVar.SimVar> vars;
     list<DAE.Exp> beqs;
     list<tuple<Integer, Integer, SimEqSystem>> simJac;
@@ -450,6 +385,7 @@ uniontype LinearSystem
     Option<JacobianMatrix> jacobianMatrix;
     list<DAE.ElementSource> sources;
     Integer indexLinearSystem;
+    Integer nUnknowns "Number of variables that are solved in this system. Needed because 'crefs' only contains the iteration variables.";
   end LINEARSYSTEM;
 end LinearSystem;
 
@@ -460,10 +396,11 @@ uniontype NonlinearSystem
     list<SimEqSystem> eqs;
     list<DAE.ComponentRef> crefs;
     Integer indexNonLinearSystem;
+    Integer nUnknowns "Number of variables that are solved in this system. Needed because 'crefs' only contains the iteration variables.";
     Option<JacobianMatrix> jacobianMatrix;
-    Boolean linearTearing;
     Boolean homotopySupport;
     Boolean mixedSystem;
+    Boolean tornSystem;
   end NONLINEARSYSTEM;
 end NonlinearSystem;
 
@@ -479,43 +416,12 @@ uniontype StateSet
   end SES_STATESET;
 end StateSet;
 
-uniontype SimWhenClause
-  record SIM_WHEN_CLAUSE
-    list<DAE.ComponentRef> conditionVars "is no longer needed";
-    list<DAE.ComponentRef> conditions "list of boolean variables as conditions";
-    Boolean initialCall "true, if top-level branch with initial()";
-    list<BackendDAE.WhenOperator> reinits;
-    Option<BackendDAE.WhenEquation> whenEq;
-  end SIM_WHEN_CLAUSE;
-end SimWhenClause;
-
 uniontype ExtObjInfo
   record EXTOBJINFO
     list<SimCodeVar.SimVar> vars;
     list<ExtAlias> aliases;
   end EXTOBJINFO;
 end ExtObjInfo;
-
-uniontype MakefileParams
-  "Platform specific parameters used when generating makefiles."
-  record MAKEFILE_PARAMS
-    String ccompiler;
-    String cxxcompiler;
-    String linker;
-    String exeext;
-    String dllext;
-    String omhome;
-    String cflags;
-    String ldflags;
-    String runtimelibs "Libraries that are required by the runtime library";
-    list<String> includes;
-    list<String> libs;
-    list<String> libPaths;
-    String platform;
-    String compileDir;
-  end MAKEFILE_PARAMS;
-end MakefileParams;
-
 
 uniontype SimulationSettings
   "Settings for simulation init file header."
@@ -533,81 +439,11 @@ uniontype SimulationSettings
   end SIMULATION_SETTINGS;
 end SimulationSettings;
 
-uniontype Context
-  "Constants of this type defined below are used by templates to be able to
-  generate different code depending on the context it is generated in."
-  record SIMULATION_CONTEXT
-    Boolean genDiscrete;
-  end SIMULATION_CONTEXT;
-
-  record FUNCTION_CONTEXT
-  end FUNCTION_CONTEXT;
-
-  record ALGLOOP_CONTEXT
-     Boolean genInitialisation;
-     Boolean genJacobian;
-  end ALGLOOP_CONTEXT;
-
-   record JACOBIAN_CONTEXT
-   end JACOBIAN_CONTEXT;
-
-  record OTHER_CONTEXT
-  end OTHER_CONTEXT;
-
-  record PARALLEL_FUNCTION_CONTEXT
-  end PARALLEL_FUNCTION_CONTEXT;
-
-  record ZEROCROSSINGS_CONTEXT
-  end ZEROCROSSINGS_CONTEXT;
-
-  record OPTIMIZATION_CONTEXT
-  end OPTIMIZATION_CONTEXT;
-
-  record FMI_CONTEXT
-  end FMI_CONTEXT;
-end Context;
-
-public constant Context contextSimulationNonDiscrete  = SIMULATION_CONTEXT(false);
-public constant Context contextSimulationDiscrete     = SIMULATION_CONTEXT(true);
-public constant Context contextFunction               = FUNCTION_CONTEXT();
-public constant Context contextJacobian               = JACOBIAN_CONTEXT();
-public constant Context contextAlgloopJacobian        = ALGLOOP_CONTEXT(false,true);
-public constant Context contextAlgloopInitialisation  = ALGLOOP_CONTEXT(true,false);
-public constant Context contextAlgloop                = ALGLOOP_CONTEXT(false,false);
-public constant Context contextOther                  = OTHER_CONTEXT();
-public constant Context contextParallelFunction       = PARALLEL_FUNCTION_CONTEXT();
-public constant Context contextZeroCross              = ZEROCROSSINGS_CONTEXT();
-public constant Context contextOptimization           = OPTIMIZATION_CONTEXT();
-public constant Context contextFMI                    = FMI_CONTEXT();
-
 /****** HashTable ComponentRef -> SimCodeVar.SimVar ******/
-/* a workaround to enable "cross public import" */
 
-/* HashTable instance specific code */
-public
-type Key = DAE.ComponentRef;
-type Value = SimCodeVar.SimVar;
-/* end of HashTable instance specific code */
-
-/* Generic hashtable code below!! */
-public
-uniontype HashTableCrefToSimVar
-  record HASHTABLE
-    array<list<tuple<Key,Integer>>> hashTable " hashtable to translate Key to array indx";
-    ValueArray valueArr "Array of values";
-    Integer bucketSize "bucket size";
-    Integer numberOfEntries "number of entries in hashtable";
-  end HASHTABLE;
-end HashTableCrefToSimVar;
-
-uniontype ValueArray "array of values are expandable, to amortize the cost of adding elements in a more
-efficient manner"
-  record VALUE_ARRAY
-    Integer numberOfElements "number of elements in hashtable";
-    Integer arrSize "size of crefArray";
-    array<Option<tuple<Key,Value>>> valueArray "array of values";
-  end VALUE_ARRAY;
-end ValueArray;
+type Key = HashTableCrefSimVar.Key;
+type Value = HashTableCrefSimVar.Value;
+type HashTableCrefToSimVar = HashTableCrefSimVar.HashTable;
 
 /* FMI 2.0 Export */
 public uniontype FmiUnknown
@@ -630,6 +466,12 @@ public uniontype FmiDerivatives
   end FMIDERIVATIVES;
 end FmiDerivatives;
 
+public uniontype FmiDiscreteStates
+  record FMIDISCRETESTATES
+    list<FmiUnknown> fmiUnknownsList;
+  end FMIDISCRETESTATES;
+end FmiDiscreteStates;
+
 public uniontype FmiInitialUnknowns
   record FMIINITIALUNKNOWNS
     list<FmiUnknown> fmiUnknownsList;
@@ -640,6 +482,7 @@ public uniontype FmiModelStructure
   record FMIMODELSTRUCTURE
     FmiOutputs fmiOutputs;
     FmiDerivatives fmiDerivatives;
+    FmiDiscreteStates fmiDiscreteStates;
     FmiInitialUnknowns fmiInitialUnknowns;
   end FMIMODELSTRUCTURE;
 end FmiModelStructure;

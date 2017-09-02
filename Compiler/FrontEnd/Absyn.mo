@@ -35,7 +35,6 @@ encapsulated package Absyn
   package:     Absyn
   description: Abstract syntax
 
-  RCS: $Id$
 
   This file defines the abstract syntax for Modelica in MetaModelica Compiler (MMC).  It mainly
   contains uniontypes for constructing the abstract syntax tree
@@ -105,7 +104,6 @@ uniontype Program
    indicates the hieractical position of the program."
   record PROGRAM  "PROGRAM, the top level construct"
     list<Class>  classes "List of classes" ;
- //   list<Optimization>  optimizations "List of classes" ;
     Within       within_ "Within clause" ;
   end PROGRAM;
 end Program;
@@ -466,6 +464,12 @@ uniontype Equation "Information on one (kind) of equation, different constructor
     Exp rightSide "rightSide Connect stmt" ;
   end EQ_EQUALS;
 
+  record EQ_PDE
+    Exp leftSide "leftSide" ;
+    Exp rightSide "rightSide Connect stmt" ;
+    ComponentRef domain "domain for PDEs" ;
+  end EQ_PDE;
+
   record EQ_CONNECT
     ComponentRef connector1 "connector1" ;
     ComponentRef connector2 "connector2" ;
@@ -628,9 +632,16 @@ uniontype ElementAttributes "Element attributes"
     Parallelism parallelism "for OpenCL/CUDA parglobal, parlocal ...";
     Variability variability "parameter, constant etc.";
     Direction direction "input/output";
+    IsField isField "non-field / field";
     ArrayDim arrayDim "array dimensions";
-  end ATTR;
+   end ATTR;
 end ElementAttributes;
+
+public
+uniontype IsField "Is field"
+  record NONFIELD "variable is not a field"  end NONFIELD;
+  record FIELD "variable is a field"         end FIELD;
+end IsField;
 
 public
 uniontype Parallelism "Parallelism"
@@ -660,9 +671,14 @@ end Variability;
 
 public
 uniontype Direction "Direction"
-  record INPUT  "direction is input"                                   end INPUT;
-  record OUTPUT "direction is output"                                  end OUTPUT;
-  record BIDIR  "direction is not specified, neither input nor output" end BIDIR;
+  record INPUT "direction is input"
+  end INPUT;
+  record OUTPUT "direction is output"
+  end OUTPUT;
+  record BIDIR  "direction is not specified, neither input nor output"
+  end BIDIR;
+  record INPUT_OUTPUT "direction is both input and output (OM extension; syntactic sugar for functions)"
+  end INPUT_OUTPUT;
 end Direction;
 
 public
@@ -704,9 +720,9 @@ uniontype Exp "The Exp uniontype is the container of a Modelica expression.
     Exp exp2;
   end BINARY;
 
-  record UNARY  "Unary operations, e.g. -(x)"
+  record UNARY  "Unary operations, e.g. -(x), +(x)"
     Operator op "op" ;
-    Exp exp "exp Logical binary operations: and, or" ;
+    Exp exp "exp - any arithmetic expression" ;
   end UNARY;
 
   record LBINARY
@@ -717,7 +733,7 @@ uniontype Exp "The Exp uniontype is the container of a Modelica expression.
 
   record LUNARY  "Logical unary operations: not"
     Operator op "op" ;
-    Exp exp "exp Relations, e.g. a >= 0" ;
+    Exp exp "exp - any logical or relation expression" ;
   end LUNARY;
 
   record RELATION
@@ -1030,6 +1046,7 @@ uniontype Restriction "These constructors each correspond to a different kind of
     Integer index; //Index in the uniontype
     Boolean singleton;
     Boolean moved; // true if moved outside uniontype, otherwise false.
+    list<String> typeVars;
   end R_METARECORD;
   record R_UNKNOWN "Helper restriction" end R_UNKNOWN; /* added by simbj */
 end Restriction;
@@ -1218,21 +1235,16 @@ public function traverseEquationItemList
     replaceable type TypeA subtypeof Any;
   end FuncTplToTpl;
   replaceable type TypeA subtypeof Any;
+protected
+  TypeA arg2 = inTypeA;
 algorithm
-  outTpl := match (inEquationItemList,inFunc,inTypeA)
-    local
-      list<EquationItem> cdr,cdr_1;
-      FuncTplToTpl rel;
-      TypeA arg,arg_1,arg_2;
-      EquationItem ei,ei_1;
-    case({},_,arg) then (({},arg));
-    case(ei :: cdr,rel,arg)
-      equation
-        ((ei_1,arg_1)) = traverseEquationItem(ei,rel,arg);
-        ((cdr_1,arg_2)) = traverseEquationItemList(cdr,rel,arg_1);
-      then
-        ((ei_1 :: cdr_1,arg_2));
-  end match;
+  outTpl := (list(match el
+      local
+        EquationItem ei,ei_1;
+      case (ei) equation
+        ((ei_1,arg2)) = traverseEquationItem(ei,inFunc,arg2);
+      then ei_1;
+    end match for el in inEquationItemList), arg2);
 end traverseEquationItemList;
 
 // stefan
@@ -1249,22 +1261,17 @@ public function traverseExpEqItemTupleList
     replaceable type TypeA subtypeof Any;
   end FuncTplToTpl;
   replaceable type TypeA subtypeof Any;
+protected
+  TypeA arg2 = inTypeA;
 algorithm
-  outTpl := match (inList,inFunc,inTypeA)
-    local
-      FuncTplToTpl rel;
-      TypeA arg,arg_1,arg_2;
-      list<tuple<Exp, list<EquationItem>>> cdr,cdr_1;
-      Exp e;
-      list<EquationItem> eilst,eilst_1;
-    case({},_,arg) then (({},arg));
-    case((e,eilst) :: cdr,rel,arg)
-      equation
-        ((eilst_1,arg_1)) = traverseEquationItemList(eilst,rel,arg);
-        ((cdr_1,arg_2)) = traverseExpEqItemTupleList(cdr,rel,arg_1);
-      then
-        (((e,eilst_1) :: cdr_1,arg_2));
-  end match;
+  outTpl := (list(match el
+      local
+        Exp e;
+        list<EquationItem> eilst,eilst_1;
+      case (e,eilst) equation
+        ((eilst_1,arg2)) = traverseEquationItemList(eilst,inFunc,arg2);
+      then (e,eilst_1);
+    end match for el in inList), arg2);
 end traverseExpEqItemTupleList;
 
 // stefan
@@ -1448,6 +1455,26 @@ algorithm
   (outExp,outArg) := traverseExpBidir(inExp,dummyTraverseExp,inFunc,inArg);
 end traverseExp;
 
+public function traverseExpTopDown
+" Traverses all subexpressions of an Exp expression.
+  Takes a function and an extra argument passed through the traversal."
+  input Exp inExp;
+  input FuncType inFunc;
+  input Type_a inArg;
+  output Exp outExp;
+  output Type_a outArg;
+  partial function FuncType
+    input Exp inExp;
+    input Type_a inArg;
+    output Exp outExp;
+    output Type_a outArg;
+    replaceable type Type_a subtypeof Any;
+  end FuncType;
+  replaceable type Type_a subtypeof Any;
+algorithm
+  (outExp,outArg) := traverseExpBidir(inExp,inFunc,dummyTraverseExp,inArg);
+end traverseExpTopDown;
+
 public function traverseExpList
 "calls traverseExp on each element in the given list"
   input list<Exp> inExpList;
@@ -1485,7 +1512,7 @@ public function traverseExpListBidir
   end FuncType;
   replaceable type Argument subtypeof Any;
 algorithm
-  (outExpl, outArg) := List.map2Fold(inExpl, traverseExpBidir, enterFunc, exitFunc, inArg);
+  (outExpl, outArg) := List.map2FoldCheckReferenceEq(inExpl, traverseExpBidir, enterFunc, exitFunc, inArg);
 end traverseExpListBidir;
 
 public function traverseExpBidir
@@ -1539,14 +1566,14 @@ public function traverseExpOptBidir
 algorithm
   (outExp, arg) := match(inExp, enterFunc, exitFunc, inArg)
     local
-      Exp e;
+      Exp e1,e2;
       tuple<FuncType, FuncType, Argument> tup;
 
-    case (SOME(e), _, _, _)
+    case (SOME(e1), _, _, _)
       equation
-        (e, arg) = traverseExpBidir(e, enterFunc, exitFunc, inArg);
+        (e2, arg) = traverseExpBidir(e1, enterFunc, exitFunc, inArg);
       then
-        (SOME(e), arg);
+        (if referenceEq(e1,e2) then inExp else SOME(e2), arg);
 
     else (inExp, inArg);
   end match;
@@ -1573,15 +1600,15 @@ protected function traverseExpBidirSubExps
 algorithm
   (e, arg) := match (inExp, enterFunc, exitFunc, inArg)
     local
-      Exp e1, e2, e3;
-      Option<Exp> oe1;
+      Exp e1, e1m, e2, e2m, e3, e3m;
+      Option<Exp> oe1, oe1m;
       tuple<FuncType, FuncType, Argument> tup;
       Operator op;
-      ComponentRef cref;
-      list<tuple<Exp, Exp>> else_ifs;
-      list<Exp> expl;
+      ComponentRef cref, crefm;
+      list<tuple<Exp, Exp>> else_ifs1,else_ifs2;
+      list<Exp> expl1,expl2;
       list<list<Exp>> mat_expl;
-      FunctionArgs fargs;
+      FunctionArgs fargs1,fargs2;
       String error_msg;
       Ident id, enterName, exitName;
       MatchType match_ty;
@@ -1596,119 +1623,119 @@ algorithm
 
     case (CREF(componentRef = cref), _, _, arg)
       equation
-        (cref, arg) = traverseExpBidirCref(cref, enterFunc, exitFunc, arg);
+        (crefm, arg) = traverseExpBidirCref(cref, enterFunc, exitFunc, arg);
       then
-        (CREF(cref), arg);
+        (if referenceEq(cref,crefm) then inExp else CREF(crefm), arg);
 
     case (BINARY(exp1 = e1, op = op, exp2 = e2), _, _, arg)
       equation
-        (e1, arg) = traverseExpBidir(e1, enterFunc, exitFunc, arg);
-        (e2, arg) = traverseExpBidir(e2, enterFunc, exitFunc, arg);
+        (e1m, arg) = traverseExpBidir(e1, enterFunc, exitFunc, arg);
+        (e2m, arg) = traverseExpBidir(e2, enterFunc, exitFunc, arg);
       then
-        (BINARY(e1, op, e2), arg);
+        (if referenceEq(e1,e1m) and referenceEq(e2,e2m) then inExp else BINARY(e1m, op, e2m), arg);
 
     case (UNARY(op = op, exp = e1), _, _, arg)
       equation
-        (e1, arg) = traverseExpBidir(e1, enterFunc, exitFunc, arg);
+        (e1m, arg) = traverseExpBidir(e1, enterFunc, exitFunc, arg);
       then
-        (UNARY(op, e1), arg);
+        (if referenceEq(e1,e1m) then inExp else UNARY(op, e1m), arg);
 
     case (LBINARY(exp1 = e1, op = op, exp2 = e2), _, _, arg)
       equation
-        (e1, arg) = traverseExpBidir(e1, enterFunc, exitFunc, arg);
-        (e2, arg) = traverseExpBidir(e2, enterFunc, exitFunc, arg);
+        (e1m, arg) = traverseExpBidir(e1, enterFunc, exitFunc, arg);
+        (e2m, arg) = traverseExpBidir(e2, enterFunc, exitFunc, arg);
       then
-        (LBINARY(e1, op, e2), arg);
+        (if referenceEq(e1,e1m) and referenceEq(e2,e2m) then inExp else LBINARY(e1m, op, e2m), arg);
 
     case (LUNARY(op = op, exp = e1), _, _, arg)
       equation
-        (e1, arg) = traverseExpBidir(e1, enterFunc, exitFunc, arg);
+        (e1m, arg) = traverseExpBidir(e1, enterFunc, exitFunc, arg);
       then
-        (LUNARY(op, e1), arg);
+        (if referenceEq(e1,e1m) then inExp else LUNARY(op, e1m), arg);
 
     case (RELATION(exp1 = e1, op = op, exp2 = e2), _, _, arg)
       equation
-        (e1, arg) = traverseExpBidir(e1, enterFunc, exitFunc, arg);
-        (e2, arg) = traverseExpBidir(e2, enterFunc, exitFunc, arg);
+        (e1m, arg) = traverseExpBidir(e1, enterFunc, exitFunc, arg);
+        (e2m, arg) = traverseExpBidir(e2, enterFunc, exitFunc, arg);
       then
-        (RELATION(e1, op, e2), arg);
+        (if referenceEq(e1,e1m) and referenceEq(e2,e2m) then inExp else RELATION(e1m, op, e2m), arg);
 
     case (IFEXP(ifExp = e1, trueBranch = e2, elseBranch = e3,
-        elseIfBranch = else_ifs), _, _, arg)
+        elseIfBranch = else_ifs1), _, _, arg)
       equation
-        (e1, arg) = traverseExpBidir(e1, enterFunc, exitFunc, arg);
-        (e2, arg) = traverseExpBidir(e2, enterFunc, exitFunc, arg);
-        (e3, arg) = traverseExpBidir(e3, enterFunc, exitFunc, arg);
-        (else_ifs, arg) = List.map2Fold(else_ifs, traverseExpBidirElseIf, enterFunc, exitFunc, arg);
+        (e1m, arg) = traverseExpBidir(e1, enterFunc, exitFunc, arg);
+        (e2m, arg) = traverseExpBidir(e2, enterFunc, exitFunc, arg);
+        (e3m, arg) = traverseExpBidir(e3, enterFunc, exitFunc, arg);
+        (else_ifs2, arg) = List.map2FoldCheckReferenceEq(else_ifs1, traverseExpBidirElseIf, enterFunc, exitFunc, arg);
       then
-        (IFEXP(e1, e2, e3, else_ifs), arg);
+        (if referenceEq(e1,e1m) and referenceEq(e2,e2m) and referenceEq(e3,e3m) and referenceEq(else_ifs1,else_ifs2) then inExp else IFEXP(e1m, e2m, e3m, else_ifs2), arg);
 
-    case (CALL(function_ = cref, functionArgs = fargs), _, _, arg)
+    case (CALL(function_ = cref, functionArgs = fargs1), _, _, arg)
       equation
-        (fargs, arg) = traverseExpBidirFunctionArgs(fargs, enterFunc, exitFunc, arg);
+        (fargs2, arg) = traverseExpBidirFunctionArgs(fargs1, enterFunc, exitFunc, arg);
       then
-        (CALL(cref, fargs), arg);
+        (if referenceEq(fargs1,fargs2) then inExp else CALL(cref, fargs2), arg);
 
-    case (PARTEVALFUNCTION(function_ = cref, functionArgs = fargs), _, _, arg)
+    case (PARTEVALFUNCTION(function_ = cref, functionArgs = fargs1), _, _, arg)
       equation
-        (fargs, arg) = traverseExpBidirFunctionArgs(fargs, enterFunc, exitFunc, arg);
+        (fargs2, arg) = traverseExpBidirFunctionArgs(fargs1, enterFunc, exitFunc, arg);
       then
-        (PARTEVALFUNCTION(cref, fargs), arg);
+        (if referenceEq(fargs1,fargs2) then inExp else PARTEVALFUNCTION(cref, fargs2), arg);
 
-    case (ARRAY(arrayExp = expl), _, _, arg)
+    case (ARRAY(arrayExp = expl1), _, _, arg)
       equation
-        (expl, arg) = traverseExpListBidir(expl, enterFunc, exitFunc, arg);
+        (expl2, arg) = traverseExpListBidir(expl1, enterFunc, exitFunc, arg);
       then
-        (ARRAY(expl), arg);
+        (if referenceEq(expl1,expl2) then inExp else ARRAY(expl2), arg);
 
     case (MATRIX(matrix = mat_expl), _, _, arg)
       equation
-        (mat_expl, arg) = List.map2Fold(mat_expl, traverseExpListBidir, enterFunc, exitFunc, arg);
+        (mat_expl, arg) = List.map2FoldCheckReferenceEq(mat_expl, traverseExpListBidir, enterFunc, exitFunc, arg);
       then
         (MATRIX(mat_expl), arg);
 
     case (RANGE(start = e1, step = oe1, stop = e2), _, _, arg)
       equation
-        (e1, arg) = traverseExpBidir(e1, enterFunc, exitFunc, arg);
-        (oe1, arg) = traverseExpOptBidir(oe1, enterFunc, exitFunc, arg);
-        (e2, arg) = traverseExpBidir(e2, enterFunc, exitFunc, arg);
+        (e1m, arg) = traverseExpBidir(e1, enterFunc, exitFunc, arg);
+        (oe1m, arg) = traverseExpOptBidir(oe1, enterFunc, exitFunc, arg);
+        (e2m, arg) = traverseExpBidir(e2, enterFunc, exitFunc, arg);
       then
-        (RANGE(e1, oe1, e2), arg);
+        (if referenceEq(e1,e1m) and referenceEq(e2,e2m) and referenceEq(oe1,oe1m) then inExp else RANGE(e1m, oe1m, e2m), arg);
 
     case (END(), _, _, _) then (inExp, inArg);
 
-    case (TUPLE(expressions = expl), _, _, arg)
+    case (TUPLE(expressions = expl1), _, _, arg)
       equation
-        (expl, arg) = traverseExpListBidir(expl, enterFunc, exitFunc, arg);
+        (expl2, arg) = traverseExpListBidir(expl1, enterFunc, exitFunc, arg);
       then
-        (TUPLE(expl), arg);
+        (if referenceEq(expl1,expl2) then inExp else TUPLE(expl2), arg);
 
     case (AS(id = id, exp = e1), _, _, arg)
       equation
-        (e1, arg) = traverseExpBidir(e1, enterFunc, exitFunc, arg);
+        (e1m, arg) = traverseExpBidir(e1, enterFunc, exitFunc, arg);
       then
-        (AS(id, e1), arg);
+        (if referenceEq(e1,e1m) then inExp else AS(id, e1m), arg);
 
     case (CONS(head = e1, rest = e2), _, _, arg)
       equation
-        (e1, arg) = traverseExpBidir(e1, enterFunc, exitFunc, arg);
-        (e2, arg) = traverseExpBidir(e2, enterFunc, exitFunc, arg);
+        (e1m, arg) = traverseExpBidir(e1, enterFunc, exitFunc, arg);
+        (e2m, arg) = traverseExpBidir(e2, enterFunc, exitFunc, arg);
       then
-        (CONS(e1, e2), arg);
+        (if referenceEq(e1,e1m) and referenceEq(e2,e2m) then inExp else CONS(e1m, e2m), arg);
 
     case (MATCHEXP(matchTy = match_ty, inputExp = e1, localDecls = match_decls,
         cases = match_cases, comment = cmt), _, _, arg)
       equation
         (e1, arg) = traverseExpBidir(e1, enterFunc, exitFunc, arg);
-        (match_cases, arg) = List.map2Fold(match_cases, traverseMatchCase, enterFunc, exitFunc, arg);
+        (match_cases, arg) = List.map2FoldCheckReferenceEq(match_cases, traverseMatchCase, enterFunc, exitFunc, arg);
       then
         (MATCHEXP(match_ty, e1, match_decls, match_cases, cmt), arg);
 
-    case (LIST(exps = expl), _, _, arg)
+    case (LIST(exps = expl1), _, _, arg)
       equation
-        (expl, arg) = traverseExpListBidir(expl, enterFunc, exitFunc, arg);
+        (expl2, arg) = traverseExpListBidir(expl1, enterFunc, exitFunc, arg);
       then
-        (LIST(expl), arg);
+        (if referenceEq(expl1,expl2) then inExp else LIST(expl2), arg);
 
     case (CODE(), _, _, _)
       then (inExp, inArg);
@@ -1718,7 +1745,7 @@ algorithm
         (e1, arg) = traverseExpBidir(inExp.exp, enterFunc, exitFunc, arg);
         (e2, arg) = traverseExpBidir(inExp.index, enterFunc, exitFunc, arg);
       then
-        (DOT(e1, e2), arg);
+        (if referenceEq(inExp.exp,e1) and referenceEq(inExp.index,e2) then inExp else DOT(e1, e2), arg);
 
     else
       algorithm
@@ -1755,28 +1782,28 @@ algorithm
   (outCref, arg) := match(inCref, enterFunc, exitFunc, inArg)
     local
       Ident name;
-      ComponentRef cr;
-      list<Subscript> subs;
+      ComponentRef cr1,cr2;
+      list<Subscript> subs1,subs2;
       tuple<FuncType, FuncType, Argument> tup;
 
-    case (CREF_FULLYQUALIFIED(componentRef = cr), _, _, arg)
+    case (CREF_FULLYQUALIFIED(componentRef = cr1), _, _, arg)
       equation
-        (cr, arg) = traverseExpBidirCref(cr, enterFunc, exitFunc, arg);
+        (cr2, arg) = traverseExpBidirCref(cr1, enterFunc, exitFunc, arg);
       then
-        (crefMakeFullyQualified(cr), arg);
+        (if referenceEq(cr1,cr2) then inCref else crefMakeFullyQualified(cr2), arg);
 
-    case (CREF_QUAL(name = name, subscripts = subs, componentRef = cr), _, _, arg)
+    case (CREF_QUAL(name = name, subscripts = subs1, componentRef = cr1), _, _, arg)
       equation
-        (subs, arg) = List.map2Fold(subs, traverseExpBidirSubs, enterFunc, exitFunc, arg);
-        (cr, arg) = traverseExpBidirCref(cr, enterFunc, exitFunc, arg);
+        (subs2, arg) = List.map2FoldCheckReferenceEq(subs1, traverseExpBidirSubs, enterFunc, exitFunc, arg);
+        (cr2, arg) = traverseExpBidirCref(cr1, enterFunc, exitFunc, arg);
       then
-        (CREF_QUAL(name, subs, cr), arg);
+        (if referenceEq(cr1,cr2) and referenceEq(subs1,subs2) then inCref else CREF_QUAL(name, subs2, cr2), arg);
 
-    case (CREF_IDENT(name = name, subscripts = subs), _, _, arg)
+    case (CREF_IDENT(name = name, subscripts = subs1), _, _, arg)
       equation
-        (subs, arg) = List.map2Fold(subs, traverseExpBidirSubs, enterFunc, exitFunc, arg);
+        (subs2, arg) = List.map2FoldCheckReferenceEq(subs1, traverseExpBidirSubs, enterFunc, exitFunc, arg);
       then
-        (CREF_IDENT(name, subs), arg);
+        (if referenceEq(subs1,subs2) then inCref else CREF_IDENT(name, subs2), arg);
 
     case (ALLWILD(), _, _, _) then (inCref, inArg);
     case (WILD(), _, _, _) then (inCref, inArg);
@@ -1805,13 +1832,13 @@ public function traverseExpBidirSubs
 algorithm
   (outSubscript, arg) := match(inSubscript, enterFunc, exitFunc, inArg)
     local
-      Exp sub_exp;
+      Exp e1,e2;
 
-    case (SUBSCRIPT(subscript = sub_exp), _, _, arg)
+    case (SUBSCRIPT(subscript = e1), _, _, arg)
       equation
-        (sub_exp, arg) = traverseExpBidir(sub_exp, enterFunc, exitFunc, inArg);
+        (e2, arg) = traverseExpBidir(e1, enterFunc, exitFunc, inArg);
       then
-        (SUBSCRIPT(sub_exp), arg);
+        (if referenceEq(e1,e2) then inSubscript else SUBSCRIPT(e2), arg);
 
     case (NOSUB(), _, _, _) then (inSubscript, inArg);
   end match;
@@ -1867,26 +1894,26 @@ public function traverseExpBidirFunctionArgs
 algorithm
   (outArgs, outArg) := match(inArgs, enterFunc, exitFunc, inArg)
     local
-      Exp e;
-      list<Exp> expl;
-      list<NamedArg> named_args;
-      ForIterators iters;
+      Exp e1,e2;
+      list<Exp> expl1,expl2;
+      list<NamedArg> named_args1,named_args2;
+      ForIterators iters1,iters2;
       Argument arg;
       ReductionIterType iterType;
 
-    case (FUNCTIONARGS(args = expl, argNames = named_args), _, _, arg)
+    case (FUNCTIONARGS(args = expl1, argNames = named_args1), _, _, arg)
       equation
-        (expl, arg) = traverseExpListBidir(expl, enterFunc, exitFunc, arg);
-        (named_args, arg) = List.map2Fold(named_args, traverseExpBidirNamedArg, enterFunc, exitFunc, arg);
+        (expl2, arg) = traverseExpListBidir(expl1, enterFunc, exitFunc, arg);
+        (named_args2, arg) = List.map2FoldCheckReferenceEq(named_args1, traverseExpBidirNamedArg, enterFunc, exitFunc, arg);
       then
-        (FUNCTIONARGS(expl, named_args), arg);
+        (if referenceEq(expl1,expl2) and referenceEq(named_args1,named_args2) then inArgs else FUNCTIONARGS(expl2, named_args2), arg);
 
-    case (FOR_ITER_FARG(e, iterType, iters), _, _, arg)
+    case (FOR_ITER_FARG(e1, iterType, iters1), _, _, arg)
       equation
-        (e, arg) = traverseExpBidir(e, enterFunc, exitFunc, arg);
-        (iters, arg) = List.map2Fold(iters, traverseExpBidirIterator, enterFunc, exitFunc, arg);
+        (e2, arg) = traverseExpBidir(e1, enterFunc, exitFunc, arg);
+        (iters2, arg) = List.map2FoldCheckReferenceEq(iters1, traverseExpBidirIterator, enterFunc, exitFunc, arg);
       then
-        (FOR_ITER_FARG(e, iterType, iters), arg);
+        (if referenceEq(e1,e2) and referenceEq(iters1,iters2) then inArgs else FOR_ITER_FARG(e2, iterType, iters2), arg);
   end match;
 end traverseExpBidirFunctionArgs;
 
@@ -1911,11 +1938,11 @@ public function traverseExpBidirNamedArg
 
 protected
   Ident name;
-  Exp value;
+  Exp value1,value2;
 algorithm
-  NAMEDARG(name, value) := inArg;
-  (value, outExtra) := traverseExpBidir(value, enterFunc, exitFunc, inExtra);
-  outArg := NAMEDARG(name, value);
+  NAMEDARG(name, value1) := inArg;
+  (value2, outExtra) := traverseExpBidir(value1, enterFunc, exitFunc, inExtra);
+  outArg := if referenceEq(value1,value2) then inArg else NAMEDARG(name, value2);
 end traverseExpBidirNamedArg;
 
 public function traverseExpBidirIterator
@@ -1939,12 +1966,12 @@ public function traverseExpBidirIterator
 
 protected
   Ident name;
-  Option<Exp> guardExp,range;
+  Option<Exp> guardExp1,guardExp2,range1,range2;
 algorithm
-  ITERATOR(name=name, guardExp=guardExp, range=range) := inIterator;
-  (guardExp, outArg) := traverseExpOptBidir(guardExp, enterFunc, exitFunc, inArg);
-  (range, outArg) := traverseExpOptBidir(range, enterFunc, exitFunc, outArg);
-  outIterator := ITERATOR(name, guardExp, range);
+  ITERATOR(name=name, guardExp=guardExp1, range=range1) := inIterator;
+  (guardExp2, outArg) := traverseExpOptBidir(guardExp1, enterFunc, exitFunc, inArg);
+  (range2, outArg) := traverseExpOptBidir(range1, enterFunc, exitFunc, outArg);
+  outIterator := if referenceEq(guardExp1,guardExp2) and referenceEq(range1,range2) then inIterator else ITERATOR(name, guardExp2, range2);
 end traverseExpBidirIterator;
 
 public function traverseMatchCase
@@ -2018,11 +2045,11 @@ algorithm
       Argument arg;
     case (ALGORITHMS(algs),_,_,arg)
       equation
-        (algs, arg) = List.map2Fold(algs, traverseAlgorithmItemBidir, enterFunc, exitFunc, arg);
+        (algs, arg) = List.map2FoldCheckReferenceEq(algs, traverseAlgorithmItemBidir, enterFunc, exitFunc, arg);
       then (ALGORITHMS(algs),arg);
     case (EQUATIONS(eqs),_,_,arg)
       equation
-        (eqs, arg) = List.map2Fold(eqs, traverseEquationItemBidir, enterFunc, exitFunc, arg);
+        (eqs, arg) = List.map2FoldCheckReferenceEq(eqs, traverseEquationItemBidir, enterFunc, exitFunc, arg);
       then (EQUATIONS(eqs),arg);
   end match;
 end traverseClassPartBidir;
@@ -2044,7 +2071,7 @@ protected function traverseEquationItemListBidir
 
   replaceable type Argument subtypeof Any;
 algorithm
-  (outEquationItems, outArg) := List.map2Fold(inEquationItems, traverseEquationItemBidir, enterFunc, exitFunc, inArg);
+  (outEquationItems, outArg) := List.map2FoldCheckReferenceEq(inEquationItems, traverseEquationItemBidir, enterFunc, exitFunc, inArg);
 end traverseEquationItemListBidir;
 
 protected function traverseAlgorithmItemListBidir
@@ -2064,7 +2091,7 @@ protected function traverseAlgorithmItemListBidir
 
   replaceable type Argument subtypeof Any;
 algorithm
-  (outAlgs, outArg) := List.map2Fold(inAlgs, traverseAlgorithmItemBidir, enterFunc, exitFunc, inArg);
+  (outAlgs, outArg) := List.map2FoldCheckReferenceEq(inAlgs, traverseAlgorithmItemBidir, enterFunc, exitFunc, inArg);
 end traverseAlgorithmItemListBidir;
 
 protected function traverseAlgorithmItemBidir
@@ -2167,7 +2194,7 @@ algorithm
       equation
         (e1, arg) = traverseExpBidir(e1, enterFunc, exitFunc, arg);
         (eqil1, arg) = traverseEquationItemListBidir(eqil1, enterFunc, exitFunc, arg);
-        (else_branch,arg) = List.map2Fold(else_branch, traverseEquationBidirElse, enterFunc, exitFunc, arg);
+        (else_branch,arg) = List.map2FoldCheckReferenceEq(else_branch, traverseEquationBidirElse, enterFunc, exitFunc, arg);
         (eqil2,arg) = traverseEquationItemListBidir(eqil2, enterFunc, exitFunc, arg);
       then
         (EQ_IF(e1, eqil1, else_branch, eqil2), arg);
@@ -2178,6 +2205,13 @@ algorithm
         (e2, arg) = traverseExpBidir(e2, enterFunc, exitFunc, arg);
       then
         (EQ_EQUALS(e1, e2), arg);
+    case (EQ_PDE(leftSide = e1, rightSide = e2, domain = cref1), _, _, arg)
+      equation
+        (e1, arg) = traverseExpBidir(e1, enterFunc, exitFunc, arg);
+        (e2, arg) = traverseExpBidir(e2, enterFunc, exitFunc, arg);
+        cref1 = traverseExpBidirCref(cref1, enterFunc, exitFunc, arg);
+      then
+        (EQ_PDE(e1, e2,cref1), arg);
 
     case (EQ_CONNECT(connector1 = cref1, connector2 = cref2), _, _, arg)
       equation
@@ -2188,7 +2222,7 @@ algorithm
 
     case (EQ_FOR(iterators = iters, forEquations = eqil1), _, _, arg)
       equation
-        (iters, arg) = List.map2Fold(iters, traverseExpBidirIterator, enterFunc, exitFunc, arg);
+        (iters, arg) = List.map2FoldCheckReferenceEq(iters, traverseExpBidirIterator, enterFunc, exitFunc, arg);
         (eqil1, arg) = traverseEquationItemListBidir(eqil1, enterFunc, exitFunc, arg);
       then
         (EQ_FOR(iters, eqil1), arg);
@@ -2197,7 +2231,7 @@ algorithm
       equation
         (e1, arg) = traverseExpBidir(e1, enterFunc, exitFunc, arg);
         (eqil1, arg) = traverseEquationItemListBidir(eqil1, enterFunc, exitFunc, arg);
-        (else_branch, arg) = List.map2Fold(else_branch, traverseEquationBidirElse, enterFunc, exitFunc, arg);
+        (else_branch, arg) = List.map2FoldCheckReferenceEq(else_branch, traverseEquationBidirElse, enterFunc, exitFunc, arg);
       then
         (EQ_WHEN_E(e1, eqil1, else_branch), arg);
 
@@ -2308,19 +2342,19 @@ algorithm
       equation
         (e1, arg) = traverseExpBidir(e1, enterFunc, exitFunc, arg);
         (algs1, arg) = traverseAlgorithmItemListBidir(algs1, enterFunc, exitFunc, arg);
-        (else_branch, arg) = List.map2Fold(else_branch, traverseAlgorithmBidirElse, enterFunc, exitFunc, arg);
+        (else_branch, arg) = List.map2FoldCheckReferenceEq(else_branch, traverseAlgorithmBidirElse, enterFunc, exitFunc, arg);
         (algs2, arg) = traverseAlgorithmItemListBidir(algs2, enterFunc, exitFunc, arg);
       then (ALG_IF(e1, algs1, else_branch, algs2), arg);
 
     case (ALG_FOR(iters, algs1), _, _, arg)
       equation
-        (iters, arg) = List.map2Fold(iters, traverseExpBidirIterator, enterFunc, exitFunc, arg);
+        (iters, arg) = List.map2FoldCheckReferenceEq(iters, traverseExpBidirIterator, enterFunc, exitFunc, arg);
         (algs1, arg) = traverseAlgorithmItemListBidir(algs1, enterFunc, exitFunc, arg);
       then (ALG_FOR(iters, algs1), arg);
 
     case (ALG_PARFOR(iters, algs1), _, _, arg)
       equation
-        (iters, arg) = List.map2Fold(iters, traverseExpBidirIterator, enterFunc, exitFunc, arg);
+        (iters, arg) = List.map2FoldCheckReferenceEq(iters, traverseExpBidirIterator, enterFunc, exitFunc, arg);
         (algs1, arg) = traverseAlgorithmItemListBidir(algs1, enterFunc, exitFunc, arg);
       then (ALG_PARFOR(iters, algs1), arg);
 
@@ -2334,7 +2368,7 @@ algorithm
       equation
         (e1, arg) = traverseExpBidir(e1, enterFunc, exitFunc, arg);
         (algs1, arg) = traverseAlgorithmItemListBidir(algs1, enterFunc, exitFunc, arg);
-        (else_branch, arg) = List.map2Fold(else_branch, traverseAlgorithmBidirElse, enterFunc, exitFunc, arg);
+        (else_branch, arg) = List.map2FoldCheckReferenceEq(else_branch, traverseAlgorithmBidirElse, enterFunc, exitFunc, arg);
       then (ALG_WHEN_A(e1, algs1, else_branch), arg);
 
     case (ALG_NORETCALL(cref1, func_args), _, _, arg)
@@ -2396,6 +2430,17 @@ algorithm
   name := IDENT(id);
 end className;
 
+public function isClassNamed
+  input String inName;
+  input Class inClass;
+  output Boolean outIsNamed;
+algorithm
+  outIsNamed := match inClass
+    case CLASS() then inName == inClass.name;
+    else false;
+  end match;
+end isClassNamed;
+
 public function elementSpecName
   "The ElementSpec type contains the name of the element, and this function
    extracts this name."
@@ -2409,6 +2454,16 @@ algorithm
     case COMPONENTS(components = {COMPONENTITEM(component = COMPONENT(name = n))}) then n;
   end match;
 end elementSpecName;
+
+public function isClassdef
+  input Element inElement;
+  output Boolean b;
+algorithm
+  b := match inElement
+    case ELEMENT(specification=CLASSDEF()) then true;
+    else false;
+  end match;
+end isClassdef;
 
 public function printImportString
   "This function takes a Import and prints it as a flat-string."
@@ -2602,19 +2657,84 @@ end typeSpecDimensions;
 
 public function pathString "This function simply converts a Path to a string."
   input Path path;
+  input String delimiter=".";
+  input Boolean usefq=true;
+  input Boolean reverse=false;
   output String s;
+protected
+  Path p1,p2;
+  Integer count=0, len=0, dlen=stringLength(delimiter);
+  Boolean b;
 algorithm
-  s := pathString2(path, ".");
+  // First, calculate the length of the string to be generated
+  p1 :=  if usefq then path else makeNotFullyQualified(path);
+  _ := match p1
+    case IDENT()
+      algorithm
+        // Do not allocate memory if we're just going to copy the only identifier
+        s := p1.name;
+        return;
+      then ();
+    else ();
+  end match;
+  p2 := p1;
+  b := true;
+  while b loop
+    (p2,len,count,b) := match p2
+      case IDENT() then (p2,len+1,count+stringLength(p2.name),false);
+      case QUALIFIED() then (p2.path,len+1,count+stringLength(p2.name),true);
+      case FULLYQUALIFIED() then (p2.path,len+1,count,true);
+    end match;
+  end while;
+  s := pathStringWork(p1, (len-1)*dlen+count, delimiter, dlen, reverse);
 end pathString;
 
-public function pathStringNoQual
-  "Converts a Path to a String, but does not add a dot in front of fully
-  qualified paths."
+protected
+
+function pathStringWork
   input Path inPath;
-  output String outString;
+  input Integer len;
+  input String delimiter;
+  input Integer dlen;
+  input Boolean reverse;
+  output String s="";
+protected
+  Path p=inPath;
+  Boolean b=true;
+  Integer count=0;
+  // Allocate a string of the exact required length
+  System.StringAllocator sb=System.StringAllocator(len);
 algorithm
-  outString := pathString2(makeNotFullyQualified(inPath), ".");
-end pathStringNoQual;
+  // Fill the string
+  while b loop
+    (p,count,b) := match p
+      case IDENT()
+        algorithm
+          System.stringAllocatorStringCopy(sb, p.name, if reverse then len-count-stringLength(p.name) else count);
+        then (p,count+stringLength(p.name),false);
+      case QUALIFIED()
+        algorithm
+          System.stringAllocatorStringCopy(sb, p.name, if reverse then len-count-dlen-stringLength(p.name) else count);
+          System.stringAllocatorStringCopy(sb, delimiter, if reverse then len-count-dlen else count+stringLength(p.name));
+        then (p.path,count+stringLength(p.name)+dlen,true);
+      case FULLYQUALIFIED()
+        algorithm
+          System.stringAllocatorStringCopy(sb, delimiter, if reverse then len-count-dlen else count);
+        then (p.path,count+dlen,true);
+    end match;
+  end while;
+  // Return the string
+  s := System.stringAllocatorResult(sb,s);
+end pathStringWork;
+
+public
+
+function pathStringNoQual = pathString(usefq=false);
+
+function pathStringDefault
+  input Path path;
+  output String s = pathString(path);
+end pathStringDefault;
 
 public function pathCompare
   input Path ip1;
@@ -2675,7 +2795,7 @@ algorithm
   hash := intAbs(intMod(pathHashModWork(path,5381),mod));
 end pathHashMod;
 
-protected function pathHashModWork "Hashes a path."
+public function pathHashModWork "Hashes a path."
   input Path path;
   input Integer acc;
   output Integer hash;
@@ -2707,27 +2827,6 @@ algorithm
         str;
   end match;
 end optPathString;
-
-public function pathString2 "Tail-recursive version, with string builder (stringDelimitList is optimised)"
-  input Path path;
-  input String delimiter;
-  output String outString;
-algorithm
-  outString := match (path,delimiter)
-    case (FULLYQUALIFIED(),_)
-      then "." + stringDelimitList(pathToStringList(path),delimiter);
-    else
-      then stringDelimitList(pathToStringList(path),delimiter);
-  end match;
-end pathString2;
-
-public function pathString2NoLeadingDot "Tail-recursive version, with string builder (stringDelimitList is optimised)"
-  input Path path;
-  input String delimiter;
-  output String outString;
-algorithm
-  outString := stringDelimitList(pathToStringList(path),delimiter);
-end pathString2NoLeadingDot;
 
 public function pathStringUnquoteReplaceDot
 " Changes a path to string. Uses the input string as separator.
@@ -2903,6 +3002,31 @@ algorithm
   end match;
 end pathRest;
 
+public function pathStripSamePrefix
+  "strips the same prefix paths and returns the stripped path. e.g pathStripSamePrefix(P.M.A, P.M.B) => A"
+  input Absyn.Path inPath1;
+  input Absyn.Path inPath2;
+  output Absyn.Path outPath;
+algorithm
+  outPath := matchcontinue(inPath1, inPath2)
+    local
+      Ident ident1, ident2;
+      Absyn.Path path1, path2;
+
+    case (_, _)
+      equation
+        ident1 = pathFirstIdent(inPath1);
+        ident2 = pathFirstIdent(inPath2);
+        true = stringEq(ident1, ident2);
+        path1 = stripFirst(inPath1);
+        path2 = stripFirst(inPath2);
+      then
+        pathStripSamePrefix(path1, path2);
+
+    else inPath1;
+  end matchcontinue;
+end pathStripSamePrefix;
+
 public function pathPrefix
   "Returns the prefix of a path, i.e. this.is.a.path => this.is.a"
   input Path path;
@@ -3058,11 +3182,10 @@ algorithm
       list<Subscript> subs;
       String id;
       ComponentRef cr;
+
     case (CREF_IDENT(id,subs),_)
-      equation
-        subs = listAppend(subs,i);
-      then
-        CREF_IDENT(id,subs);
+      then CREF_IDENT(id, listAppend(subs, i));
+
     case (CREF_QUAL(id,subs,cr),_)
       equation
         cr = addSubscriptsLast(cr,i);
@@ -3371,9 +3494,8 @@ algorithm
       equation
         crefs1 = getCrefsFromSubs(subs,includeSubs,includeFunctions);
         crefs = getCrefFromExp(exp,includeSubs,includeFunctions);
-        crefs = listAppend(crefs,crefs1);
       then
-        crefs;
+        listAppend(crefs,crefs1);
   end match;
 end getCrefsFromSubs;
 
@@ -3449,15 +3571,12 @@ algorithm
       then
         res;
 
+    // TODO: Handle else if-branches.
     case (IFEXP(ifExp = e1,trueBranch = e2,elseBranch = e3),_,_)
-      equation
-        l1 = getCrefFromExp(e1,includeSubs,includeFunctions);
-        l2 = getCrefFromExp(e2,includeSubs,includeFunctions);
-        l1 = listAppend(l1, l2);
-        l2 = getCrefFromExp(e3,includeSubs,includeFunctions);
-        res = listAppend(l1, l2) "TODO elseif\'s e4";
-      then
-        res;
+      then List.flatten({
+        getCrefFromExp(e1, includeSubs, includeFunctions),
+        getCrefFromExp(e2, includeSubs, includeFunctions),
+        getCrefFromExp(e3, includeSubs, includeFunctions)});
 
     case (CALL(function_ = cr, functionArgs = farg),_,_)
       equation
@@ -3487,7 +3606,7 @@ algorithm
         l1 = getCrefFromExp(e1,includeSubs,includeFunctions);
         l2 = getCrefFromExp(e2,includeSubs,includeFunctions);
         l2 = listAppend(l1, l2);
-        l2 = getCrefFromExp(e3,includeSubs,includeFunctions);
+        l1 = getCrefFromExp(e3,includeSubs,includeFunctions);
         res = listAppend(l1, l2);
       then
         res;
@@ -3867,6 +3986,18 @@ algorithm
   end match;
 end crefToPath;
 
+public function elementSpecToPath "This function converts a ElementSpec to a Path, if possible.
+  If the ElementSpec is not EXTENDS, it will silently fail."
+  input ElementSpec inElementSpec;
+  output Path outPath;
+algorithm
+  outPath:= match (inElementSpec)
+    local
+      Path p;
+    case EXTENDS(path = p) then p;
+  end match;
+end elementSpecToPath;
+
 public function crefToPathIgnoreSubs
   "Converts a ComponentRef to a Path, ignoring any subscripts."
   input ComponentRef inComponentRef;
@@ -4196,6 +4327,16 @@ algorithm
   end match;
 end crefFirstIdent;
 
+public function crefSecondIdent
+  input ComponentRef cref;
+  output Ident ident;
+algorithm
+  ident := match cref
+    case CREF_QUAL() then crefFirstIdent(cref.componentRef);
+    case CREF_FULLYQUALIFIED() then crefSecondIdent(cref.componentRef);
+  end match;
+end crefSecondIdent;
+
 public function crefFirstCref
   "Returns the first part of a cref."
   input ComponentRef inCref;
@@ -4314,17 +4455,30 @@ public function setClassName "author: BZ
   Sets the name of the class"
   input Class inClass;
   input String newName;
-  output Class outClass;
-protected
-  Ident n;
-  Boolean p,f,e;
-  Restriction r;
-  ClassDef body;
-  Info info;
+  output Class outClass = inClass;
 algorithm
-  CLASS(_, p, f, e, r, body, info) := inClass;
-  outClass := CLASS(newName, p, f, e, r, body, info);
+  outClass := match outClass
+    case CLASS()
+      algorithm
+        outClass.name := newName;
+      then
+        outClass;
+  end match;
 end setClassName;
+
+public function setClassBody
+  input Class inClass;
+  input ClassDef inBody;
+  output Class outClass = inClass;
+algorithm
+  outClass := match outClass
+    case CLASS()
+      algorithm
+        outClass.body := inBody;
+      then
+        outClass;
+  end match;
+end setClassBody;
 
 public function crefEqual " Checks if the name of a ComponentRef is
  equal to the name of another ComponentRef, including subscripts.
@@ -5244,6 +5398,7 @@ algorithm
   isIorO := match(direction)
     case (INPUT()) then true;
     case (OUTPUT()) then true;
+    case (INPUT_OUTPUT()) then true;
     case (BIDIR()) then false;
   end match;
 end isInputOrOutput;
@@ -5254,9 +5409,21 @@ public function isInput
 algorithm
   outIsInput := match(inDirection)
     case INPUT() then true;
+    case INPUT_OUTPUT() then true;
     else false;
   end match;
 end isInput;
+
+public function isOutput
+  input Direction inDirection;
+  output Boolean outIsOutput;
+algorithm
+  outIsOutput := match(inDirection)
+    case OUTPUT() then true;
+    case INPUT_OUTPUT() then true;
+    else false;
+  end match;
+end isOutput;
 
 public function directionEqual
   input Direction inDirection1;
@@ -5267,9 +5434,23 @@ algorithm
     case (BIDIR(), BIDIR()) then true;
     case (INPUT(), INPUT()) then true;
     case (OUTPUT(), OUTPUT()) then true;
+    case (INPUT_OUTPUT(), INPUT_OUTPUT()) then true;
     else false;
   end match;
 end directionEqual;
+
+public function isFieldEqual
+  input IsField isField1;
+  input IsField isField2;
+  output Boolean outEqual;
+algorithm
+  outEqual := match(isField1, isField2)
+    case (NONFIELD(), NONFIELD()) then true;
+    case (FIELD(), FIELD()) then true;
+    else false;
+  end match;
+end isFieldEqual;
+
 
 public function pathLt
   input Path path1;
@@ -5368,7 +5549,7 @@ algorithm
       list<ElementItem> elts1,elts2;
     case (PUBLIC(elts1),elts2)
       equation
-        elts1 = List.filter(elts1,filterAnnotationItem);
+        elts1 = List.filterOnTrue(elts1,filterAnnotationItem);
       then listAppend(elts1,elts2);
     else elts;
   end match;
@@ -5376,8 +5557,12 @@ end getFunctionInterfaceParts;
 
 protected function filterAnnotationItem
   input ElementItem elt;
+  output Boolean outB;
 algorithm
-  ELEMENTITEM() := elt;
+  outB := match elt
+    case ELEMENTITEM() then true;
+    else false;
+  end match;
 end filterAnnotationItem;
 
 public function getExternalDecl
@@ -5391,16 +5576,18 @@ protected
   list<ClassPart> class_parts;
 algorithm
   CLASS(body = PARTS(classParts = class_parts)) := inCls;
-  outExternal := List.find(class_parts, getExternalFromClassPart);
+  outExternal := List.find(class_parts, isExternalPart);
 end getExternalDecl;
 
-protected function getExternalFromClassPart
+protected function isExternalPart
   input ClassPart inClassPart;
-  output ClassPart outExternal;
+  output Boolean outFound;
 algorithm
-  EXTERNAL() := inClassPart;
-  outExternal := inClassPart;
-end getExternalFromClassPart;
+  outFound := match inClassPart
+    case EXTERNAL() then true;
+    else false;
+  end match;
+end isExternalPart;
 
 public function isParts
   input ClassDef cl;
@@ -5488,7 +5675,7 @@ algorithm
     // make sure we don't have not initial()
     case (UNARY(NOT(), _) , _) then (inExp,inBool);
     // we have initial
-    case (e , b)
+    case (e , _)
       equation
         b = isInitial(e);
       then (e, b);
@@ -5558,50 +5745,113 @@ algorithm
   outAnnotation:=
   match (inAnnotation1,inAnnotation2)
     local
-      list<ElementArg> neweltargs,oldrest,eltargs,eltargs_1;
-      ElementArg mod;
+      list<ElementArg> oldmods,newmods;
       Annotation a;
-      Path p;
-
-    case (ANNOTATION(elementArgs = ((mod as MODIFICATION(path = p)) :: oldrest)),ANNOTATION(elementArgs = eltargs))
-      equation
-        ANNOTATION(neweltargs) = mergeAnnotations(ANNOTATION(oldrest), ANNOTATION(eltargs));
-      then
-        if modificationInElementargs(eltargs, p)
-        then ANNOTATION(neweltargs)
-        else ANNOTATION(mod :: neweltargs);
-
     case (ANNOTATION(elementArgs = {}),a) then a;
 
+    case (ANNOTATION(elementArgs = oldmods),ANNOTATION(elementArgs = newmods))
+      then ANNOTATION(mergeAnnotations2(oldmods, newmods));
   end match;
 end mergeAnnotations;
 
-protected function modificationInElementargs
-"returns true or false if the given path is in the list of modifications"
-  input list<ElementArg> inAbsynElementArgLst;
-  input Path inPath;
-  output Boolean yes;
+protected
+
+function mergeAnnotations2
+  input list<ElementArg> oldmods;
+  input list<ElementArg> newmods;
+  output list<ElementArg> res = listReverse(oldmods);
+protected
+  list<ElementArg> mods;
+  Boolean b;
+  Path p;
+  ElementArg mod1,mod2;
 algorithm
-  yes := match (inAbsynElementArgLst,inPath)
+  for mod in newmods loop
+    MODIFICATION(path=p) := mod;
+    try
+      mod2 := List.find(res, function isModificationOfPath(path=p));
+      mod1 := subModsInSameOrder(mod2, mod);
+      (res, true) := List.replaceOnTrue(mod1, res, function isModificationOfPath(path=p));
+    else
+      res := mod::res;
+    end try;
+  end for;
+  res := listReverse(res);
+end mergeAnnotations2;
+
+public function mergeCommentAnnotation
+  "Merges an annotation into a Comment option."
+  input Annotation inAnnotation;
+  input Option<Comment> inComment;
+  output Option<Comment> outComment;
+algorithm
+  outComment := match inComment
     local
-      String id1,id2;
-      ElementArg m;
-      list<ElementArg> xs;
-      Boolean b;
+      Annotation ann;
+      Option<String> cmt;
 
-    case ((MODIFICATION(path = IDENT(name = id1)) :: xs),IDENT(name = id2))
-      equation
-        b = match(stringEq(id1, id2))
-              case (true) then true;
-              case (false) then modificationInElementargs(xs, inPath);
-            end match;
-      then
-        b;
+    // No comment, create a new one.
+    case NONE()
+      then SOME(COMMENT(SOME(inAnnotation), NONE()));
 
-    else false;
+    // A comment without annotation, insert the annotation.
+    case SOME(COMMENT(annotation_ = NONE(), comment = cmt))
+      then SOME(COMMENT(SOME(inAnnotation), cmt));
+
+    // A comment with annotation, merge the annotations.
+    case SOME(COMMENT(annotation_ = SOME(ann), comment = cmt))
+      then SOME(COMMENT(SOME(mergeAnnotations(ann, inAnnotation)), cmt));
 
   end match;
-end modificationInElementargs;
+end mergeCommentAnnotation;
+
+function isModificationOfPath
+"returns true or false if the given path is in the list of modifications"
+  input ElementArg mod;
+  input Path path;
+  output Boolean yes;
+algorithm
+  yes := match (mod,path)
+    local
+      String id1,id2;
+    case (MODIFICATION(path = IDENT(name = id1)),IDENT(name = id2)) then id1==id2;
+    else false;
+  end match;
+end isModificationOfPath;
+
+function subModsInSameOrder
+  input ElementArg oldmod;
+  input ElementArg newmod;
+  output ElementArg mod;
+algorithm
+  mod := match (oldmod,newmod)
+    local
+      list<ElementArg> args1,args2,res;
+      ElementArg arg2;
+      EqMod eq1,eq2;
+      Path p;
+
+    // mod1 or mod2 has no submods
+    case (_, MODIFICATION(modification=NONE())) then newmod;
+    case (MODIFICATION(modification=NONE()), _) then newmod;
+    // mod1
+    case (MODIFICATION(modification=SOME(CLASSMOD(args1,_))), arg2 as MODIFICATION(modification=SOME(CLASSMOD(args2,eq2))))
+      algorithm
+        // Delete all items from args2 that are not in args1
+        res := {};
+        for arg1 in args1 loop
+          MODIFICATION(path=p) := arg1;
+          if List.exist(args2, function isModificationOfPath(path=p)) then
+            res := arg1::res;
+          end if;
+        end for;
+        res := listReverse(res);
+        // Merge the annotations
+        res := mergeAnnotations2(res, args2);
+        arg2.modification := SOME(CLASSMOD(res,eq2));
+      then arg2;
+  end match;
+end subModsInSameOrder;
 
 public function annotationToElementArgs
   input Annotation ann;
@@ -6047,10 +6297,7 @@ algorithm
   end while;
 
   if changed then
-    outList := listReverse(outList);
-    if not outContinue then
-      outList := listAppend(outList, rest_e);
-    end if;
+    outList := List.append_reverse(outList, rest_e);
   else
     outList := inList;
   end if;
@@ -6268,7 +6515,10 @@ public function elementArgName
   output Path outName;
 algorithm
   outName := match(inArg)
+    local
+      ElementSpec e;
     case MODIFICATION(path = outName) then outName;
+    case REDECLARATION(elementSpec = e) then makeIdentPathFromString(elementSpecName(e));
   end match;
 end elementArgName;
 
@@ -6499,6 +6749,110 @@ algorithm
   range_exp := Util.applyOption1(range_exp, inFunc, inArg);
   outIterator := ITERATOR(name, guard_exp, range_exp);
 end traverseExpShallowIterator;
+
+public function isElementItemClass
+  input ElementItem inElement;
+  output Boolean outIsClass;
+algorithm
+  outIsClass := match inElement
+    case ELEMENTITEM(element = ELEMENT(specification = CLASSDEF())) then true;
+    else false;
+  end match;
+end isElementItemClass;
+
+public function isElementItem
+  input ElementItem inElement;
+  output Boolean outIsClass;
+algorithm
+  outIsClass := match inElement
+    case ELEMENTITEM() then true;
+    else false;
+  end match;
+end isElementItem;
+
+public function isAlgorithmItem
+  input AlgorithmItem inAlg;
+  output Boolean outIsClass;
+algorithm
+  outIsClass := match inAlg
+    case ALGORITHMITEM() then true;
+    else false;
+  end match;
+end isAlgorithmItem;
+
+public function isElementItemClassNamed
+  input String inName;
+  input ElementItem inElement;
+  output Boolean outIsNamed;
+algorithm
+  outIsNamed := match inElement
+    local
+      String name;
+
+    case ELEMENTITEM(element = ELEMENT(specification = CLASSDEF(
+      class_ = CLASS(name = name)))) then name == inName;
+    else false;
+  end match;
+end isElementItemClassNamed;
+
+public function isEmptyClassPart
+  input ClassPart inClassPart;
+  output Boolean outIsEmpty;
+algorithm
+  outIsEmpty := match inClassPart
+    case PUBLIC(contents = {}) then true;
+    case PROTECTED(contents = {}) then true;
+    case CONSTRAINTS(contents = {}) then true;
+    case EQUATIONS(contents = {}) then true;
+    case INITIALEQUATIONS(contents = {}) then true;
+    case ALGORITHMS(contents = {}) then true;
+    case INITIALALGORITHMS(contents = {}) then true;
+    else false;
+  end match;
+end isEmptyClassPart;
+
+public function isInvariantExpNoTraverse "For use with traverseExp"
+  input output Absyn.Exp e;
+  input output Boolean b;
+algorithm
+  if not b then
+    return;
+  end if;
+  b := match e
+    case INTEGER() then true;
+    case REAL() then true;
+    case STRING() then true;
+    case BOOL() then true;
+    case BINARY() then true;
+    case UNARY() then true;
+    case LBINARY() then true;
+    case LUNARY() then true;
+    case RELATION() then true;
+    case IFEXP() then true;
+    // case CREF(CREF_FULLYQUALIFIED()) then true;
+    case CALL(function_=CREF_FULLYQUALIFIED()) then true;
+    case PARTEVALFUNCTION(function_=CREF_FULLYQUALIFIED()) then true;
+    case ARRAY() then true;
+    case MATRIX() then true;
+    case RANGE() then true;
+    case CONS() then true;
+    case LIST() then true;
+    else false;
+  end match;
+end isInvariantExpNoTraverse;
+
+function pathPartCount
+  "Returns the number of parts a path consists of, e.g. A.B.C gives 3."
+  input Path path;
+  input Integer partsAccum = 0;
+  output Integer parts;
+algorithm
+  parts := match path
+    case Path.IDENT() then partsAccum + 1;
+    case Path.QUALIFIED() then pathPartCount(path.path, partsAccum + 1);
+    case Path.FULLYQUALIFIED() then pathPartCount(path.path, partsAccum);
+  end match;
+end pathPartCount;
 
 annotation(__OpenModelica_Interface="frontend");
 end Absyn;

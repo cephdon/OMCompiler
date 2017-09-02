@@ -32,6 +32,7 @@
 encapsulated package MathematicaDump
 
   import BackendDAE;
+  import BackendDump;
   import BackendVariable;
   import ComponentReference;
   import DAE;
@@ -103,7 +104,7 @@ public function printMmaEqnStr "help function to printMmaEqnsStr"
   input tuple<BackendDAE.Variables,BackendDAE.Variables> inTuple "required to find array eqns and algorithms";
   output String str;
 algorithm
-  str := matchcontinue(eqn,inTuple)
+  str := match(eqn,inTuple)
   local DAE.Exp e1,e2;
     DAE.ComponentRef cr;
     BackendDAE.Variables vars,knvars;
@@ -135,7 +136,7 @@ algorithm
       str = "Missing[\"Algorithm\",\""+escapeMmaString(dumpSingleAlgorithmStr(alg))+"\"]";
     then str;
     case (BackendDAE.WHEN_EQUATION(whenEquation = whenEq),(_,_)) equation
-      str = "Missing[\"When\",\""+escapeMmaString(whenEquationStr(whenEq))+"\"]";
+      str = "Missing[\"When\",\""+escapeMmaString(BackendDump.whenEquationString(whenEq, true))+"\"]";
     then str;
     case (BackendDAE.COMPLEX_EQUATION(left=e1,right=e2),(vars,knvars))
       equation
@@ -143,7 +144,7 @@ algorithm
       s2 = printExpMmaStr(e2,vars,knvars);
       str = stringAppendList({s1,"==",s2});
       then str;
-  end matchcontinue;
+  end match;
 end printMmaEqnStr;
 
 
@@ -386,19 +387,19 @@ algorithm
       then
         s_5;
         /* We prevent casts since we probably do not want numerical values, e.g. Sqrt[2.0] should probably be Sqrt[2] instead*/
-    case (DAE.CAST(ty =  DAE.T_REAL(_,_),exp = DAE.ICONST(integer = ival)),_,_)
+    case (DAE.CAST(ty =  DAE.T_REAL(),exp = DAE.ICONST(integer = ival)),_,_)
       equation
         res = intString(ival);
       then
         res;
         /* We prevent casts since we probably do not want numerical values, e.g. Sqrt[2.0] should probably be Sqrt[2] instead*/
-    case (DAE.CAST(ty =  DAE.T_REAL(_,_),exp = DAE.UNARY(operator = DAE.UMINUS(),exp = DAE.ICONST(integer = ival))),_,_)
+    case (DAE.CAST(ty =  DAE.T_REAL(),exp = DAE.UNARY(operator = DAE.UMINUS(),exp = DAE.ICONST(integer = ival))),_,_)
       equation
         res = intString(ival);
         res2 = stringAppend("-", res);
       then
         res2;
-    case (DAE.CAST(ty =  DAE.T_REAL(_,_),exp = e),_,_)
+    case (DAE.CAST(ty =  DAE.T_REAL(),exp = e),_,_)
       equation
         s = printExpMmaStr(e,vars,knvars);
       then
@@ -679,29 +680,6 @@ algorithm
   end match;
 end dumpSingleAlgorithmStr;
 
-
-protected function whenEquationStr "prints a WhenEquation to a string"
-  input BackendDAE.WhenEquation whenEq;
-  output String str;
-algorithm
-  str := match(whenEq)
-  local
-    DAE.Exp cond;
-    DAE.ComponentRef cr;
-    //BackendDAE.Equation eqn;
-    DAE.Exp eqn;
-    BackendDAE.WhenEquation elseEqn;
-
-    case(BackendDAE.WHEN_EQ(cond,cr,eqn,NONE())) equation
-      str = "when "+ExpressionDump.printExpStr(cond)+" then\n"+ComponentReference.crefStr(cr)+":="+ExpressionDump.printExpStr(eqn)+"\nend when"; //TODO: I'm not sure if the WHEN_EQ data is the same still
-    then str;
-
-    case(BackendDAE.WHEN_EQ(cond,cr,eqn,SOME(elseEqn))) equation
-      str = "when "+ExpressionDump.printExpStr(cond)+" then\n"+ComponentReference.crefStr(cr)+":="+ExpressionDump.printExpStr(eqn)+"\n else"+whenEquationStr(elseEqn);
-    then str;
-  end match;
-end whenEquationStr;
-
 public function printMmaVarsStr "print variables on a form suitable for Mathematica to a string.
 $p,$lb, $rb, $leftParentesis, $rightParentesis removed.
 $derivative<varname> replaced by D[<varname>,t]
@@ -738,7 +716,7 @@ algorithm
   str := matchcontinue(v,selectKind,allVars)
   local DAE.ComponentRef name;
     String nameStr;
-    case (BackendDAE.VAR(varName=DAE.CREF_IDENT("$dummy",DAE.T_UNKNOWN(_),{})),_,_) then "";
+    case (BackendDAE.VAR(varName=DAE.CREF_IDENT("$dummy",DAE.T_UNKNOWN(),{})),_,_) then "";
     case (BackendDAE.VAR(varName=name,varKind=BackendDAE.STATE()),true,_)
       equation
         nameStr = printComponentRefMmaStr(name,allVars,BackendVariable.emptyVars());

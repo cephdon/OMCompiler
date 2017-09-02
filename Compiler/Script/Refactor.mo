@@ -34,7 +34,6 @@ encapsulated package Refactor
   package:     Refactor
   description: Refactoring package
 
-  RCS: $Id$
 
   This module contains functions for refactoring of Modelica/MetaModelica code.
   Right now there is support for old-style annotation refactoring to new-style
@@ -1102,7 +1101,7 @@ protected function getCoordsFromCoordSysArgs"
   output Absyn.Exp x2;
   output Absyn.Exp y2;
 algorithm
-  (x1,y1,x2,y2) := matchcontinue(inAnns)
+  (x1,y1,x2,y2) := match(inAnns)
     local
       list<Absyn.ElementArg> rest;
 
@@ -1116,7 +1115,7 @@ algorithm
       then
         (x1,y1,x2,y2);
 
-  end matchcontinue;
+  end match;
 end getCoordsFromCoordSysArgs;
 
 protected function getExtentModification
@@ -1126,7 +1125,7 @@ protected function getExtentModification
   output Absyn.Exp x2;
   output Absyn.Exp y2;
 algorithm
-  (x1,y1,x2,y2) := matchcontinue (elementArgLst)
+  (x1,y1,x2,y2) := match (elementArgLst)
     local list<Absyn.ElementArg> rest;
     case (Absyn.MODIFICATION(
       path = Absyn.IDENT(name = "extent"),
@@ -1138,8 +1137,8 @@ algorithm
       equation
         (x1,y1,x2,y2) = getExtentModification(rest);
       then (x1,y1,x2,y2);
-  end matchcontinue;
-end getExtentModification ;
+  end match;
+end getExtentModification;
 
 protected function getCoordsFromLayerArgs
 "Helper function to getCoordsInAnnList."
@@ -1239,13 +1238,13 @@ algorithm
 
     case(Absyn.MODIFICATION(finalPrefix = fi, eachPrefix = e, path = Absyn.IDENT(name = "pattern"), modification = SOME(Absyn.CLASSMOD( elementArgLst = args ,eqMod = Absyn.EQMOD(exp=Absyn.INTEGER(value = x)))), comment = com, info = mod_info) :: rest,context as ("Line" :: _),res,p)
       equation
-        val = arrayGet(listArray(patternMapList),x+1);
+        val = listGet(patternMapList,x+1);
         res = transformConnectAnnList(rest,context,res,p);
       then Absyn.MODIFICATION(fi,e,Absyn.IDENT("pattern"), SOME(Absyn.CLASSMOD(args,Absyn.EQMOD(Absyn.CREF(Absyn.CREF_QUAL("LinePattern", {},Absyn.CREF_IDENT(val, {}))),Absyn.dummyInfo))),com, mod_info):: res;
 
     case(Absyn.MODIFICATION(finalPrefix = fi, eachPrefix = e, path = Absyn.IDENT(name = "thickness"), modification = SOME(Absyn.CLASSMOD( elementArgLst = args ,eqMod = Absyn.EQMOD(exp=Absyn.INTEGER(value = x)))), comment = com, info = mod_info) :: rest,context as ("Line" :: _),res,p)
       equation
-        thick = arrayGet(listArray(thicknessMapList),x);
+        thick = listGet(thicknessMapList,x);
         res = transformConnectAnnList(rest,context,res,p);
         s = realString(thick);
       then Absyn.MODIFICATION(fi,e,Absyn.IDENT("thickness"), SOME(Absyn.CLASSMOD(args,Absyn.EQMOD(Absyn.REAL(s),Absyn.dummyInfo))),com,mod_info):: res;
@@ -1256,9 +1255,9 @@ algorithm
 
     case(Absyn.MODIFICATION(finalPrefix = fi, eachPrefix = e, path = Absyn.IDENT(name = "arrow"), modification = SOME(Absyn.CLASSMOD( elementArgLst = args ,eqMod = Absyn.EQMOD(exp=Absyn.INTEGER(value = x)))), comment = com, info = mod_info) :: rest,context as ("Line" :: _),res,p)
       equation
-        arrows = arrayGet(listArray(arrowMapList),x+1);
-        val1 = arrayGet(listArray(arrows),1);
-        val2 = arrayGet(listArray(arrows),2);
+        arrows = listGet(arrowMapList,x+1);
+        val1 = listGet(arrows,1);
+        val2 = listGet(arrows,2);
         res = transformConnectAnnList(rest,context,res,p);
       then Absyn.MODIFICATION(fi,e,Absyn.IDENT("arrow"), SOME(Absyn.CLASSMOD(args,Absyn.EQMOD(Absyn.ARRAY({Absyn.CREF(Absyn.CREF_QUAL("Arrow", {},Absyn.CREF_IDENT(val1, {}))),Absyn.CREF(Absyn.CREF_QUAL("Arrow",{},Absyn.CREF_IDENT(val2,{})))}),Absyn.dummyInfo))),com, mod_info):: res;
 
@@ -1329,9 +1328,8 @@ algorithm
       equation
         res = Absyn.MODIFICATION(fi, e, Absyn.IDENT("Coordsys"), SOME(Absyn.CLASSMOD(args, eqMod)),com,mod_info) :: res;
         coord = getCoordSysAnn(listAppend(res,rest),p);
-        res = listAppend({Absyn.MODIFICATION(false, Absyn.NON_EACH(),
-        Absyn.IDENT("Diagram"),
-        SOME(Absyn.CLASSMOD({coord},Absyn.NOMOD())),NONE(),mod_info),Absyn.MODIFICATION(false, Absyn.NON_EACH(), Absyn.IDENT("Icon"), SOME(Absyn.CLASSMOD({coord},Absyn.NOMOD())),NONE(),mod_info)},res);
+        res = Absyn.MODIFICATION(false, Absyn.NON_EACH(), Absyn.IDENT("Diagram"), SOME(Absyn.CLASSMOD({coord},Absyn.NOMOD())),NONE(),mod_info)
+              :: Absyn.MODIFICATION(false, Absyn.NON_EACH(), Absyn.IDENT("Icon"), SOME(Absyn.CLASSMOD({coord},Absyn.NOMOD())),NONE(),mod_info) :: res;
         res = transformClassAnnList(rest,context,res,p);
       then List.deleteMember(res,Absyn.MODIFICATION(fi, e, Absyn.IDENT("Coordsys"), SOME(Absyn.CLASSMOD(args, eqMod)),com,mod_info));
 
@@ -1375,7 +1373,7 @@ protected function isLayerAnnInList"
   input list<Absyn.ElementArg> inList;
   output Boolean result;
 algorithm
-  result := matchcontinue(inList)
+  result := match(inList)
     local
       list<Absyn.ElementArg> rest;
       Boolean res;
@@ -1392,7 +1390,7 @@ algorithm
         res = isLayerAnnInList(rest);
       then
         res;
-  end matchcontinue;
+  end match;
 end isLayerAnnInList;
 
 protected function  getCoordSysAnn "
@@ -1590,33 +1588,33 @@ algorithm
 
     case(Absyn.MODIFICATION(path = Absyn.IDENT(name = "pattern"), modification = SOME(Absyn.CLASSMOD(eqMod = Absyn.EQMOD(exp=Absyn.INTEGER(value = x))   ))) :: rest,context )
       equation
-        val = arrayGet(listArray(patternMapList),x+1);
+        val = listGet(patternMapList,x+1);
         restRes = transAnnLstToNamedArgs(rest,context);
       then Absyn.NAMEDARG("pattern",Absyn.CREF(Absyn.CREF_QUAL("LinePattern", {},Absyn.CREF_IDENT(val, {})))) :: restRes;
 
     case(Absyn.MODIFICATION(path = Absyn.IDENT(name = "fillPattern"), modification = SOME(Absyn.CLASSMOD(eqMod = Absyn.EQMOD(exp=Absyn.INTEGER(value = x))   ))) :: rest,context )
       equation
-        val = arrayGet(listArray(fillPatternMapList),x+1);
+        val = listGet(fillPatternMapList,x+1);
         restRes = transAnnLstToNamedArgs(rest,context);
       then Absyn.NAMEDARG("fillPattern",Absyn.CREF(Absyn.CREF_QUAL("FillPattern", {},Absyn.CREF_IDENT(val, {})))) :: restRes;
 
     case(Absyn.MODIFICATION(path = Absyn.IDENT(name = "thickness"), modification = SOME(Absyn.CLASSMOD(eqMod = Absyn.EQMOD(exp=Absyn.INTEGER(value = x))   ))) :: rest,context as ("Line" :: _))
       equation
-        thick = arrayGet(listArray(thicknessMapList),x);
+        thick = listGet(thicknessMapList,x);
         restRes = transAnnLstToNamedArgs(rest,context);
         s = realString(thick);
       then Absyn.NAMEDARG("thickness",Absyn.REAL(s)) :: restRes;
 
     case(Absyn.MODIFICATION(path = Absyn.IDENT(name = "thickness"), modification = SOME(Absyn.CLASSMOD(eqMod = Absyn.EQMOD(exp=Absyn.INTEGER(value = x))   ))) :: rest,context )
       equation
-        thick = arrayGet(listArray(thicknessMapList),x);
+        thick = listGet(thicknessMapList,x);
         restRes = transAnnLstToNamedArgs(rest,context);
         s = realString(thick);
       then Absyn.NAMEDARG("lineThickness",Absyn.REAL(s)) :: restRes;
 
     case(Absyn.MODIFICATION(path = Absyn.IDENT(name = "gradient"), modification = SOME(Absyn.CLASSMOD(eqMod = Absyn.EQMOD(exp=Absyn.INTEGER(value = x)) ))) :: rest,context)
       equation
-        val = arrayGet(listArray(gradientMapList),x+1);
+        val = listGet(gradientMapList,x+1);
         restRes = transAnnLstToNamedArgs(rest,context);
       then Absyn.NAMEDARG("fillPattern",Absyn.CREF(Absyn.CREF_QUAL("FillPattern", {},Absyn.CREF_IDENT(val, {}))))  :: restRes  ;
 
@@ -1627,9 +1625,9 @@ algorithm
 
     case(Absyn.MODIFICATION(path = Absyn.IDENT(name = "arrow"), modification = SOME(Absyn.CLASSMOD(eqMod = Absyn.EQMOD(exp=Absyn.INTEGER(value = x))   ))) :: rest,context)
       equation
-        arrows = arrayGet(listArray(arrowMapList),x+1);
-        val1 = arrayGet(listArray(arrows),1);
-        val2 = arrayGet(listArray(arrows),2);
+        arrows = listGet(arrowMapList,x+1);
+        val1 = listGet(arrows,1);
+        val2 = listGet(arrows,2);
         restRes = transAnnLstToNamedArgs(rest,context);
       then Absyn.NAMEDARG("arrow",Absyn.ARRAY({Absyn.CREF(Absyn.CREF_QUAL("Arrow", {},Absyn.CREF_IDENT(val1, {}))),Absyn.CREF(Absyn.CREF_QUAL("Arrow",{},Absyn.CREF_IDENT(val2,{})))})):: restRes    ;
 
@@ -1760,7 +1758,7 @@ protected function cleanStyleAttrs2 "
   input Context inCon;
   output list<Absyn.ElementArg> outArgs;
 algorithm
-  outArgs := matchcontinue (inArgs,inResultList,inCon)
+  outArgs := match (inArgs,inResultList,inCon)
     local
       list<Absyn.ElementArg> args,outList,rest;
       Absyn.ElementArg arg;
@@ -1780,20 +1778,22 @@ algorithm
       then outList;
 
     case((arg as Absyn.MODIFICATION(path = Absyn.IDENT(name = "fillColor"))) :: rest, resultList,context as ("Rectangle"::_))
-      equation
+      guard
         //If fillColor is specified but not fillPattern or Gradient we need to insert a FillPattern
-        false = isGradientInList(listAppend(rest,resultList));
-        false = isFillPatternInList(listAppend(rest,resultList));
+        not isGradientInList(listAppend(rest,resultList)) and
+        not isFillPatternInList(listAppend(rest,resultList))
+      equation
         resultList = insertFillPatternInList(resultList);
         resultList = List.appendElt(arg,resultList);
         outList = cleanStyleAttrs2(rest,resultList,context);
       then outList;
 
     case((arg as Absyn.MODIFICATION(path = Absyn.IDENT(name = "fillColor"))) :: rest, resultList,context as ("Ellipse"::_))
-      equation
+      guard
         //If fillColor is specified but not fillPattern or Gradient we need to insert a FillPattern
-        false = isGradientInList(listAppend(rest,resultList));
-        false = isFillPatternInList(listAppend(rest,resultList));
+        not isGradientInList(listAppend(rest,resultList)) and
+        not isFillPatternInList(listAppend(rest,resultList))
+      equation
         resultList = insertFillPatternInList(resultList);
         resultList = List.appendElt(arg,resultList);
         outList = cleanStyleAttrs2(rest,resultList,context);
@@ -1801,10 +1801,11 @@ algorithm
 
     case((arg as Absyn.MODIFICATION(path = Absyn.IDENT(name = "fillColor"))) :: rest, resultList,context as ("Polygon"::_))
 
-      equation
+      guard
         //If fillColor is specified but not fillPattern or Gradient we need to insert a FillPattern
-        false = isGradientInList(listAppend(rest,resultList));
-        false = isFillPatternInList(listAppend(rest,resultList));
+        not isGradientInList(listAppend(rest,resultList)) and
+        not isFillPatternInList(listAppend(rest,resultList))
+      equation
         resultList = insertFillPatternInList(resultList);
         resultList = List.appendElt(arg,resultList);
         outList = cleanStyleAttrs2(rest,resultList,context);
@@ -1829,7 +1830,6 @@ algorithm
       then outList;
 
     case((arg as Absyn.MODIFICATION(path = Absyn.IDENT(name = "pattern"))) :: rest, resultList,context as ("Rectangle" :: _))
-
       equation
         resultList = List.appendElt(arg,resultList);
         outList = cleanStyleAttrs2(rest,resultList,context);
@@ -1842,7 +1842,6 @@ algorithm
       then outList;
 
     case((arg as Absyn.MODIFICATION(path = Absyn.IDENT(name = "pattern"))) :: rest, resultList,context as ("Polygon" :: _))
-
       equation
         resultList = List.appendElt(arg,resultList);
         outList = cleanStyleAttrs2(rest,resultList,context);
@@ -1954,7 +1953,7 @@ algorithm
         //Filter away unwanted trash
         outList = cleanStyleAttrs2(rest,resultList,context);
       then outList;
-  end matchcontinue;
+  end match;
 end cleanStyleAttrs2;
 
 protected function insertFillPatternInList "Helperfunction to cleanStyleAttrs. Inserts a fillPattern attribute in a list
@@ -1983,7 +1982,7 @@ protected function isGradientInList "
   input list<Absyn.ElementArg> inArgs;
   output Boolean result;
 algorithm
-  result := matchcontinue inArgs
+  result := match inArgs
     local
       list<Absyn.ElementArg> rest;
       Absyn.ElementArg arg;
@@ -2001,7 +2000,7 @@ algorithm
       equation
         res = isGradientInList(rest);
       then res;
-  end matchcontinue;
+  end match;
 end isGradientInList;
 
 protected function isFillPatternInList "
@@ -2013,7 +2012,7 @@ protected function isFillPatternInList "
   output Boolean result;
 
 algorithm
-  result := matchcontinue inArgs
+  result := match inArgs
     local
       list<Absyn.ElementArg> rest;
       Absyn.ElementArg arg;
@@ -2023,6 +2022,7 @@ algorithm
       Option<String> com;
 
     case({}) then false;
+
     case(Absyn.MODIFICATION(path = Absyn.IDENT(name = "fillPattern")):: _)
     then true;
 
@@ -2030,7 +2030,7 @@ algorithm
       equation
         res = isFillPatternInList(rest);
       then res;
-  end matchcontinue;
+  end match;
 end isFillPatternInList;
 
 protected function removeFillPatternInList "
@@ -2040,14 +2040,10 @@ protected function removeFillPatternInList "
   input list<Absyn.ElementArg> inList;
   output list<Absyn.ElementArg> outList;
 algorithm
-  outList := matchcontinue inList
+  outList := match inList
     local
       list<Absyn.ElementArg> rest,lst;
       Absyn.ElementArg arg;
-      Boolean fi;
-      Absyn.Each e;
-      Option<Absyn.Modification> m;
-      Option<String> com;
 
     case({}) then {};
 
@@ -2059,7 +2055,7 @@ algorithm
       equation
         lst = removeFillPatternInList(rest);
       then (arg::lst);
-  end matchcontinue;
+  end match;
 end removeFillPatternInList;
 
 protected function setDefaultFillColor "
@@ -2094,17 +2090,17 @@ protected function isFillColorInList "
   input list<Absyn.ElementArg> inList;
   output Boolean outBoolean;
 algorithm
-  outBoolean := matchcontinue inList
+  outBoolean := match inList
     local
       list<Absyn.ElementArg> rest;
       Absyn.ElementArg arg;
     case({})
       then false;
-    case( Absyn.MODIFICATION(path = Absyn.IDENT(name = "fillColor")):: _)
+    case(Absyn.MODIFICATION(path = Absyn.IDENT(name = "fillColor")):: _)
       then true;
     case(_::rest)
       then isFillColorInList(rest);
-  end matchcontinue;
+  end match;
 end isFillColorInList;
 
 
@@ -2112,7 +2108,7 @@ protected function setDefaultLineInList "Helperfunction to cleanStyleAttrs. Sets
   input list<Absyn.ElementArg> inList;
   output list<Absyn.ElementArg> outList;
 algorithm
-  outList := matchcontinue inList
+  outList := match inList
     local
       list<Absyn.ElementArg> rest,lst,args;
       Absyn.ElementArg arg;
@@ -2141,7 +2137,7 @@ algorithm
       equation
         lst = setDefaultLineInList(rest);
       then (arg::lst);
-  end matchcontinue;
+  end match;
 end setDefaultLineInList;
 
 protected function getMappedColor "
@@ -2159,10 +2155,10 @@ algorithm
       Integer  color;
     case(color)
       equation
-        rcol = arrayGet(listArray(colorMapList),color+1);
-        color1 = arrayGet(listArray(rcol),1);
-        color2 = arrayGet(listArray(rcol),2);
-        color3 = arrayGet(listArray(rcol),3);
+        rcol = listGet(colorMapList,color+1);
+        color1 = listGet(rcol,1);
+        color2 = listGet(rcol,2);
+        color3 = listGet(rcol,3);
       then
         (color1,color2,color3);
   end match;

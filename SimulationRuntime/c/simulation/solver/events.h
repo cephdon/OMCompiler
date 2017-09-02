@@ -42,14 +42,13 @@
 extern "C" {
 #endif
 
-void initSample(DATA *data, double start, double stop);
-
+extern int maxBisectionIterations;
 void checkForSampleEvent(DATA *data, SOLVER_INFO* solverInfo);
-int checkEvents(DATA* data, LIST* eventLst, double *eventTime, SOLVER_INFO* solverInfo);
+int checkEvents(DATA* data, threadData_t *threadData, LIST* eventLst, modelica_boolean useRootFinding, double *eventTime);
 
-void handleEvents(DATA* data, LIST* eventLst, double *eventTime, SOLVER_INFO* solverInfo);
+void handleEvents(DATA* data, threadData_t *threadData, LIST* eventLst, double *eventTime, SOLVER_INFO* solverInfo);
 
-void findRoot(DATA *data, LIST *eventList, double*);
+double findRoot(DATA *data, threadData_t *threadData, LIST *eventList);
 
 #ifdef __cplusplus
 }

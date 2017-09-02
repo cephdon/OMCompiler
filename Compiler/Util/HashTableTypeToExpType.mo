@@ -36,7 +36,6 @@ encapsulated package HashTableTypeToExpType "
   package:     HashTableTypeToExpType
   description: Type to ExpType
 
-  RCS: $Id: HashTableTypeToExpType.mo 8796 2011-05-03 19:43:08Z adrpo $
   "
 
 /* Below is the instance specific code. For each hashtable the user must define:
@@ -61,7 +60,6 @@ public type HashTableCrefFunctionsType = tuple<FuncHashType,FuncTypeEqual,FuncTy
 public type HashTable = tuple<
   array<list<tuple<Key,Integer>>>,
   tuple<Integer,Integer,array<Option<tuple<Key,Value>>>>,
-  Integer,
   Integer,
   HashTableCrefFunctionsType
 >;

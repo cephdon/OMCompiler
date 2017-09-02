@@ -29,7 +29,7 @@
  */
 
 /*! \file radau.h
- * author: team Bielefeld
+ * author: Ru(n)ge, wbraun
  */
 
 #ifndef _RADAU_H_
@@ -40,6 +40,9 @@
 #include "omc_config.h"
 
 #ifdef WITH_SUNDIALS
+
+  #define DEFAULT_IMPRK_ORDER 5
+
   #include <math.h>
   #include <nvector/nvector_serial.h>
 
@@ -67,7 +70,7 @@
       double *x;
       int nStates;
       double dt;
-      double *currentStep;
+      double currentStep;
       double t0;
       double *min;
       double *max;
@@ -81,9 +84,11 @@
       KDATAODE *kData;
       NLPODE *nlp;
       DATA *data;
+      threadData_t *threadData;
       SOLVER_INFO *solverInfo;
       int N;
-      int flag;
+      int order;
+      int lsMethod;        /* specifies the method the used linear solver */
     }KINODE;
 
 #else
@@ -93,13 +98,13 @@
       DATA *data;
       SOLVER_INFO *solverInfo;
       int N;
-      int flag;
+      int order;
     }KINODE;
 
 #endif /* SUNDIALS */
-  int allocateKinOde(DATA* data, SOLVER_INFO* solverInfo, int flag, int N);
-  int freeKinOde(DATA* data, SOLVER_INFO* solverInfo, int N);
-  int kinsolOde(void* ode);
+  int allocateKinOde(DATA* data, threadData_t *threadData, SOLVER_INFO* solverInfo, int order);
+  int freeKinOde(DATA* data, SOLVER_INFO* solverInfo);
+  int kinsolOde(SOLVER_INFO* solverInfo);
 #ifdef __cplusplus
 };
 #endif

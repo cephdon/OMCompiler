@@ -45,6 +45,17 @@ record RATIONAL "represents a rational number, e.g. 6/7"
   end RATIONAL;
 end Rational;
 
+public constant Rational RAT0 = RATIONAL(0, 1);
+public constant Rational RAT1 = RATIONAL(1, 1);
+
+public function isGreaterThan "comparison if greater than"
+  input Rational r1;
+  input Rational r2;
+  output Boolean b;
+algorithm
+  b := realGt(r1.nom/r1.denom, r2.nom/r2.denom);
+end isGreaterThan;
+
 public function addRational "adds two rationals"
   input Rational r1;
   input Rational r2;
@@ -153,21 +164,11 @@ public function intGcd "returns the greatest common divisor for two Integers"
   input Integer i2;
   output Integer i;
 algorithm
-  i := matchcontinue(i1,i2)
+  i := match(i1,i2)
     case (_,0) then i1;
     else intGcd(i2,intMod(i1,i2));
-  end matchcontinue;
+  end match;
 end intGcd;
-
-public function printNumber
-  input Rational inp;
-  output String out;
-protected
-  Integer i1, i2;
-algorithm
-  RATIONAL(i1, i2) := inp;
-  out := intString(i1) + "/" + intString(i2);
-end printNumber;
 
 /* Tests */
 
@@ -176,7 +177,7 @@ algorithm
   _ := matchcontinue()
 
     case() equation
-      RATIONAL(7,6) =  addRational(RATIONAL(1,2),RATIONAL(2,3));
+      RATIONAL(7,6) = addRational(RATIONAL(1,2),RATIONAL(2,3));
       RATIONAL(2,1) = addRational(RATIONAL(1,2),RATIONAL(3,2));
 
       RATIONAL(1,1) = subRational(RATIONAL(3,2),RATIONAL(1,2));

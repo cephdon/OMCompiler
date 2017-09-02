@@ -29,7 +29,6 @@
  */
 
 /*
- * RCS: $Id: GraphStreamExt_omc.cpp 2014-02-04 mwalther $
  */
 
 #include <stdio.h>
@@ -43,30 +42,46 @@ extern "C" {
 }
 
 #define UNBOX_OFFSET 1
+#if !defined(_MSC_VER)
 #include "GraphStreamExt_impl.cpp"
+#else
+#include "errorext.h"
+#define GRAPHSTREAM_MSVS() c_add_message(NULL, -1, ErrorType_scripting, ErrorLevel_error, "Graphstream not supported on Visual Studio.", NULL, 0);MMC_THROW();
+#endif
 
 extern "C" {
 
 extern void GraphStreamExt_newStream(threadData_t *threadData, const char* streamName, const char* host, int port, int debug)
 {
+#if defined(_MSC_VER)
+  GRAPHSTREAM_MSVS();
+#else
   GraphStreamExtImpl_newStream(
       streamName,
       host,
       port,
       debug);
+#endif
 }
 
 extern void GraphStreamExt_addNode(threadData_t *threadData, const char* streamName, const char* sourceId, int timeId, const char* nodeId)
 {
+#if defined(_MSC_VER)
+  GRAPHSTREAM_MSVS();
+#else
   GraphStreamExtImpl_addNode(
       streamName,
       sourceId,
       timeId,
       nodeId);
+#endif
 }
 
 extern void GraphStreamExt_addEdge(threadData_t *threadData, const char* streamName, const char* sourceId, int timeId, const char* nodeIdSource, const char* nodeIdTarget, int directed)
 {
+#if defined(_MSC_VER)
+  GRAPHSTREAM_MSVS();
+#else
   GraphStreamExtImpl_addEdge(
       streamName,
       sourceId,
@@ -74,10 +89,14 @@ extern void GraphStreamExt_addEdge(threadData_t *threadData, const char* streamN
       nodeIdSource,
       nodeIdTarget,
       directed);
+#endif
 }
 
 extern void GraphStreamExt_addNodeAttribute(threadData_t *threadData, const char* streamName, const char* sourceId, int timeId, const char* nodeId, const char* attribute, void* value)
 {
+#if defined(_MSC_VER)
+  GRAPHSTREAM_MSVS();
+#else
   GraphStreamExtImpl_addNodeAttribute(
       streamName,
       sourceId,
@@ -85,10 +104,14 @@ extern void GraphStreamExt_addNodeAttribute(threadData_t *threadData, const char
       nodeId,
       attribute,
       value);
+#endif
 }
 
 extern void GraphStreamExt_addEdgeAttribute(threadData_t *threadData, const char* streamName, const char* sourceId, int timeId, const char* nodeIdSource, const char* nodeIdTarget, const char* attribute, void* value)
 {
+#if defined(_MSC_VER)
+  GRAPHSTREAM_MSVS();
+#else
   GraphStreamExtImpl_addEdgeAttribute(
       streamName,
       sourceId,
@@ -97,20 +120,28 @@ extern void GraphStreamExt_addEdgeAttribute(threadData_t *threadData, const char
       nodeIdTarget,
       attribute,
       value);
+#endif
 }
 
 extern void GraphStreamExt_addGraphAttribute(threadData_t *threadData, const char* streamName, const char* sourceId, int timeId, const char* attribute, void* value)
 {
+#if defined(_MSC_VER)
+  GRAPHSTREAM_MSVS();
+#else
   GraphStreamExtImpl_addGraphAttribute(
       streamName,
       sourceId,
       timeId,
       attribute,
       value);
+#endif
 }
 
 extern void GraphStreamExt_changeNodeAttribute(threadData_t *threadData, const char* streamName, const char* sourceId, int timeId, const char* nodeId, const char* attribute, void* oldvalue, void* newvalue)
 {
+#if defined(_MSC_VER)
+  GRAPHSTREAM_MSVS();
+#else
   GraphStreamExtImpl_changeNodeAttribute(
       streamName,
       sourceId,
@@ -119,10 +150,14 @@ extern void GraphStreamExt_changeNodeAttribute(threadData_t *threadData, const c
       attribute,
       oldvalue,
       newvalue);
+#endif
 }
 
 extern void GraphStreamExt_changeEdgeAttribute(threadData_t *threadData, const char* streamName, const char* sourceId, int timeId, const char* nodeIdSource, const char* nodeIdTarget, const char* attribute, void* oldvalue, void* newvalue)
 {
+#if defined(_MSC_VER)
+  GRAPHSTREAM_MSVS();
+#else
   GraphStreamExtImpl_changeEdgeAttribute(
     streamName,
     sourceId,
@@ -132,10 +167,14 @@ extern void GraphStreamExt_changeEdgeAttribute(threadData_t *threadData, const c
     attribute,
     oldvalue,
     newvalue);
+#endif
 }
 
 extern void GraphStreamExt_changeGraphAttribute(threadData_t *threadData, const char* streamName, const char* sourceId, int timeId, const char* attribute, void* oldvalue, void* newvalue)
 {
+#if defined(_MSC_VER)
+  GRAPHSTREAM_MSVS();
+#else
   GraphStreamExtImpl_changeGraphAttribute(
     streamName,
     sourceId,
@@ -143,11 +182,16 @@ extern void GraphStreamExt_changeGraphAttribute(threadData_t *threadData, const 
     attribute,
     oldvalue,
     newvalue);
+#endif
 }
 
 extern void GraphStreamExt_cleanup(threadData_t *threadData)
 {
+#if defined(_MSC_VER)
+  GRAPHSTREAM_MSVS();
+#else
   GraphStreamExtImpl_cleanup();
+#endif
 }
 
 }

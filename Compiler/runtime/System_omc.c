@@ -28,8 +28,9 @@
  *
  */
 
-#if defined(_MSC_VER)
-#include <Windows.h>
+#if defined(_MSC_VER) || defined(__MINGW32__)
+ #define WIN32_LEAN_AND_MEAN
+ #include <windows.h>
 #endif
 
 #ifdef __cplusplus
@@ -128,6 +129,11 @@ extern const char* System_getRTLibsSim()
   return LDFLAGS_RT_SIM;
 }
 
+extern const char* System_getRTLibsFMU()
+{
+  return LDFLAGS_RT_SOURCE_FMU;
+}
+
 extern const char* System_getCCompiler()
 {
   return cc;
@@ -198,7 +204,7 @@ extern const char* System_basename(const char* str)
 
 extern const char* System_dirname(const char* str)
 {
-  char *cpy = GC_strdup(str);
+  char *cpy = omc_alloc_interface.malloc_strdup(str);
   char *res = NULL;
 #if defined(_MSC_VER)
   char drive[_MAX_DRIVE], dir[_MAX_DIR], filename[_MAX_FNAME], extension[_MAX_EXT];
@@ -245,6 +251,15 @@ extern int System_strcmp(const char *str1, const char *str2)
   int res = strcmp(str1,str2);
   /* adrpo: 2010-10-07, return -1, 0, +1 so we can pattern match on it directly! */
   if      (res>0) res =  1;
+  else if (res<0) res = -1;
+  return res;
+}
+
+extern int System_strcmp_offset(const char *str1, int offset1, int length1, const char *str2, int offset2, int length2)
+{
+  int n = length1 > length2 ? length1 : length2;
+  int res = strncmp(str1+offset1-1, str2+offset2-1, n);
+  if (res>0) res = 1;
   else if (res<0) res = -1;
   return res;
 }
@@ -303,7 +318,7 @@ extern void* System_strtok(const char *str0, const char *delimit)
 {
   char *s;
   void *res = mmc_mk_nil();
-  char *str = GC_strdup(str0);
+  char *str = omc_alloc_interface.malloc_strdup(str0);
   char *saveptr;
   s=strtok_r(str,delimit,&saveptr);
   if (s == NULL) {
@@ -380,7 +395,7 @@ const char* System_getClassnamesForSimulation()
 
 void System_setClassnamesForSimulation(const char *class_names)
 {
-  class_names_for_simulation = GC_strdup(class_names);
+  class_names_for_simulation = omc_alloc_interface.malloc_strdup(class_names);
 }
 
 extern double System_getVariableValue(double _timeStamp, void* _timeValues, void* _varValues)
@@ -560,12 +575,19 @@ extern void* System_regex(const char* str, const char* re, int maxn, int extende
 {
   void *res;
   int i = 0;
+#if !defined(_MSC_VER)
   void *matches[maxn];
+#else
+  void **matches = omc_alloc_interface.malloc(sizeof(void*)*maxn);
+#endif
   *nmatch = OpenModelica_regexImpl(str,re,maxn,extended,sensitive,mmc_mk_scon,(void**)&matches);
   res = mmc_mk_nil();
   for (i=maxn-1; i>=0; i--) {
     res = mmc_mk_cons(matches[i],res);
   }
+#if defined(_MSC_VER)
+  GC_free(matches);
+#endif
   return res;
 }
 
@@ -665,6 +687,16 @@ extern const char* System_openModelicaPlatform()
   return CONFIG_OPENMODELICA_SPEC_PLATFORM;
 }
 
+extern const char* System_gccDumpMachine()
+{
+  return CONFIG_GCC_DUMPMACHINE;
+}
+
+extern const char* System_gccVersion()
+{
+  return CONFIG_GCC_VERSION;
+}
+
 extern void System_getGCStatus(double *used, double *allocated)
 {
   *allocated = GC_get_heap_size();
@@ -695,7 +727,7 @@ extern const char* System_realpath(const char *path)
   if (realpath(path, buf) == NULL) {
     MMC_THROW();
   }
-  return GC_strdup(buf);
+  return omc_alloc_interface.malloc_strdup(buf);
 }
 
 extern int System_fileIsNewerThan(const char *file1, const char *file2)
@@ -730,7 +762,7 @@ static void* System_launchParallelTasksThread(void *in)
     pthread_mutex_lock(&data->mutex);
     n = data->current++;
     pthread_mutex_unlock(&data->mutex);
-    if (data->fail || data->current > data->len) break;
+    if (data->fail || n >= data->len) break;
     MMC_TRY_TOP()
     threadData->parent = data->parent;
     threadData->mmc_thread_work_exit = threadData->mmc_jumper;
@@ -757,17 +789,37 @@ static void* System_launchParallelTasksSerial(threadData_t *threadData, void *da
 extern void* System_launchParallelTasks(threadData_t *threadData, int numThreads, void *dataLst, modelica_metatype (*fn)(threadData_t *,modelica_metatype))
 {
   int len = listLength(dataLst), i;
+  void *result = mmc_mk_nil();
+  thread_data data = {0};
+#if !defined(_MSC_VER)
   void *commands[len];
   void *status[len];
-  int ids[len];
-  void *result = mmc_mk_nil();
   pthread_t th[numThreads];
-  thread_data data;
+  int isInteger = 0;
+
+#if defined(__MINGW32__)
+  /* adrpo: set thread stack size on Windows to 4MB */
+  pthread_attr_t attr;
+  pthread_attr_init(&attr);
+  pthread_attr_setstacksize(&attr, 4194304);
+#endif
+
+#else /* MSVC */
+  void **commands = (void**) omc_alloc_interface.malloc(sizeof(void*)*len);
+  void **status = (void**) omc_alloc_interface.malloc(sizeof(void*)*len);
+  pthread_t *th = (pthread_t*) omc_alloc_interface.malloc(sizeof(pthread_t)*numThreads);
+#endif
   if (len == 0) {
     return mmc_mk_nil();
   } else if (numThreads == 1 || len == 1) {
     return System_launchParallelTasksSerial(threadData,dataLst,fn);
   }
+
+  /* Make sure we get nothing unexpected here */
+  memset(commands, 0, len*sizeof(void*));
+  memset(status, 0, len*sizeof(void*));
+  memset(th, 0, numThreads*sizeof(pthread_t));
+
   pthread_mutex_init(&data.mutex,NULL);
   data.fn = fn;
   data.current = 0;
@@ -782,15 +834,60 @@ extern void* System_launchParallelTasks(threadData_t *threadData, int numThreads
   }
   numThreads = numThreads > len ? len : numThreads;
   for (i=0; i<numThreads; i++) {
-    GC_pthread_create(&th[i],NULL,System_launchParallelTasksThread,&data);
+    if (GC_pthread_create(&th[i],
+#if defined(__MINGW32__)
+    &attr,
+#else
+    NULL,
+#endif
+    System_launchParallelTasksThread,&data)) {
+      /* GC_pthread_create failed. We need to join already created threads though... */
+      const char *tok[1] = {strerror(errno)};
+      data.fail = 1;
+      c_add_message(NULL,5999,
+        ErrorType_scripting,
+        ErrorLevel_internal,
+        gettext("System.launchParallelTasks: Failed to create thread: %s"),
+        NULL,
+        0);
+      break;
+    }
   }
   for (i=0; i<numThreads; i++) {
-    GC_pthread_join(th[i], NULL);
+    if (th[i] && GC_pthread_join(th[i], NULL)) {
+      const char *tok[1] = {strerror(errno)};
+      data.fail = 1;
+      c_add_message(NULL,5999,
+        ErrorType_scripting,
+        ErrorLevel_internal,
+        gettext("System.launchParallelTasks: Failed to join thread: %s"),
+        NULL,
+        0);
+    }
   }
   if (data.fail) {
     MMC_THROW_INTERNAL();
   }
+  if (data.current < len) {
+    c_add_message(NULL,5999,
+      ErrorType_scripting,
+      ErrorLevel_internal,
+      gettext("System.launchParallelTasks: We seem to have executed fewer tasks than expected."),
+      NULL,
+      0);
+    MMC_THROW_INTERNAL();
+  }
+  isInteger = MMC_IS_INTEGER(status[0]);
   for (i=len-1; i>=0; i--) {
+    if (isInteger != MMC_IS_INTEGER(status[i])) {
+      c_add_message(NULL,5999,
+        ErrorType_scripting,
+        ErrorLevel_internal,
+        gettext("System.launchParallelTasks: Got mismatched results types. Was there a thread synchronization error?"),
+        NULL,
+        0);
+      MMC_THROW_INTERNAL();
+    }
     result = mmc_mk_cons(status[i], result);
   }
   return result;

@@ -37,17 +37,38 @@ encapsulated package TplParser
   $Id$
 "
 
-public import Tpl;
-public import TplAbsyn;
+import Tpl;
+import TplAbsyn;
 
-protected import Debug;
-protected import Flags;
-protected import List;
-protected import System;
+protected
+import BaseAvlTree;
+import Debug;
+import Flags;
+import List;
+import System;
 //protected import Print;
 
 
 protected constant Integer TabSpaces = 4;
+
+package CacheTree "AvlTree for String to Integer. New implementation only used by the backend (until we get a new bootstrapping tarball)"
+  extends BaseAvlTree;
+  redeclare type Key = String;
+  redeclare type Value = list<TplAbsyn.ASTDef>;
+  redeclare function extends keyStr
+  algorithm
+    outString := inKey;
+  end keyStr;
+  redeclare function extends valueStr
+  algorithm
+    outString := "#OPAQUE#";
+  end valueStr;
+  redeclare function extends keyCompare
+  algorithm
+    outResult := stringCompare(inKey1, inKey2);
+  end keyCompare;
+annotation(__OpenModelica_Interface="util");
+end CacheTree;
 
 public
 uniontype ParseInfo
@@ -149,34 +170,16 @@ end startPositionFromExp;
 
 public function charsTillEndOfLine
   input list<String> inChars;
-  input Integer inAccCount;
-  output Integer outCharsTillEnd;
+  input output Integer outCharsTillEnd;
+protected
+  Integer i;
 algorithm
-  (outCharsTillEnd) := charsTillEndOfLine2(1,inChars,inAccCount-1); // -1 because we will count the first one an extra time...
+  for c in inChars loop
+    i := stringCharInt(c);
+    if (i == 10) or (i == 13) then return; end if;
+    outCharsTillEnd := outCharsTillEnd + (if i == 9 then TabSpaces else 1); // \t counts as 4 spaces
+  end for;
 end charsTillEndOfLine;
-
-public function charsTillEndOfLine2
-  input Integer head;
-  input list<String> rest;
-  input Integer accCount;
-  output Integer outCharsTillEnd;
-algorithm
-  (outCharsTillEnd) := match (head, rest, accCount)
-    local
-      list<String> chars;
-      String c;
-    case (10,_,_) then accCount; // \n
-    case (13,_,_) then accCount; // \r
-    case (9,c::chars,_)
-      then charsTillEndOfLine2(stringCharInt(c),chars,accCount+4); // \t counts as 4 spaces
-    case (_,c::chars,_)
-      then charsTillEndOfLine2(stringCharInt(c),chars,accCount+1);
-
-    case (_,{},_)
-      then accCount;
-
-  end match;
-end charsTillEndOfLine2;
 
 
 public function makeStartLineInfo
@@ -389,38 +392,28 @@ algorithm
 end parseErrorPrevPositionOptInfoChars;
 
 public function expectChar
-  input list<String> inChars;
-  input LineInfo inLineInfo;
+  input output list<String> chars;
+  input output LineInfo lineInfo;
   input String inExpectedChar;
-
-  output list<String> outChars;
-  output LineInfo outLineInfo;
 algorithm
-  (outChars, outLineInfo) := matchcontinue (inChars, inLineInfo, inExpectedChar)
+  chars := match (chars)
     local
-      list<String> chars;
+      list<String> rest;
       LineInfo linfo;
-      String ec, c;
+      String c;
 
-    case (c :: chars, linfo, ec)
-      equation
-        true = stringEq(c, ec);
-      then (chars, linfo);
+    case (c :: rest)
+      guard stringEq(c, inExpectedChar)
+      then rest;
 
-    case (chars, linfo, ec)
+    case (_)
       equation
         // false = stringEq(c, ec));
         // or chars = {}
-        (linfo) = parseError(chars, linfo, "Expected character '" + ec + "' at the position.", false);
+        (lineInfo) = parseError(chars, lineInfo, "Expected character '" + inExpectedChar + "' at the position.", false);
         //fprint(Flags.FAILTRACE, "???Expected character '" + ec + "'\n");
-      then (chars, linfo);
-
-    else
-      equation
-        true = Flags.isSet(Flags.FAILTRACE); Debug.trace("- !!! TplParser.expectChar failed.\n");
-      then fail();
-
-  end matchcontinue;
+      then chars;
+  end match;
 end expectChar;
 
 //intended to say error before the last interleave, but need
@@ -616,7 +609,7 @@ end openFile;
 
 
 public function templPackageFromFile
-  input  String inFile;
+  input String inFile;
   output TplAbsyn.TemplPackage outTemplPackage;
 algorithm
   (outTemplPackage) := matchcontinue (inFile)
@@ -630,7 +623,7 @@ algorithm
         equation
           (chars, linfo, errOpt) = openFile(file);
           linfo = parseErrorPrevPositionOpt(chars, linfo, linfo, errOpt, true);
-          (chars, linfo, tplPackage) = templPackage(chars, linfo);
+          (chars, linfo, tplPackage) = templPackage(chars, linfo, CacheTree.Tree.EMPTY());
           (_, linfo) = interleaveExpectEndOfFile(chars, linfo);
           printAndFailIfError(linfo);
         then tplPackage;
@@ -644,78 +637,87 @@ algorithm
 end templPackageFromFile;
 
 
-public function typeviewDefsFromInterfaceFile
+protected function typeviewDefsFromInterfaceFile
   input TplAbsyn.PathIdent interfaceName;
-  input list<TplAbsyn.ASTDef> inAccASTDefs;
-
-  output list<TplAbsyn.ASTDef> outASTDefs;
-  output LineInfo outLineInfo;
-  output Option<String> outErrorOpt;
+  input output list<TplAbsyn.ASTDef> astDefs;
+  output LineInfo linfo;
+  output Option<String> errOpt;
+  input output CacheTree.Tree cachedDefs;
+protected
+  String file;
+  list<String> chars;
+  list<TplAbsyn.ASTDef> newAstDefs;
 algorithm
-  (outASTDefs, outLineInfo, outErrorOpt) := matchcontinue (interfaceName, inAccASTDefs)
-    local
-      String file;
-      Option<String> errOpt;
-      list<String> chars;
-      LineInfo linfo;
-      list<TplAbsyn.ASTDef> astDefs;
-      TplAbsyn.PathIdent pid;
-
-    case (_, astDefs)
-      equation
-        file = TplAbsyn.pathIdentString(interfaceName) + ".mo";
-        (chars, linfo, errOpt) = openFile(file);
-        (chars, linfo) = interleave(chars, linfo);
-        (chars, linfo,_, astDefs) = interfacePackage(chars, linfo, astDefs);
-        (_, linfo) = interleaveExpectEndOfFile(chars, linfo);
-      then (astDefs, linfo, errOpt);
-
-    else
-      equation
-        true = Flags.isSet(Flags.FAILTRACE); Debug.trace("Parse error - TplParser.typeviewDefsFromInterfaceFile failed.\n");
-      then fail();
-
-  end matchcontinue;
+  file := TplAbsyn.pathIdentString(interfaceName) + ".mo";
+  try
+    if CacheTree.hasKey(cachedDefs, file) then
+      // Return cached result, because it's very slow if we don't...
+      astDefs := listAppend(CacheTree.get(cachedDefs, file), astDefs);
+      linfo := LINE_INFO(PARSE_INFO("cachedResult",{},false),0,0,{});
+      errOpt := NONE();
+      return;
+    end if;
+    (chars, linfo, errOpt) := openFile(file);
+    (chars, linfo) := interleave(chars, linfo);
+    (chars, linfo,_, newAstDefs) := interfacePackage(chars, linfo, {});
+    (_, linfo) := interleaveExpectEndOfFile(chars, linfo);
+    if Flags.isSet(Flags.FAILTRACE) then
+      Debug.trace("Loaded interface file: "+file+"\n");
+    end if;
+    cachedDefs := CacheTree.add(cachedDefs, file, newAstDefs);
+    astDefs := listAppend(newAstDefs, astDefs);
+  else
+    if Flags.isSet(Flags.FAILTRACE) then
+      Debug.trace("Parse error - TplParser.typeviewDefsFromInterfaceFile "+file+" failed.\n");
+    end if;
+    fail();
+  end try;
 end typeviewDefsFromInterfaceFile;
 
 
-public function typeviewDefsFromTemplateFile
+protected function typeviewDefsFromTemplateFile
   input TplAbsyn.PathIdent packageName;
   input Boolean isUnqualifiedImport;
-  input list<TplAbsyn.ASTDef> inAccASTDefs;
-
-  output list<TplAbsyn.ASTDef> outASTDefs;
-  output LineInfo outLineInfo;
-  output Option<String> outErrorOpt;
+  input output list<TplAbsyn.ASTDef> astDefs;
+  output LineInfo linfo;
+  output Option<String> errOpt;
+  input output CacheTree.Tree cachedDefs;
+protected
+  String file;
+  list<String> chars;
+  TplAbsyn.ASTDef newAstDef;
+  TplAbsyn.TemplPackage tplPackage;
+  list<tuple<TplAbsyn.Ident,TplAbsyn.TemplateDef>> templateDefs;
+  list<tuple<TplAbsyn.Ident, TplAbsyn.TypeInfo>> astTypes;
 algorithm
-  (outASTDefs, outLineInfo, outErrorOpt) := matchcontinue (packageName, isUnqualifiedImport, inAccASTDefs)
-    local
-      String file;
-      Option<String> errOpt;
-      list<String> chars;
-      LineInfo linfo;
-      list<TplAbsyn.ASTDef> astDefs;
-      TplAbsyn.TemplPackage tplPackage;
-      list<tuple<TplAbsyn.Ident,TplAbsyn.TemplateDef>> templateDefs;
-      list<tuple<TplAbsyn.Ident, TplAbsyn.TypeInfo>> astTypes;
-    case (_, _, astDefs)
-      equation
-        file = TplAbsyn.pathIdentString(packageName) + ".tpl";
-        (chars, linfo, errOpt) = openFile(file);
-        (chars, linfo, tplPackage) = templPackage(chars, linfo);
-        (_, linfo) = interleaveExpectEndOfFile(chars, linfo);
-        TplAbsyn.TEMPL_PACKAGE(templateDefs = templateDefs)
-          = TplAbsyn.fullyQualifyTemplatePackage(tplPackage);
-        astTypes = List.map(templateDefs, templateDefToAstDefType);
-        astDefs = TplAbsyn.AST_DEF(packageName, isUnqualifiedImport, astTypes) :: astDefs;
-      then (astDefs, linfo, errOpt);
-
-    else
-      equation
-        true = Flags.isSet(Flags.FAILTRACE); Debug.trace("Parse error - TplParser.typeviewDefsFromInterfaceFile failed.\n");
-      then fail();
-
-  end matchcontinue;
+  file := TplAbsyn.pathIdentString(packageName) + ".tpl";
+  try
+    if CacheTree.hasKey(cachedDefs, file) then
+      // We cache everything. But we need to pass isUnqualifiedImport=true|false...
+      {TplAbsyn.AST_DEF(_, _, astTypes)} := CacheTree.get(cachedDefs, file);
+      astDefs := TplAbsyn.AST_DEF(packageName, isUnqualifiedImport, astTypes)::astDefs;
+      linfo := LINE_INFO(PARSE_INFO("cachedResult",{},false),0,0,{});
+      errOpt := NONE();
+      return;
+    end if;
+    (chars, linfo, errOpt) := openFile(file);
+    (chars, linfo, tplPackage, cachedDefs) := templPackage(chars, linfo, cachedDefs);
+    (_, linfo) := interleaveExpectEndOfFile(chars, linfo);
+    TplAbsyn.TEMPL_PACKAGE(templateDefs = templateDefs)
+      := TplAbsyn.fullyQualifyTemplatePackage(tplPackage);
+    astTypes := List.map(templateDefs, templateDefToAstDefType);
+    newAstDef := TplAbsyn.AST_DEF(packageName, isUnqualifiedImport, astTypes);
+    cachedDefs := CacheTree.add(cachedDefs, file, newAstDef::{});
+    astDefs :=  newAstDef :: astDefs;
+    if Flags.isSet(Flags.FAILTRACE) then
+      Debug.trace("Loaded typeview from template file: "+file+"\n");
+    end if;
+  else
+    if Flags.isSet(Flags.FAILTRACE) then
+      Debug.trace("Parse error - TplParser.typeviewDefsFromInterfaceFile "+file+" failed.\n");
+    end if;
+    fail();
+  end try;
 end typeviewDefsFromTemplateFile;
 
 
@@ -737,7 +739,7 @@ algorithm
     case ( (id, TplAbsyn.TEMPLATE_DEF(args = iargs)) )
       equation
         iargs =  TplAbsyn.imlicitTxtArg :: iargs;
-        oargs = List.filter(iargs, TplAbsyn.isText);
+        oargs = List.filterOnTrue(iargs, TplAbsyn.isText);
       then ( (id, TplAbsyn.TI_FUN_TYPE(iargs,oargs,{})) );
 
     else
@@ -1173,6 +1175,7 @@ public function templPackage
   output list<String> outChars;
   output LineInfo outLineInfo;
   output TplAbsyn.TemplPackage outTemplPackage;
+  input output CacheTree.Tree cachedDefs;
 algorithm
   (outChars, outLineInfo, outTemplPackage) := matchcontinue (inChars, inLineInfo)
     local
@@ -1191,7 +1194,7 @@ algorithm
         (chars, linfo) = interleave(chars, linfo);
         (chars, linfo) = stringComment(chars, linfo);
         (chars, linfo) = interleave(chars, linfo);
-        (chars, linfo, astDefs,templDefs) = definitions(chars, linfo,{},{});
+        (chars, linfo, astDefs,templDefs,cachedDefs) = definitions(chars, linfo,{},{},cachedDefs);
         astDefs = listReverse(astDefs);
         templDefs = listReverse(templDefs);
         (chars, linfo) = interleave(chars, linfo);
@@ -1236,6 +1239,7 @@ public function definitions
   output LineInfo outLineInfo;
   output list<TplAbsyn.ASTDef> outASTDefs;
   output list<tuple<TplAbsyn.Ident, TplAbsyn.TemplateDef>> outTemplDefs;
+  input output CacheTree.Tree cachedDefs;
 algorithm
   (outChars, outLineInfo, outASTDefs, outTemplDefs) := matchcontinue (inChars, inLineInfo, inAccASTDefs, inAccTemplDefs)
     local
@@ -1269,11 +1273,11 @@ algorithm
         (chars, linfo) = interleave(chars, linfo);
         (chars, linfo) = semicolon(chars, linfo);
 
-        (astDefs, linfoTV, errOptTV) = typeviewDefsFromInterfaceFile(pid, astDefs);
+        (astDefs, linfoTV, errOptTV, cachedDefs) = typeviewDefsFromInterfaceFile(pid, astDefs, cachedDefs);
         linfo = parseErrorPrevPositionOpt(startChars, startLinfo, linfo, errOptTV, false);
         linfo = mergeErrors(linfo, linfoTV);
         (chars, linfo) = interleave(chars, linfo);
-        (chars, linfo, astDefs, templDefs) = definitions(chars, linfo, astDefs, templDefs);
+        (chars, linfo, astDefs, templDefs, cachedDefs) = definitions(chars, linfo, astDefs, templDefs, cachedDefs);
       then (chars, linfo, astDefs, templDefs);
 
     case ("i"::"m"::"p"::"o"::"r"::"t":: chars, linfo, astDefs, templDefs)
@@ -1289,18 +1293,18 @@ algorithm
         (chars, linfo) = interleave(chars, linfo);
         (chars, linfo) = semicolon(chars, linfo);
 
-        (astDefs, linfoTV, errOptTV) = typeviewDefsFromTemplateFile(pid, isUnqual, astDefs);
+        (astDefs, linfoTV, errOptTV, cachedDefs) = typeviewDefsFromTemplateFile(pid, isUnqual, astDefs, cachedDefs);
         linfo = parseErrorPrevPositionOpt(startChars, startLinfo, linfo, errOptTV, false);
         linfo = mergeErrors(linfo, linfoTV);
         (chars, linfo) = interleave(chars, linfo);
-        (chars, linfo, astDefs, templDefs) = definitions(chars, linfo, astDefs, templDefs);
+        (chars, linfo, astDefs, templDefs, cachedDefs) = definitions(chars, linfo, astDefs, templDefs, cachedDefs);
       then (chars, linfo, astDefs, templDefs);
 
     case (chars, linfo, astDefs,templDefs)
       equation
         (chars, linfo, name, td) = templDef(chars, linfo);
         (chars, linfo) = interleave(chars, linfo);
-        (chars, linfo, astDefs, templDefs) = definitions(chars, linfo, astDefs, (name,td)::templDefs);
+        (chars, linfo, astDefs, templDefs, cachedDefs) = definitions(chars, linfo, astDefs, (name,td)::templDefs, cachedDefs);
       then (chars, linfo, astDefs, templDefs);
 
     else (inChars, inLineInfo, inAccASTDefs, inAccTemplDefs);
@@ -1994,9 +1998,7 @@ algorithm
         (chars, linfo) = interleave(chars, linfo);
         (chars, linfo) = stringComment(chars, linfo);
         (chars, linfo) = interleave(chars, linfo);
-        (chars, linfo, rtags) = recordTags(chars, linfo);
-        (chars, linfo) = interleave(chars, linfo);
-        (chars, linfo) = endDefIdent(chars, linfo,id);
+        (chars, linfo, rtags) = recordTags(chars, linfo, id);
       then (chars, linfo, (id, TplAbsyn.TI_UNION_TYPE(rtags)));
 
    case (chars, linfo)
@@ -2146,6 +2148,7 @@ recordTags:
 public function recordTags
   input list<String> inChars;
   input LineInfo inLineInfo;
+  input String id;
 
   output list<String> outChars;
   output LineInfo outLineInfo;
@@ -2162,13 +2165,19 @@ algorithm
       equation
         (chars, linfo, rtag) = recordType(chars, linfo);
         (chars, linfo) = interleave(chars, linfo);
-        (chars, linfo, rtags) = recordTags(chars, linfo);
+        (chars, linfo, rtags) = recordTags(chars, linfo, id);
       then (chars, linfo, rtag :: rtags);
+
+    case (chars, linfo)
+      equation
+        (chars, linfo) = interleave(chars, linfo);
+        (chars, linfo) = endDefIdent(chars, linfo, id);
+      then (chars, linfo, {});
 
     else
       equation
         if Flags.isSet(Flags.FAILTRACE) then
-          Debug.trace("!!!Parse error - TplParser.recordTags failed.\n");
+          Debug.trace("!!!Parse error - TplParser.recordTags failed at " + inLineInfo.parseInfo.fileName + ": " + String(inLineInfo.lineNumber) + ".\n");
         end if;
       then (inChars, inLineInfo, {});
 

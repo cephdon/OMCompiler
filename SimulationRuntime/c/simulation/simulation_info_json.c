@@ -30,13 +30,12 @@
 
 #include "simulation_info_json.h"
 #include "simulation_runtime.h"
-#include <expat.h>
 #include <errno.h>
 #include <string.h>
-#include "util/uthash.h"
 #include <stdio.h>
 #include "util/rtclock.h"
 #include "util/omc_mmap.h"
+#include "solver/model_help.h"
 
 static inline const char* skipSpace(const char* str)
 {
@@ -222,14 +221,18 @@ static const char* readEquation(const char *str,EQUATION_INFO *xml,int i)
   xml->id = i;
   str = skipFieldIfExist(str, "parent");
   str = skipFieldIfExist(str, "section");
-  if ((measure_time_flag & 1) && 0==strncmp(",\"tag\":\"container\"", str, 18)) {
+  if ((measure_time_flag & 1) && 0==strncmp(",\"tag\":\"system\"", str, 15)) {
     xml->profileBlockIndex = -1;
-    str += 18;
+    str += 15;
+  } else if ((measure_time_flag & 1) && 0==strncmp(",\"tag\":\"tornsystem\"", str, 19)) {
+    xml->profileBlockIndex = -1;
+    str += 19;
   } else {
     xml->profileBlockIndex = 0;
   }
   str = skipFieldIfExist(str, "tag");
   str = skipFieldIfExist(str, "display");
+  str = skipFieldIfExist(str, "unknowns");
   if (strncmp(",\"defines\":[", str, 12)) {
     xml->numVar = 0;
     xml->vars = 0;
@@ -366,17 +369,20 @@ static void readInfoJson(const char *str,MODEL_DATA_XML *xml)
   assertChar(str,'}');
 }
 
-void modelInfoJsonInit(MODEL_DATA_XML* xml)
+void modelInfoInit(MODEL_DATA_XML* xml)
 {
+#if !defined(OMC_NO_FILESYSTEM)
   omc_mmap_read mmap_reader = {0};
+#endif
   rt_tick(0);
+#if !defined(OMC_NO_FILESYSTEM)
   if (!xml->infoXMLData) {
     mmap_reader = omc_mmap_open_read(xml->fileName);
     xml->infoXMLData = mmap_reader.data;
     xml->modelInfoXmlLength = mmap_reader.size;
     // fprintf(stderr, "Loaded the JSON (%ld kB)...\n", (long) (s.st_size+1023)/1024);
   }
-
+#endif
   xml->functionNames = (FUNCTION_INFO*) calloc(xml->nFunctions, sizeof(FUNCTION_INFO));
   xml->equationInfo = (EQUATION_INFO*) calloc(1+xml->nEquations, sizeof(EQUATION_INFO));
   xml->equationInfo[0].id = 0;
@@ -389,34 +395,36 @@ void modelInfoJsonInit(MODEL_DATA_XML* xml)
   // fprintf(stderr, "Parse the JSON %ld...\n", (long) xml->infoXMLData);
   readInfoJson(xml->infoXMLData, xml);
   // fprintf(stderr, "Parsed the JSON in %fms...\n", rt_tock(0) * 1000.0);
+#if !defined(OMC_NO_FILESYSTEM)
   omc_mmap_close_read(mmap_reader);
+#endif
 }
 
-FUNCTION_INFO modelInfoJsonGetFunction(MODEL_DATA_XML* xml, size_t ix)
+FUNCTION_INFO modelInfoGetFunction(MODEL_DATA_XML* xml, size_t ix)
 {
   if(xml->functionNames == NULL)
   {
-    modelInfoJsonInit(xml);
+    modelInfoInit(xml);
   }
   assert(xml->functionNames);
   return xml->functionNames[ix];
 }
 
-EQUATION_INFO modelInfoJsonGetEquation(MODEL_DATA_XML* xml, size_t ix)
+EQUATION_INFO modelInfoGetEquation(MODEL_DATA_XML* xml, size_t ix)
 {
   if (xml->equationInfo == NULL) {
-    modelInfoJsonInit(xml);
+    modelInfoInit(xml);
   }
   assert(xml->equationInfo);
   return xml->equationInfo[ix];
 }
 
-EQUATION_INFO modelInfoJsonGetEquationIndexByProfileBlock(MODEL_DATA_XML* xml, size_t ix)
+EQUATION_INFO modelInfoGetEquationIndexByProfileBlock(MODEL_DATA_XML* xml, size_t ix)
 {
   int i;
   if(xml->equationInfo == NULL)
   {
-    modelInfoJsonInit(xml);
+    modelInfoInit(xml);
   }
   if(ix > xml->nProfileBlocks)
   {
@@ -430,9 +438,4 @@ EQUATION_INFO modelInfoJsonGetEquationIndexByProfileBlock(MODEL_DATA_XML* xml, s
     }
   }
   throwStreamPrint(NULL, "Requested equation with profiler index %ld, but could not find it!", (long int)ix);
-}
-
-void freeModelInfoJson(MODEL_DATA_XML* xml)
-{
-  /* TODO: ... */
 }

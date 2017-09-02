@@ -65,7 +65,7 @@ protected:
   ISolverSettings
     *_settings;               ///< Settings for the solver
 
-  boost::shared_ptr<SystemStateSelection> _state_selection;
+  shared_ptr<SystemStateSelection> _state_selection;
   double
     _tInit,                   ///< (initiale) Startzeit (wird nicht vom Solver verändert)
     _tCurrent,                ///< current time (is changed by the solver)
@@ -121,7 +121,7 @@ private:
   }
 
   #ifdef RUNTIME_PROFILING
-  std::vector<MeasureTimeData> measureTimeFunctionsArray;
+  std::vector<MeasureTimeData*> *measureTimeFunctionsArray;
   MeasureTimeValues *writeFunctionStartValues, *writeFunctionEndValues;
   #endif
 };

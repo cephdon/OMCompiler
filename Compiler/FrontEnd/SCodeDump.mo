@@ -34,7 +34,6 @@ encapsulated package SCodeDump
   package:     SCodeDump
   description: SCodeDump intermediate form
 
-  RCS: $Id: SCodeDump.mo 8980 2011-05-13 09:12:21Z perost $
 
   This module functions for printing SCode."
 
@@ -166,7 +165,7 @@ algorithm
     case SCode.R_TYPE() then "type";
     case SCode.R_PACKAGE() then "package";
     case SCode.R_ENUMERATION() then "enumeration";
-    case SCode.R_METARECORD() then "metarecord";
+    case SCode.R_METARECORD() then "metarecord " + Absyn.pathString(inRestriction.name);
     case SCode.R_UNIONTYPE() then "uniontype";
     // predefined types
     case SCode.R_PREDEFINED_INTEGER() then "Integer";
@@ -236,10 +235,10 @@ algorithm
         res;
 
     case SCode.CLASS(name = n, partialPrefix = pp, prefixes = SCode.PREFIXES(innerOuter = io, redeclarePrefix = rdp, replaceablePrefix = rpp),
-                     classDef = SCode.CLASS_EXTENDS(baseClassName = str))
+                     classDef = SCode.CLASS_EXTENDS())
       equation
         ioStr = Dump.unparseInnerouterStr(io) + redeclareStr(rdp) + replaceablePrefixStr(rpp) + partialStr(pp);
-        res = stringAppendList({ioStr, "class extends ",n," extends ", str, ";"});
+        res = stringAppendList({ioStr, "class extends ",n,";"});
       then
         res;
 

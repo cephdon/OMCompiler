@@ -4,6 +4,7 @@ import interface SimCodeTV;
 import CodegenUtil.*;
 import DAEDumpTpl.*;
 import SCodeDumpTpl.*;
+import ExpressionDumpTpl;
 
 template dumpTaskSystem(SimCode code, Boolean withOperations)
 ::=
@@ -78,6 +79,7 @@ template eqIndex(SimEqSystem eq)
 match eq
     case SES_RESIDUAL(__)
     case SES_SIMPLE_ASSIGN(__)
+    case SES_SIMPLE_ASSIGN_CONSTRAINTS(__)
     case SES_ARRAY_CALL_ASSIGN(__)
     case SES_ALGORITHM(__) then index
     case SES_LINEAR(lSystem=ls as LINEARSYSTEM(__)) then ls.index
@@ -109,7 +111,8 @@ template dumpEqs(list<SimEqSystem> eqs, Integer parent, Boolean withOperations)
         </residual>
       </equation><%\n%>
       >>
-    case e as SES_SIMPLE_ASSIGN(__) then
+    case e as SES_SIMPLE_ASSIGN(__)
+    case e as SES_SIMPLE_ASSIGN_CONSTRAINTS(__) then
       let &defines = buffer ""
       let &depends = buffer ""
       let _ = eqDefinesDepends(e, defines, depends)
@@ -156,7 +159,7 @@ template dumpEqs(list<SimEqSystem> eqs, Integer parent, Boolean withOperations)
       let _ = SimCodeUtil.sortEqSystems(ls.residual) |> reseq  =>
                 eqDefinesDepends(reseq, defines, depends)
       let _ = (match ls.jacobianMatrix
-        case SOME(({(eqns,_,_)},_,_,_,_,_,_)) then
+        case SOME(SimCode.JAC_MATRIX(columns={JAC_COLUMN(columnEqns=eqns)})) then
           let _ = SimCodeUtil.sortEqSystems(eqns) |> jeq  =>
                   eqDefinesDepends(jeq, defines, depends)
           ""
@@ -170,7 +173,7 @@ template dumpEqs(list<SimEqSystem> eqs, Integer parent, Boolean withOperations)
           <%ls.residual |> eq => '<eq index="<%eqIndex(eq)%>"/>' ; separator = "\n" %>
           </residuals>
           <jacobian>
-          <%match ls.jacobianMatrix case SOME(({(eqns,_,_)},_,_,_,_,_,_)) then (eqns |> eq => '<eq index="<%eqIndex(eq)%>"/>' ; separator = "\n") else ''%>
+          <%match ls.jacobianMatrix case SOME(SimCode.JAC_MATRIX(columns={JAC_COLUMN(columnEqns=eqns)})) then (eqns |> eq => '<eq index="<%eqIndex(eq)%>"/>' ; separator = "\n") else ''%>
           </jacobian>
         </linear>
       </equation><%\n%>
@@ -182,13 +185,13 @@ template dumpEqs(list<SimEqSystem> eqs, Integer parent, Boolean withOperations)
       let _ = SimCodeUtil.sortEqSystems(nls.eqs) |> nleq  =>
                 eqDefinesDepends(nleq, defines, depends)
       let _ = (match nls.jacobianMatrix
-        case SOME(({(eqns,_,_)},_,_,_,_,_,_)) then
+        case SOME(SimCode.JAC_MATRIX(columns={JAC_COLUMN(columnEqns=eqns)})) then
           let _ = SimCodeUtil.sortEqSystems(eqns) |> jeq  =>
                   eqDefinesDepends(jeq, defines, depends)
           ""
        )
       <<
-      <%match nls.jacobianMatrix case SOME(({(eqns,_,_)},_,_,_,_,_,_)) then dumpEqs(SimCodeUtil.sortEqSystems(eqns),nls.index,withOperations) else ''%>
+      <%match nls.jacobianMatrix case SOME(SimCode.JAC_MATRIX(columns={JAC_COLUMN(columnEqns=eqns)})) then dumpEqs(SimCodeUtil.sortEqSystems(eqns),nls.index,withOperations) else ''%>
       <equation index="<%eqIndex(eq)%>"<%hasParent(parent)%>>
         <nonlinear indexNonlinear="<%nls.indexNonLinearSystem%>">
           <%defines%>
@@ -210,13 +213,12 @@ template dumpEqs(list<SimEqSystem> eqs, Integer parent, Boolean withOperations)
       <%dumpEqs(e.discEqs,e.index,withOperations)%>
       >>
     case e as SES_WHEN(__) then
+      let body = dumpWhenOps(whenStmtLst)
       <<
       <equation index="<%eqIndex(eq)%>"<%hasParent(parent)%>>
       <when>
         <%conditions |> cond => '<cond><%crefStrNoUnderscore(cond)%></cond>' ; separator="\n" %>
-        <defines name="<%crefStrNoUnderscore(e.left)%>" />
-        <% extractUniqueCrefsFromExpDerPreStart(e.right) |> cr => '<depends name="<%crefStrNoUnderscore(cr)%>" />' ; separator = "\n" %>
-        <rhs><%printExpStrEscaped(e.right)%></rhs>
+        <%body%>
       </when>
       </equation><%\n%>
       >>
@@ -232,6 +234,53 @@ template dumpEqs(list<SimEqSystem> eqs, Integer parent, Boolean withOperations)
       >>
     else error(sourceInfo(),"dumpEqs: Unknown equation")
 end dumpEqs;
+
+template dumpWhenOps(list<BackendDAE.WhenOperator> whenOps)
+::=
+  match whenOps
+  case ({}) then <<>>
+  case ((e as BackendDAE.ASSIGN(left = left as DAE.CREF(componentRef = leftCr)))::rest) then
+    let restbody = dumpWhenOps(rest)
+    <<
+    <defines name="<%crefStrNoUnderscore(leftCr)%>" />
+    <% extractUniqueCrefsFromExpDerPreStart(e.right) |> cr => '<depends name="<%crefStrNoUnderscore(cr)%>" />' ; separator = "\n" %>
+    <rhs><%printExpStrEscaped(e.right)%></rhs>
+    <%restbody%>
+    >>
+  case ((e as BackendDAE.REINIT(__))::rest) then
+    let restbody = dumpWhenOps(rest)
+    <<
+    <whenReinit>
+      TODO: fix this case.
+    </whenReinit>
+    <%restbody%>
+    >>
+  case ((e as BackendDAE.ASSERT(__))::rest) then
+    let restbody = dumpWhenOps(rest)
+    <<
+    <whenAssertion>
+      TODO: fix this case.
+    </whenAssertion>
+    <%restbody%>
+    >>
+  case ((e as BackendDAE.TERMINATE(__))::rest) then
+    let restbody = dumpWhenOps(rest)
+    <<
+    <whenTerminate>
+      TODO: fix this case.
+    </whenTerminate>
+    <%restbody%>
+    >>
+  case ((e as BackendDAE.NORETCALL(__))::rest) then
+    let restbody = dumpWhenOps(rest)
+    <<
+    <whenNoRetCall>
+      TODO: fix this case.
+    </whenNoRetCall>
+    <%restbody%>
+    >>
+  else error(sourceInfo(),"dumpEqs: Unknown equation")
+end dumpWhenOps;
 
 template getdependcies(tuple<list<DAE.ComponentRef>, list<DAE.ComponentRef>> ocrefs)
 ::=
@@ -250,7 +299,8 @@ template eqDefinesDepends(SimEqSystem eq, Text &defines, Text &depends)
   case e as SES_RESIDUAL(__) then
     let &depends += extractUniqueCrefsFromExpDerPreStart(e.exp) |> cr => '<depends name="<%crefStrNoUnderscore(cr)%>"/>' ; separator = "\n"
     ""
-  case e as SES_SIMPLE_ASSIGN(__) then
+  case e as SES_SIMPLE_ASSIGN(__)
+  case e as SES_SIMPLE_ASSIGN_CONSTRAINTS(__) then
     let &defines += '<defines name="<%crefStrNoUnderscore(e.cref)%>"/><%\n%>'
     let &depends += extractUniqueCrefsFromExpDerPreStart(e.exp) |> cr => '<depends name="<%crefStrNoUnderscore(cr)%>" />' ; separator = "\n"
     ""
@@ -267,26 +317,6 @@ template dumpWithin(Within w)
     case TOP(__) then "within ;"
     case WITHIN(__) then 'within <%dotPath(path)%>;'
 end dumpWithin;
-
-template dumpElementSource(ElementSource source, Boolean withOperations)
-::=
-  match source
-    case s as SOURCE(info=info as SOURCEINFO(__)) then
-      <<
-      <source>
-        <%dumpInfo(info)%>
-        <%s.partOfLst |> w => '<part-of><%dumpWithin(w)%></part-of>' %>
-        <%match s.instanceOpt case SOME(cr) then '<instance><%crefStrNoUnderscore(cr)%></instance>' %>
-        <%s.connectEquationOptLst |> p => "<connect-equation />"%>
-        <%s.typeLst |> p => '<type><%escapeModelicaStringToXmlString(dotPath(p))%></type>' ; separator = "\n" %>
-      </source>
-      <% if withOperations then <<
-      <operations>
-        <%s.operations |> op => dumpOperation(op,s.info) ; separator="\n" %>
-      </operations>
-      >> %>
-      >>
-end dumpElementSource;
 
 template dumpOperation(SymbolicOperation op, builtin.SourceInfo info)
 ::=
@@ -398,7 +428,7 @@ end dumpInfo;
 
 template printExpStrEscaped(Exp exp)
 ::=
-  escapeModelicaStringToXmlString(printExpStr(exp))
+  escapeModelicaStringToXmlString(ExpressionDumpTpl.dumpExp(exp,"\""))
 end printExpStrEscaped;
 
 template printEquationExpStrEscaped(EquationExp eq)

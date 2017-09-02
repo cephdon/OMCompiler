@@ -40,7 +40,6 @@ encapsulated package HashTableCrToExpSourceTpl "
   package:     HashTableCrToExpSourceTpl
   description: DAE.CR to tuple<DAE.Exp,DAE.ElementSource>
 
-  RCS: $Id: HashTableCrToExpSourceTpl.mo 8796 2011-05-03 19:43:08Z adrpo $
 
   "
 
@@ -66,7 +65,6 @@ public type HashTableCrefFunctionsType = tuple<FuncHashCref,FuncCrefEqual,FuncCr
 public type HashTable = tuple<
   array<list<tuple<Key,Integer>>>,
   tuple<Integer,Integer,array<Option<tuple<Key,Value>>>>,
-  Integer,
   Integer,
   HashTableCrefFunctionsType
 >;

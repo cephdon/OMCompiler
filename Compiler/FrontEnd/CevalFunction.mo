@@ -35,7 +35,6 @@ encapsulated package CevalFunction
   description:  This module constant evaluates DAE.Function objects, i.e.
                 modelica functions defined by the user.
 
-  RCS: $Id$
 
   TODO:
     * Implement evaluation of MetaModelica statements.
@@ -67,6 +66,7 @@ protected import ComponentReference;
 protected import DAEDump;
 protected import DAEUtil;
 protected import Debug;
+protected import ElementSource;
 protected import Error;
 protected import Expression;
 protected import ExpressionDump;
@@ -727,7 +727,7 @@ algorithm
         (cache, env, st);
 
     case("dgelsx", {arg_M, arg_N, arg_NRHS, arg_A, arg_LDA, arg_B, arg_LDB,
-                    arg_JPVT, arg_RCOND, arg_RANK, arg_WORK, arg_LWORK, arg_INFO},
+                    arg_JPVT, arg_RCOND, arg_RANK, arg_WORK, _, arg_INFO},
         cache, env, st)
       equation
         (M, cache, st) = evaluateExtIntArg(arg_M, cache, env, st);
@@ -1521,7 +1521,7 @@ protected function setupFunctionEnvironment
   output FCore.Graph outEnv;
   output SymbolTable outST;
 algorithm
-  outEnv := FGraph.openScope(inEnv, SCode.NOT_ENCAPSULATED(), SOME(inFuncName), SOME(FCore.FUNCTION_SCOPE()));
+  outEnv := FGraph.openScope(inEnv, SCode.NOT_ENCAPSULATED(), inFuncName, SOME(FCore.FUNCTION_SCOPE()));
   (outCache, outEnv, outST) :=
     extendEnvWithFunctionVars(inCache, outEnv, inFuncParams, inST);
 end setupFunctionEnvironment;
@@ -1705,7 +1705,7 @@ algorithm
                 SCode.COMPONENT(
                   inName,
                   SCode.defaultPrefixes,
-                  SCode.ATTR({}, SCode.POTENTIAL(), SCode.NON_PARALLEL(), SCode.VAR(), Absyn.BIDIR()),
+                  SCode.ATTR({}, SCode.POTENTIAL(), SCode.NON_PARALLEL(), SCode.VAR(), Absyn.BIDIR(),Absyn.NONFIELD()),
                   Absyn.TPATH(Absyn.IDENT(""), NONE()), SCode.NOMOD(),
                   SCode.noComment, NONE(), Absyn.dummyInfo),
                 DAE.NOMOD(),
@@ -1727,7 +1727,7 @@ algorithm
                 SCode.COMPONENT(
                   inName,
                   SCode.defaultPrefixes,
-                  SCode.ATTR({}, SCode.POTENTIAL(), SCode.NON_PARALLEL(), SCode.VAR(), Absyn.BIDIR()),
+                  SCode.ATTR({}, SCode.POTENTIAL(), SCode.NON_PARALLEL(), SCode.VAR(), Absyn.BIDIR(),Absyn.NONFIELD()),
                   Absyn.TPATH(Absyn.IDENT(""), NONE()), SCode.NOMOD(),
                   SCode.noComment, NONE(), Absyn.dummyInfo),
                 DAE.NOMOD(),
@@ -1938,14 +1938,14 @@ algorithm
         dim = Expression.intDimension(dim_int);
         (cache, ty, st) = appendDimensions2(ty, rest_dims, bind_dims, inCache, inEnv, st);
       then
-        (cache, DAE.T_ARRAY(ty, {dim}, DAE.emptyTypeSource), st);
+        (cache, DAE.T_ARRAY(ty, {dim}), st);
 
     // If the variable is not an input, set the dimension size to 0 (dynamic size).
     case (ty, DAE.DIM_UNKNOWN() :: rest_dims, bind_dims, _, _, st)
       equation
         (cache, ty, st) = appendDimensions2(ty, rest_dims, bind_dims, inCache, inEnv, st);
       then
-        (cache, DAE.T_ARRAY(ty, {DAE.DIM_INTEGER(0)}, DAE.emptyTypeSource), st);
+        (cache, DAE.T_ARRAY(ty, {DAE.DIM_INTEGER(0)}), st);
 
     case (ty, DAE.DIM_INTEGER(dim_int) :: rest_dims, bind_dims, _, _, st)
       equation
@@ -1953,7 +1953,7 @@ algorithm
         bind_dims = List.stripFirst(bind_dims);
         (cache, ty, st) = appendDimensions2(ty, rest_dims, bind_dims, inCache, inEnv, st);
       then
-        (cache, DAE.T_ARRAY(ty, {dim}, DAE.emptyTypeSource), st);
+        (cache, DAE.T_ARRAY(ty, {dim}), st);
 
     case (ty, DAE.DIM_BOOLEAN() :: rest_dims, bind_dims, _, _, st)
       equation
@@ -1961,7 +1961,7 @@ algorithm
         bind_dims = List.stripFirst(bind_dims);
         (cache, ty, st) = appendDimensions2(ty, rest_dims, bind_dims, inCache, inEnv, st);
       then
-        (cache, DAE.T_ARRAY(ty, {dim}, DAE.emptyTypeSource), st);
+        (cache, DAE.T_ARRAY(ty, {dim}), st);
 
     case (ty, DAE.DIM_ENUM(size = dim_int) :: rest_dims, bind_dims, _, _, st)
       equation
@@ -1969,7 +1969,7 @@ algorithm
         bind_dims = List.stripFirst(bind_dims);
         (cache, ty, st) = appendDimensions2(ty, rest_dims, bind_dims, inCache, inEnv, st);
       then
-        (cache, DAE.T_ARRAY(ty, {dim}, DAE.emptyTypeSource), st);
+        (cache, DAE.T_ARRAY(ty, {dim}), st);
 
     case (ty, DAE.DIM_EXP(exp = dim_exp) :: rest_dims, bind_dims, _, _, st)
       equation
@@ -1979,7 +1979,7 @@ algorithm
         bind_dims = List.stripFirst(bind_dims);
         (cache, ty, st) = appendDimensions2(ty, rest_dims, bind_dims, inCache, inEnv, st);
       then
-        (cache, DAE.T_ARRAY(ty, {dim}, DAE.emptyTypeSource), st);
+        (cache, DAE.T_ARRAY(ty, {dim}), st);
 
     case (_, _ :: _, _, _, _, _)
       equation
@@ -2211,12 +2211,12 @@ algorithm
         (cache, Values.ARRAY(valueLst = (indices as (Values.INTEGER(integer = i) :: _))), st) =
         cevalExp(e, inCache, inEnv, st);
         // Split the list of old values at the first slice index.
-        (old_values, old_values2) = List.split(old_values, i - 1);
+        (old_values, old_values2) = List.splitr(old_values, i - 1);
         // Update the rest of the old value with assignSlice.
         (cache, values2, st) =
           assignSlice(values, old_values2, indices, rest_subs, i, cache, inEnv, st);
         // Assemble the list of values again.
-        values = listAppend(old_values, values2);
+        values = List.append_reverse(old_values, values2);
       then
         (cache, Values.ARRAY(values, dims), st);
 
@@ -2883,7 +2883,7 @@ algorithm
         cycles_str = stringDelimitList(cycles_strs, "}, {");
         cycles_str = "{" + cycles_str + "}";
         scope_str = "";
-        info = DAEUtil.getElementSourceFileInfo(inSource);
+        info = ElementSource.getElementSourceFileInfo(inSource);
         Error.addSourceMessage(Error.CIRCULAR_COMPONENTS, {scope_str, cycles_str}, info);
       then
         fail();

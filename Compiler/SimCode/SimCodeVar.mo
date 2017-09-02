@@ -34,7 +34,6 @@ encapsulated package SimCodeVar
   package:     SimCodeVar
   description: Package to store simcode variables. Moved out of SimCodeUtil to break circular dependency with HpcOmSimCode.
 
-  RCS: $Id: SimCodeVar.mo 22730 2014-10-16 09:09:01Z mwalther $
 "
 
 // public imports
@@ -66,13 +65,14 @@ uniontype SimVars "Container for metadata about variables in a Modelica model."
     list<SimVar> boolConstVars;
     list<SimVar> stringConstVars;
     list<SimVar> jacobianVars;
+    list<SimVar> seedVars;
     list<SimVar> realOptimizeConstraintsVars;
     list<SimVar> realOptimizeFinalConstraintsVars;
-    list<SimVar> mixedArrayVars; //all arrays that contain state or state derivative variables, together with other variables
+    list<SimVar> sensitivityVars; // variable used to calculate sensitivities for parameters nSensitivitityParameters + nRealParam*nStates
   end SIMVARS;
 end SimVars;
 
-public constant SimVars emptySimVars = SIMVARS({}, {}, {}, {}, {}, {}, {},
+public constant SimVars emptySimVars = SIMVARS({}, {}, {}, {}, {}, {}, {}, {},
   {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {});
 
 public uniontype SimVar "Information about a variable in a Modelica model."
@@ -100,6 +100,8 @@ public uniontype SimVar "Information about a variable in a Modelica model."
     list<String> numArrayElement;
     Boolean isValueChangeable;
     Boolean isProtected;
+    Boolean hideResult;
+    Option<array<Integer>> inputIndex;
   end SIMVAR;
 end SimVar;
 

@@ -8,7 +8,7 @@
 //Enum for error types that can occur
 enum SIMULATION_ERROR {
                       SOLVER, //all errors occur in solver (Euler,CVode)
-                      ALGLOOP_SOLVER, //all errors occur in non-,lin-solver (Kinsol,Newton,Hybrj)
+                      ALGLOOP_SOLVER, //all errors occur in non-,lin-solver (Nox,Kinsol,Newton,Hybrj)
                       MODEL_EQ_SYSTEM, //all errors occur in model system class during simulation
                       ALGLOOP_EQ_SYSTEM,//all errors occur in algloop system class during simulation
                       MODEL_FACTORY, //all errors occur model system factory classes
@@ -24,12 +24,20 @@ enum SIMULATION_ERROR {
 /*
 Exception class for all simulation errors
 */
-class ModelicaSimulationError : public std::runtime_error
+class ModelicaSimulationError : public runtime_error
 {
   public:
-    ModelicaSimulationError(SIMULATION_ERROR error_id, const std::string& error_info)
-    : runtime_error("simulation error message : " + error_info)
+    /**
+     * Create a new modelica error object with the given arguments.
+     * @param error_id The identifier related to the sender of the error. \see SIMULATION_ERROR for detail.
+     * @param error_info Error message that should be shown.
+     * @param description More detailed description of the occurred error e.g. the error-message of the inner exception
+     * @param suppress Set to true if the error should not appear on std::err and std::out.
+     */
+    ModelicaSimulationError(SIMULATION_ERROR error_id, const string& error_info, string description = "", bool suppress = false)
+    : runtime_error(error_info + (description.size() > 0 ? "\n" + description : ""))
     , _error_id(error_id)
+    , _suppress(suppress)
     {
     }
 
@@ -38,8 +46,14 @@ class ModelicaSimulationError : public std::runtime_error
       return _error_id;
     }
 
+    bool isSuppressed()
+    {
+      return _suppress;
+    }
+
   private:
     SIMULATION_ERROR _error_id;
+    bool _suppress;
 };
 
  //Helper functions to convert the error id to a readable format

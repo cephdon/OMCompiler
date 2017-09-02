@@ -4,7 +4,7 @@
  */
 #include <Core/ModelicaDefine.h>
 #include <Core/Modelica.h>
-#include <Core/Utils/Modelica/ModelicaUtilities.h>
+#include <ModelicaUtilities.h>
 #include <stdexcept>
 #include <exception>
 #include <string>
@@ -17,16 +17,17 @@ extern "C" {
 
 void ModelicaMessage(const char* string)
 {
-  throw  ModelicaSimulationError(UTILITY,"ModelicaMessage not implemented yet");
+  fprintf(stdout, string);
+  fflush(stdout);
 }
 
-void ModelicaVFormatMessage(const char*string, va_list args)
+void ModelicaVFormatMessage(const char* string, va_list args)
 {
   vfprintf(stdout, string, args);
   fflush(stdout);
 }
 
-void ModelicaFormatMessage(const char* string,...)
+void ModelicaFormatMessage(const char* string, ...)
 {
   va_list args;
   va_start(args, string);
@@ -36,36 +37,56 @@ void ModelicaFormatMessage(const char* string,...)
 
 void ModelicaError(const char* string)
 {
-  throw  ModelicaSimulationError(UTILITY,string);
+  throw  ModelicaSimulationError(UTILITY, string);
 }
 
-void ModelicaVFormatError(const char*string, va_list args)
+void ModelicaVFormatError(const char* string, va_list args)
 {
- throw  ModelicaSimulationError(UTILITY,"ModelicaVFormatError not implemented yet");
+  char buffer[256];
+  vsnprintf(buffer, 256, string, args);
+  ModelicaError(buffer);
 }
 
-void ModelicaFormatError(const char* text, ...)
+void ModelicaFormatError(const char* string, ...)
 {
-  std::stringstream ss;
   va_list args;
-  va_start(args, text);
-  ss <<  text;
+  va_start(args, string);
+  ModelicaVFormatError(string, args);
   va_end(args);
-  ModelicaError(ss.str().c_str());
 }
+
+static std::map<const char*, char*> _allocatedStrings;
 
 char* ModelicaAllocateString(size_t len)
 {
-   return new char[len];
+  char *res = new char[len + 1];
+  if (!res)
+    ModelicaFormatError("%s:%d: ModelicaAllocateString failed", __FILE__, __LINE__);
+  _allocatedStrings[res] = res;
+  res[len] = '\0';
+  return res;
 }
 
 char* ModelicaAllocateStringWithErrorReturn(size_t len)
 {
- char *res = new char[len];
-  if(!res)
-    ModelicaFormatError("%s:%d: ModelicaAllocateString failed", __FILE__, __LINE__);
+  char *res = new char[len + 1];
+  if (res) {
+    _allocatedStrings[res] = res;
+    res[len] = '\0';
+  }
   return res;
 }
+
+void _ModelicaFreeStringIfAllocated(const char *str)
+{
+  std::map<const char*, char*>::iterator it;
+  it = _allocatedStrings.find(str);
+  if (it != _allocatedStrings.end()) {
+    delete [] _allocatedStrings[str];
+    _allocatedStrings.erase(it);
+  }
+}
+
 #ifdef __cplusplus
 }
 #endif

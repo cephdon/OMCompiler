@@ -48,13 +48,49 @@ extern "C" {
 
 typedef void* NLS_SOLVER_DATA;
 
-int initializeNonlinearSystems(DATA *data);
-int updateStaticDataOfNonlinearSystems(DATA *data);
-int freeNonlinearSystems(DATA *data);
+void cleanUpOldValueListAfterEvent(DATA *data, double time);
+int initializeNonlinearSystems(DATA *data, threadData_t *threadData);
+int updateStaticDataOfNonlinearSystems(DATA *data, threadData_t *threadData);
+int freeNonlinearSystems(DATA *data, threadData_t *threadData);
 void printNonLinearSystemSolvingStatistics(DATA *data, int sysNumber, int logLevel);
-int solve_nonlinear_system(DATA *data, int sysNumber);
+int solve_nonlinear_system(DATA *data, threadData_t *threadData, int sysNumber);
 int check_nonlinear_solutions(DATA *data, int printFailingSystems);
-double extraPolate(DATA *data, const double old1, const double old2, const double minValue, const double maxValue);
+int print_csvLineIterStats(void* csvData, int size, int num,
+                           int iteration, double* x, double* f, double error_f,
+                           double error_fs, double delta_x, double delta_xs,
+                           double lambda);
+
+extern void debugMatrixPermutedDouble(int logName, char* matrixName, double* matrix, int n, int m, int* indRow, int* indCol);
+extern void debugMatrixDouble(int logName, char* matrixName, double* matrix, int n, int m);
+extern void debugVectorDouble(int logName, char* vectorName, double* vector, int n);
+extern void debugVectorInt(int logName, char* vectorName, modelica_boolean* vector, int n);
+
+static inline void debugString(int logName, char* message)
+{
+  if(ACTIVE_STREAM(logName))
+  {
+    infoStreamPrint(logName, 1, "%s", message);
+    messageClose(logName);
+  }
+}
+
+static inline void debugInt(int logName, char* message, int value)
+{
+  if(ACTIVE_STREAM(logName))
+  {
+    infoStreamPrint(logName, 1, "%s %d", message, value);
+    messageClose(logName);
+  }
+}
+
+static inline void debugDouble(int logName, char* message, double value)
+{
+  if(ACTIVE_STREAM(logName))
+  {
+    infoStreamPrint(logName, 1, "%s %18.10e", message, value);
+    messageClose(logName);
+  }
+}
 
 #ifdef __cplusplus
 }

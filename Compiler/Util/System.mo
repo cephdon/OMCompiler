@@ -34,7 +34,6 @@ encapsulated package System
   package:     System
   description: This file contains runtime system specific function, which are implemented in C.
 
-  RCS: $Id$
 
   This module contain a set of system calls, for e.g. compiling and
   executing stuff, reading and writing files and so on."
@@ -79,6 +78,19 @@ public function strcmp
 
   external "C" outInteger=System_strcmp(inString1,inString2) annotation(Library = "omcruntime");
 end strcmp;
+
+public function strcmp_offset
+"Like strcmp, but also takes offset and lengths of the strings in order to avoid building them through substring"
+  input String string1;
+  input Integer offset1;
+  input Integer length1;
+  input String string2;
+  input Integer offset2;
+  input Integer length2;
+  output Integer outInteger;
+
+  external "C" outInteger=System_strcmp_offset(string1,offset1,length1,string2,offset2,length2) annotation(Library = "omcruntime");
+end strcmp_offset;
 
 public function stringFind "locates substring searchStr in str. If succeeds return position, otherwise return -1"
   input String str;
@@ -623,7 +635,8 @@ end getHasInnerOuterDefinitions;
 public function tmpTick
   "returns a tick that can be reset"
   output Integer tickNo;
-  external "C" tickNo = SystemImpl_tmpTick(OpenModelica.threadData()) annotation(Library = "omcruntime");
+algorithm
+  tickNo := tmpTickIndex(index=0);
 end tmpTick;
 
 public function tmpTickReset
@@ -680,6 +693,12 @@ public function getRTLibsSim
   output String libs;
   external "C" libs=System_getRTLibsSim() annotation(Library = "omcruntime");
 end getRTLibsSim;
+
+public function getRTLibsFMU
+"Returns a string containing the compiler flags used for source-code FMUs"
+  output String libs;
+  external "C" libs=System_getRTLibsFMU() annotation(Library = "omcruntime");
+end getRTLibsFMU;
 
 public function getCorbaLibs
 "Returns a string containing the compiler flags used for Corba libraries.
@@ -914,14 +933,52 @@ end modelicaPlatform;
 
 public function openModelicaPlatform "
   Returns uname -sm (with spaces replaced by dashes and only lower-case letters) on Unix platforms
-  mingw32 is returned for OMDEV
+  mingw32 or mingw64 is returned for OMDev mingw
   "
   output String platform;
   external "C" platform=System_openModelicaPlatform() annotation(Library = "omcruntime");
 end openModelicaPlatform;
 
+public function gccDumpMachine "
+  Returns gcc -dumpmachine
+  "
+  output String machine;
+  external "C" machine=System_gccDumpMachine() annotation(Library = "omcruntime");
+end gccDumpMachine;
+
+public function gccVersion "
+  Returns gcc --version
+  "
+  output String version;
+  external "C" version=System_gccVersion() annotation(Library = "omcruntime");
+end gccVersion;
+
 public function dgesv
-  "dgesv from LAPACK"
+ "# dgesv from LAPACK
+
+  ## Purpose
+  DGESV computes the solution to a real system of linear equations
+    A * X = B,
+  where A is an N-by-N matrix and X and B are N-by-NRHS matrices.
+
+  The LU decomposition with partial pivoting and row interchanges is
+  used to factor A as
+    A = P * L * U,
+  where P is a permutation matrix, L is unit lower triangular, and U is
+  upper triangular. The factored form of A is then used to solve the
+  system of equations A * X = B.
+
+  ## Return values
+  ### output list<Real> X
+  On exit, if info = 0, the N-by-NRHS solution matrix X.
+
+  ### output Integer info
+  = 0:  successful exit
+  < 0:  if INFO = -i, the i-th argument had an illegal value
+  > 0:  if INFO = i, U(i,i) is exactly zero. The factorization
+        has been completed, but the factor U is exactly
+        singular, so the solution could not be computed.
+  "
   input list<list<Real>> A;
   input list<Real> B;
   output list<Real> X;
@@ -993,7 +1050,7 @@ protected function intRandom0
   "Returns a value in the intervals [0,RAND_MAX) using the C method rand()."
   output Integer ret;
 
-  external "C"  ret = rand();
+  external "C"  ret = rand() annotation(Include = "#include <stdlib.h>");
 end intRandom0;
 
 public function gettextInit
@@ -1082,7 +1139,7 @@ end launchParallelTasks;
 
 public function exit "Exits the compiler at this point with the given exit status."
   input Integer status;
-external "C" exit(status);
+external "C" exit(status) annotation(Include = "#include <stdlib.h>");
 end exit;
 
 public function threadWorkFailed "Exits the current thread with a failure."
@@ -1127,8 +1184,9 @@ end alarm;
 public function covertTextFileToCLiteral
   input String textFile;
   input String outFile;
+  input String target "this would be what is set for +target=msvc|gcc";
   output Boolean success;
-external "C" success=SystemImpl__covertTextFileToCLiteral(textFile,outFile);
+external "C" success=SystemImpl__covertTextFileToCLiteral(textFile, outFile, target);
 end covertTextFileToCLiteral;
 
 public function dladdr<T>
@@ -1155,6 +1213,79 @@ annotation(Documentation(info="<html>
 <p>Only works on Linux. Other platforms return dummy strings.</p>.
 </html>"));
 end dladdr;
+
+class StringAllocator
+  extends ExternalObject;
+  function constructor
+    input Integer sz;
+    output StringAllocator str;
+  external "C" str=StringAllocator_constructor(sz) annotation(Include="
+void* StringAllocator_constructor(int sz)
+{
+  if (sz < 0) {
+    MMC_THROW();
+  }
+  return mmc_alloc_scon(sz);
+}
+");
+  end constructor;
+  function destructor
+    input StringAllocator str;
+  algorithm
+    /* Nothing */
+  end destructor;
+end StringAllocator;
+
+function stringAllocatorStringCopy
+  input StringAllocator dest;
+  input String source;
+  input Integer destOffset=0;
+external "C" om_stringAllocatorStringCopy(dest,source,destOffset) annotation(Include="
+void om_stringAllocatorStringCopy(void *dest, char *source, int destOffset) {
+  if (*source) {
+    strcpy(MMC_STRINGDATA(dest)+destOffset, source);
+  }
+}
+", Documentation(info="<html>
+<p>Does a strcpy into the (input) destination. This is dangerous and not valid Modelica.</p>
+<p>Make sure the String has been allocated properly and is not shared. The input lengths are not validated, so this function can write out of bounds if called incorrectly.</p>
+</html>"));
+end stringAllocatorStringCopy;
+
+function stringAllocatorResult<T>
+  input StringAllocator sa;
+  input T dummy "This is just added so we do not make an extra allocation for the string" annotation(__OpenModelica_UnusedVariable=true);
+  output T res;
+external "C" res=om_stringAllocatorResult(sa) annotation(Include="
+const char* om_stringAllocatorResult(void *sa) {
+  return sa;
+}
+");
+end stringAllocatorResult;
+
+function relocateFunctions
+  input String fileName "shared object";
+  input list<tuple<String,String>> names "tuple of names to relocate; first is the local name and second is the name in the shared object";
+  output Boolean res;
+external "C" res=SystemImpl__relocateFunctions(fileName, names) annotation(Library = {"omcruntime"},Documentation(info="<html>
+<p>Update symbols in the running program to ones defined in the given shared object.</p>
+<p>This will hot-swap the functions at run-time, enabling a smart build system to do some incremental compilation
+(as long as the function interfaces are the same).</p>
+</html>"));
+end relocateFunctions;
+
+function fflush
+external "C" SystemImpl__fflush() annotation(Include = "
+#include <stdio.h>
+void SystemImpl__fflush(void)
+{
+  fflush(NULL);
+}
+",Documentation(info="<html>
+<p>This function will call fflush(NULL) to flush all buffers.</p>
+</html>"));
+end fflush;
+
 
 annotation(__OpenModelica_Interface="util");
 end System;

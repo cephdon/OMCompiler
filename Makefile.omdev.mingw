@@ -1,11 +1,17 @@
 # makefile for Windows MinGW OMDev
-all : .testvariables settings omc
+all : .testvariables settings mkbuilddirs omc
 
 autoconfGeneratedFiles =
 
 ifeq ($(OMBUILDDIR),)
 OMBUILDDIR=$(CURDIR)/build
 endif
+
+ifeq ($(BUILDTYPE),)
+BUILDTYPE=Debug
+endif
+
+OMDEVMSYS=$(shell cygpath $$OMDEV)
 
 prefix = ./build
 exec_prefix = ${prefix}
@@ -19,37 +25,52 @@ CXX = g++
 FC = gfortran
 CFLAGS =-g -O2 -falign-functions
 MSGPACK_CFLAGS = -march=i686
-CMAKE = $(OMDEV)/bin/cmake/bin/cmake
+
+CMAKE = $(OMDEVMSYS)/bin/cmake/bin/cmake
+CMAKE_CHECK_UNDEFINED_LOOKUP = $(CMAKE)
 CMAKE_TARGET = "MSYS Makefiles"
-DBUS_INCLUDE_DIR = $(OMDEV)/lib/dbus-1.6.0-win32/include/
-DBUS_INCLUDE_LIB_DIR = $(OMDEV)/lib/dbus-1.6.0-win32/lib/
-DBUS_PATH = $(OMDEV)/lib/dbus-1.6.0-win32/
-BOOST_PATH = $(OMDEV)/lib/3rdParty/boost-1_55/
-PKG_CONFIG_PATH = $(OMDEV)/lib/gtk+-2.24.10/bin/
-OSG_PATH = $(OMDEV)/lib/openscenegraph-2.8.3-mingw/
+
+ifeq (MINGW32,$(findstring MINGW32,$(shell uname)))
+BOOST_PATH = $(OMDEVMSYS)/tools/msys/mingw32/include
+IS_MINGW32 = -DIS_MINGW32=ON
+IS_MINGW64 = -DIS_MINGW64=OFF
+MINGW_FMIL_FLAGS=-DFMILIB_FMI_PLATFORM=win32
+else # mingw64
+BOOST_PATH = $(OMDEVMSYS)/tools/msys/mingw64/include
+IS_MINGW32 = -DIS_MINGW32=OFF
+IS_MINGW64 = -DIS_MINGW64=ON
+MINGW_FMIL_FLAGS=-DFMILIB_FMI_PLATFORM=win64
+endif
+BOOST_PATH_MSVC = $(OMDEVMSYS)/lib/3rdParty/boost-1_55/
+WROOT=$(shell cygpath $$SYSTEMROOT)
+
 OPENCL = Yes
 LINK = cp -rl
 AR = ar
 # LIBGC configuration is different for Windows (this file) and Linux (Makefile.in)
-LIBGC_EXTRA_CONFIGURATION=--enable-threads=posix --enable-munmap=1 --disable-parallel-mark
+MINGW_EXTRA_LIBS=lpsolve sundials
+LIBGC_EXTRA_CONFIGURATION=--enable-threads=posix --enable-munmap=1 #--disable-parallel-mark
 MSL321_CONFIG_EXTRA_FLAGS=--enable-static --disable-shared
 LIBFMILIB=libfmilib.a
 LIBCMINPACKLIB=libcminpack.a
+LIBZMQLIB=libzmq.dll
 MODELICA_SPEC_PLATFORM=win32
 SHREXT=.dll
 IPOPT_TARGET=ipopt
 UMFPACK_TARGET=umfpack
 UMFPACK_SHARED=OFF
-LD_LAPACK=-llapack -lblas
+LD_LAPACK=-lopenblas
 GRAPHLIB=libmetis.a
 GRAPHINCLUDE=3rdParty/metis-5.1.0/include/ -DUSE_METIS -DUSE_GRAPH
 BOOTSTRAP_FMIL_DEP=fmil
-IDLPYTHON = $(OMDEV)/lib/omniORB-4.1.6-msvc-10/bin/x86_win32/omniidl -bpython -Wbglobal=_OMCIDL -Wbpackage=OMPythonIDL
+IDLPYTHON = $(OMDEVMSYS)/lib/omniORB-4.2.0-msvc-10/bin/x86_win32/omniidl -bpython -Wbglobal=_OMCIDL -Wbpackage=OMPythonIDL
 IDLPYTHONTARGET = $(builddir_share)/omc/scripts/PythonInterface/OMPythonIDL/omc_communication_idl.py
 IDLFILE=$(top_builddir)/Compiler/runtime/omc_communication.idl
 LIB_OMC=lib/omc
 LIBMODELICAEXTERNALC=$(OMBUILDDIR)/lib/omc/libModelicaExternalC.a
 LIBMODELICASTANDARDTABLES=$(OMBUILDDIR)/lib/omc/libModelicaStandardTables.a
+SUITESPARSE_LIBS=
+BOOTSTRAP_FMIL_DEP=fmil
 
 defaultMakefileTarget = Makefile.omdev.mingw
 MAKEFILE_BOOT = LinkMain.makefile.mingw
@@ -61,9 +82,59 @@ FMILIB_SHARED = OFF
 CMINPACKLIB_SHARED = OFF
 
 CONFIG_REVISION = $(shell git describe --match "v*.*" --always)
+ifeq (MINGW32,$(findstring MINGW32,$(shell uname)))
+PLATFORM_ARCH = (32-bit)
+else # mingw64
+PLATFORM_ARCH = (64-bit)
+endif
+
+getMSVCversion:
+	echo "Check for given VSVERSION (2010|2012|2013|2015) version: [VSVERSION=$(VSVERSION)]"
+ifeq ("$(VSVERSION)","")
+ifeq ("$(VS140COMNTOOLS)", "") #check VS 2015
+ifeq ("$(VS120COMNTOOLS)", "") #check VS 2013
+ifeq ("$(VS110COMNTOOLS)", "") #check VS 2012
+ifeq ("$(VS100COMNTOOLS)", "") #check VS 2010
+	echo "Could not identify Visual Studio version, setting it to VSVERSION=2010"
+	VSVERSION=2010
+	$(eval VSCOMNTOOLS=$(VS100COMNTOOLS))
+else
+	$(eval VSCOMNTOOLS=$(VS100COMNTOOLS))
+endif
+else
+	$(eval VSCOMNTOOLS=$(VS110COMNTOOLS))
+endif
+else
+	$(eval VSCOMNTOOLS=$(VS120COMNTOOLS))
+	$(eval BOOST_PATH_MSVC=$(OMDEVMSYS)/lib/3rdParty/boost-1_59/)
+endif
+else
+	$(eval VSCOMNTOOLS=$(VS140COMNTOOLS))
+	$(eval BOOST_PATH_MSVC=$(OMDEVMSYS)/lib/3rdParty/boost-1_59/)
+endif
+else
+ifeq ($(VSVERSION),2010)
+	$(eval VSCOMNTOOLS=$(VS100COMNTOOLS))
+else
+ifeq ($(VSVERSION),2012)
+	$(eval VSCOMNTOOLS=$(VS110COMNTOOLS))
+else
+ifeq ($(VSVERSION),2013)
+	$(eval VSCOMNTOOLS=$(VS120COMNTOOLS))
+	$(eval BOOST_PATH_MSVC=$(OMDEVMSYS)/lib/3rdParty/boost-1_59/)
+else
+ifeq ($(VSVERSION),2015)
+	$(eval VSCOMNTOOLS=$(VS140COMNTOOLS))
+	$(eval BOOST_PATH_MSVC=$(OMDEVMSYS)/lib/3rdParty/boost-1_59/)
+endif
+endif
+endif
+endif
+endif
+
 
 revision:
-	test ! -e .git || cp -puf common/pre-commit.sh `git rev-parse --git-dir`/hooks/pre-commit
+	test ! -e .git || cp -puf common/pre-commit.sh `git rev-parse --git-dir`/hooks/pre-commit || echo "unlocated git"
 	@echo Current revision: $(CONFIG_REVISION)
 ifeq ($(CONFIG_REVISION),)
 	@if test -f revision.h; \
@@ -73,12 +144,12 @@ ifeq ($(CONFIG_REVISION),)
 else # revision is not empty, update it if it changed
 	@if test -f revision.h; \
 	then \
-		echo "#define CONFIG_REVISION \"$(CONFIG_REVISION)\"" > revision.h.tmp; diff revision.h revision.h.tmp > /dev/null; \
+		echo "#define CONFIG_REVISION \"$(CONFIG_REVISION) $(PLATFORM_ARCH)\"" > revision.h.tmp; diff revision.h revision.h.tmp > /dev/null; \
 		if [ $$? -eq 0 ]; then echo No change in revision; rm revision.h.tmp; \
 		else echo Revision has changed. updating revision.h; \mv revision.h.tmp revision.h; touch Compiler/runtime/omc_config.h; \
 		fi; \
 	else \
-		echo "#define CONFIG_REVISION \"$(CONFIG_REVISION)\"" > revision.h; echo Retrieved revision number. revision.h was created; \
+		echo "#define CONFIG_REVISION \"$(CONFIG_REVISION) $(PLATFORM_ARCH)\"" > revision.h; echo Retrieved revision number. revision.h was created; \
 	fi;
 endif
 
@@ -92,7 +163,7 @@ endif
 
 settings:
 	@echo Building OMC using OMDev with the following settings...
-	@echo Using OMDev: $(OMDEV)
+	@echo Using OMDev: $(OMDEVMSYS)
 	@echo Using Files: $(OMC_BUILD_FROM)
 	@echo Using Path : '$(PATH)'
 	@echo Current directory: `pwd`
@@ -114,81 +185,86 @@ testlogwindows:
 
 omdev_extra_dlls: install-openturns
 	echo Copying needed .dlls to the $(OMBUILDDIR)/bin directory
-	(cp -puf $(OMDEV)/tools/mingw/bin/libintl-8.dll $(builddir_bin)/)
-	(cp -puf $(OMDEV)/tools/mingw/bin/libiconv-2.dll $(builddir_bin)/)
-	(cp -puf $(OMDEV)/lib/omniORB-4.1.6-msvc-10/bin/x86_win32/omniORB416_vc10_rt.dll $(builddir_bin)/)
-	(cp -puf $(OMDEV)/lib/omniORB-4.1.6-msvc-10/bin/x86_win32/omnithread34_vc10_rt.dll $(builddir_bin)/)
-	(cp -puf $(OMDEV)/lib/pthread/pthreadGC2.dll $(builddir_bin)/)
-	(cp -puf $(OMDEV)/tools/mingw/bin/libgomp-1.dll $(builddir_bin)/)
-	(cp -puf $(OMDEV)/tools/mingw/bin/libgfortran-3.dll $(builddir_bin)/)
-	(cp -puf $(OMDEV)/tools/mingw/lib/libregex.a $(builddir_lib)/omc)
-	(cp -pf $(OMDEV)/lib/mico-msys-mingw/static/libmico2313.a $(builddir_lib)/omc/)
-	(cp -pf $(OMDEV)/lib/mico-msys-mingw/mico2313.dll $(builddir_bin)/)
-	(cp -pf $(OMDEV)/lib/expat-win32-msvc/libexpat.dll $(builddir_bin)/)
-	(cp -pf $(OMDEV)/lib/lapack-win32-msvc/blas_win32_MT.dll $(builddir_bin)/)
-	(cp -pf $(OMDEV)/lib/lapack-win32-msvc/lapack_win32_MT.dll $(builddir_bin)/)
+ifeq (MINGW32,$(findstring MINGW32,$(shell uname)))
+	# build 32 bit libOpenCL.a
+	test ! -f $(WROOT)/SysWOW64/OpenCL.dll || gendef - $(WROOT)/SysWOW64/OpenCL.dll > $(builddir_lib)/omc/OpenCL.def || true
+	test ! -f $(WROOT)/SysWOW64/OpenCL.dll || dlltool -l $(builddir_lib)/omc/libOpenCL.a -d $(builddir_lib)/omc/OpenCL.def -A -k || true
+	(cp -puf $(OMDEVMSYS)/tools/msys/mingw32/bin/libgomp-1.dll $(builddir_bin)/)
+	(cp -puf $(OMDEVMSYS)/tools/msys/mingw32/bin/libwinpthread-1.dll $(builddir_bin)/)
+	(cp -puf $(OMDEVMSYS)/tools/msys/mingw32/bin/libtre-5.dll $(builddir_bin)/)
+	(cp -puf $(OMDEVMSYS)/tools/msys/mingw32/bin/libsystre-0.dll $(builddir_bin)/)
+	(cp -puf $(OMDEVMSYS)/tools/msys/mingw32/bin/libstdc++-6.dll $(builddir_bin)/)
+	(cp -puf $(OMDEVMSYS)/tools/msys/mingw32/bin/libquadmath-0.dll $(builddir_bin)/)
+	(cp -puf $(OMDEVMSYS)/tools/msys/mingw32/bin/libgcc_s_dw2-1.dll $(builddir_bin)/)
+	(cp -puf $(OMDEVMSYS)/tools/msys/mingw32/bin/libintl-8.dll $(builddir_bin)/)
+	(cp -puf $(OMDEVMSYS)/tools/msys/mingw32/bin/libiconv-2.dll $(builddir_bin)/)
+	(cp -puf $(OMDEVMSYS)/tools/msys/mingw32/bin/libgfortran-3.dll $(builddir_bin)/)
+	(cp -puf $(OMDEVMSYS)/tools/msys/mingw32/bin/libexpat-1.dll $(builddir_bin)/)
+	(cp -puf $(OMDEVMSYS)/tools/msys/mingw32/bin/libopenblas.dll $(builddir_bin)/)
+	(cp -puf $(OMDEVMSYS)/tools/msys/mingw32/bin/zlib1.dll $(builddir_bin)/)
+	(cp -puf $(OMDEVMSYS)/tools/msys/mingw32/bin/libszip-0.dll $(builddir_bin)/)
+	(cp -puf $(OMDEVMSYS)/tools/msys/mingw32/bin/libhdf5-0.dll $(builddir_bin)/)
+	(cp -puf $(OMDEVMSYS)/lib/omniORB-4.2.0-mingw32/bin/x86_win32/omniORB420_rt.dll $(builddir_bin)/)
+	(cp -puf $(OMDEVMSYS)/lib/omniORB-4.2.0-mingw32/bin/x86_win32/omnithread40_rt.dll $(builddir_bin)/)
+	(cp -puf $(OMDEVMSYS)/lib/omniORB-4.2.0-mingw32/bin/x86_win32/omniORB420_rt.dll $(builddir_lib)/omc/)
+	(cp -puf $(OMDEVMSYS)/lib/omniORB-4.2.0-mingw32/bin/x86_win32/omnithread40_rt.dll $(builddir_lib)/omc/)
+	(cp -puf $(OMDEVMSYS)/lib/3rdParty/Sundials/lib/release/mingw/libsundials_kinsol.a $(builddir_lib)/omc/)
+	(cp -puf $(OMDEVMSYS)/lib/3rdParty/Sundials/lib/release/mingw/libsundials_nvecserial.a $(builddir_lib)/omc/)
+	(cp -puf $(OMDEVMSYS)/lib/lis/liblis.la $(builddir_lib)/omc/)
+	(cp -puf $(OMDEVMSYS)/lib/lis/liblis.a $(builddir_lib)/omc/)
+else # mingw64
+  # build 64 bit libOpenCL.a
+	test ! -f $(WROOT)/system32/OpenCL.dll || gendef - $(WROOT)/system32/OpenCL.dll > $(builddir_lib)/omc/OpenCL.def || true
+	test ! -f $(WROOT)/system32/OpenCL.dll || dlltool -l $(builddir_lib)/omc/libOpenCL.a -d $(builddir_lib)/omc/OpenCL.def -A -k || true
+	(cp -puf $(OMDEVMSYS)/tools/msys/mingw64/bin/libgomp-1.dll $(builddir_bin)/)
+	(cp -puf $(OMDEVMSYS)/tools/msys/mingw64/bin/libwinpthread-1.dll $(builddir_bin)/)
+	(cp -puf $(OMDEVMSYS)/tools/msys/mingw64/bin/libtre-5.dll $(builddir_bin)/)
+	(cp -puf $(OMDEVMSYS)/tools/msys/mingw64/bin/libsystre-0.dll $(builddir_bin)/)
+	(cp -puf $(OMDEVMSYS)/tools/msys/mingw64/bin/libstdc++-6.dll $(builddir_bin)/)
+	(cp -puf $(OMDEVMSYS)/tools/msys/mingw64/bin/libquadmath-0.dll $(builddir_bin)/)
+	(cp -puf $(OMDEVMSYS)/tools/msys/mingw64/bin/libgcc_s_seh-1.dll $(builddir_bin)/)
+	(cp -puf $(OMDEVMSYS)/tools/msys/mingw64/bin/libintl-8.dll $(builddir_bin)/)
+	(cp -puf $(OMDEVMSYS)/tools/msys/mingw64/bin/libiconv-2.dll $(builddir_bin)/)
+	(cp -puf $(OMDEVMSYS)/tools/msys/mingw64/bin/libgfortran-3.dll $(builddir_bin)/)
+	(cp -puf $(OMDEVMSYS)/tools/msys/mingw64/bin/libexpat-1.dll $(builddir_bin)/)
+	(cp -puf $(OMDEVMSYS)/tools/msys/mingw64/bin/libopenblas.dll $(builddir_bin)/)
+	(cp -puf $(OMDEVMSYS)/tools/msys/mingw64/bin/zlib1.dll $(builddir_bin)/)
+	(cp -puf $(OMDEVMSYS)/tools/msys/mingw64/bin/libszip-0.dll $(builddir_bin)/)
+	(cp -puf $(OMDEVMSYS)/tools/msys/mingw64/bin/libhdf5-0.dll $(builddir_bin)/)
+	(cp -puf $(OMDEVMSYS)/lib/omniORB-4.2.0-mingw64/bin/x86_win32/omniORB420_rt.dll $(builddir_bin)/)
+	(cp -puf $(OMDEVMSYS)/lib/omniORB-4.2.0-mingw64/bin/x86_win32/omnithread40_rt.dll $(builddir_bin)/)
+	(cp -puf $(OMDEVMSYS)/lib/omniORB-4.2.0-mingw64/bin/x86_win32/omniORB420_rt.dll $(builddir_lib)/omc/)
+	(cp -puf $(OMDEVMSYS)/lib/omniORB-4.2.0-mingw64/bin/x86_win32/omnithread40_rt.dll $(builddir_lib)/omc/)
+	(cp -puf $(OMDEVMSYS)/lib/3rdParty/Sundials64/lib/release/mingw/libsundials_kinsol.a $(builddir_lib)/omc/)
+	(cp -puf $(OMDEVMSYS)/lib/3rdParty/Sundials64/lib/release/mingw/libsundials_nvecserial.a $(builddir_lib)/omc/)
+	(cp -puf $(OMDEVMSYS)/lib/lis64/liblis.la $(builddir_lib)/omc/)
+	(cp -puf $(OMDEVMSYS)/lib/lis64/liblis.a $(builddir_lib)/omc/)
+endif
+	(cp -pf $(OMDEVMSYS)/lib/expat-win32-msvc/libexpat.dll $(builddir_bin)/)
+	(cp -pf $(OMDEVMSYS)/lib/lapack-win32-msvc/blas_win32_MT.dll $(builddir_bin)/)
+	(cp -pf $(OMDEVMSYS)/lib/lapack-win32-msvc/lapack_win32_MT.dll $(builddir_bin)/)
 	mkdir -p $(builddir_lib)/omc/libexec/
-	(cp -pufr $(OMDEV)/tools/xsltproc $(builddir_lib)/omc/libexec/)
-	(cp -pufr $(OMDEV)/tools/gnuplot $(builddir_lib)/omc/libexec/)
-	(cp -puf $(OMDEV)/lib/3rdParty/Sundials/lib/release/mingw/libsundials_kinsol.a $(builddir_lib)/omc/)
-	(cp -puf $(OMDEV)/lib/3rdParty/Sundials/lib/release/mingw/libsundials_nvecserial.a $(builddir_lib)/omc/)
-	(cp -puf $(OMDEV)/lib/lis/liblis.la $(builddir_lib)/omc/)
-	(cp -puf $(OMDEV)/lib/lis/liblis.a $(builddir_lib)/omc/)
+	(cp -pufr $(OMDEVMSYS)/tools/xsltproc $(builddir_lib)/omc/libexec/)
+	(cp -pufr $(OMDEVMSYS)/tools/gnuplot $(builddir_lib)/omc/libexec/)
 
 copycppheader:
 	echo Copying needed header files to the $(OMBUILDDIR)/include/omc/cpp directory
-	(cp -pufr $(OMDEV)/lib/3rdParty/Sundials/include $(OMBUILDDIR)/include/omc/cpp)
-	(mkdir -p $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -puf $(BOOST_PATH)/boost/*.hpp $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/algorithm         $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/archive           $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/assign            $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/atomic            $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/bind              $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/circular_buffer   $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/chrono            $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/concept           $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/config            $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/container         $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/detail            $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/exception         $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/date_time         $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/filesystem        $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/format            $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/function          $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/functional        $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/integer           $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/intrusive         $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/io                $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/iterator          $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/math              $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/move              $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/mpl               $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/multi_array       $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/numeric           $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/optional          $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/predef            $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/preprocessor      $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/program_options   $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/ptr_container     $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/range             $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/serialization     $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/smart_ptr         $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/system            $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/ratio            $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/thread            $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/tuple             $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/type_traits       $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/typeof            $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/unordered         $(OMBUILDDIR)/include/omc/cpp/boost)
-	(cp -pufr $(BOOST_PATH)/boost/utility           $(OMBUILDDIR)/include/omc/cpp/boost)
+	(mkdir -p $(OMBUILDDIR)/include/omc/cpp/3rdParty/boost/gcc/boost)
+	(cp -puf $(BOOST_PATH)/boost/*.hpp              $(OMBUILDDIR)/include/omc/cpp/3rdParty/boost/gcc/boost)
+	(cp -pufr $(BOOST_PATH)/boost/*                 $(OMBUILDDIR)/include/omc/cpp/3rdParty/boost/gcc/boost)
+
+copycppmsvcheader: getMSVCversion
+	echo Copying needed header files to the $(OMBUILDDIR)/include/omc/cpp/ directory
+	(mkdir -p $(OMBUILDDIR)/include/omc/cpp/3rdParty/boost/msvc/boost)
+	(cp -puf $(BOOST_PATH_MSVC)/boost/*.hpp              $(OMBUILDDIR)/include/omc/cpp/3rdParty/boost/msvc/boost)
+	(cp -pufr $(BOOST_PATH_MSVC)/boost/*                 $(OMBUILDDIR)/include/omc/cpp/3rdParty/boost/msvc/boost)
 
 omc: mkbuilddirs interactive fmil omdev_extra_dlls breakprocess opencl_rt CMinpack metis Cdaskr $(IPOPT_TARGET) graphstream
 	(time $(MAKE) -f $(defaultMakefileTarget) CFLAGS="$(CFLAGS)" omc-bootstrapped OMBUILDDIR=$(OMBUILDDIR))
 
 boehm-gc-lib: $(OMBUILDDIR)/lib/omc/libomcgc.a
 
-fmil_msvc:
+fmil_msvc: getMSVCversion
 	rm -f $(OMBUILDDIR)/lib/omc/msvc/fmil*
 	rm -rf 3rdParty/FMIL/install_msvc
 	mkdir -p $(OMBUILDDIR)/lib/omc/msvc/
@@ -198,10 +274,10 @@ fmil_msvc:
 	mkdir -p 3rdParty/FMIL/build_msvc
 
 	# Create batch file, that builds with CMake and Visual Studio
-	test -f """${VS100COMNTOOLS}/../../VC/vcvarsall.bat"""
+	test -f """${VSCOMNTOOLS}/../../VC/vcvarsall.bat"""
 	echo 'Building CMinpack with MSVC'
 	echo @echo on > 3rdParty/FMIL/build_msvc/build.bat
-	echo call '"%VS100COMNTOOLS%\\..\\..\\VC\\vcvarsall.bat"' >> 3rdParty/FMIL/build_msvc/build.bat
+	echo call '"${VSCOMNTOOLS}\\..\\..\\VC\\vcvarsall.bat"' >> 3rdParty/FMIL/build_msvc/build.bat
 	echo echo Calling CMake >> 3rdParty/FMIL/build_msvc/build.bat
 	echo '%OMDEV%\\bin\\cmake\\bin\\cmake -DCMAKE_VERBOSE_MAKEFILE:Bool=ON -DFMILIB_BUILD_TESTS=OFF -DFMILIB_BUILD_STATIC_LIB=OFF -DCMAKE_BUILD_TYPE=RelWithDebInfo -DFMILIB_INSTALL_PREFIX=../install_msvc ../ -G  "NMake Makefiles"' >> 3rdParty/FMIL/build_msvc/build.bat
 	echo @echo on >> 3rdParty/FMIL/build_msvc/build.bat
@@ -218,8 +294,12 @@ fmil_msvc:
 	(cp -puf 3rdParty/FMIL/install_msvc/lib/fmilib_shared.dll $(OMBUILDDIR)/bin/fmilib.dll)
 	(cp -puf 3rdParty/FMIL/install_msvc/lib/fmilib_shared.dll $(OMBUILDDIR)/lib/omc/msvc/fmilib.dll)
 	(cp -puf 3rdParty/FMIL/install_msvc/lib/fmilib_shared.lib $(OMBUILDDIR)/lib/omc/msvc/fmilib.lib)
+	# copy the dll with the actual name: fmilib_shared.dll as the fmilib.lib contains that name and the exe will look for it
+	(cp -puf 3rdParty/FMIL/install_msvc/lib/fmilib_shared.dll $(OMBUILDDIR)/bin/fmilib_shared.dll)
+	(cp -puf 3rdParty/FMIL/install_msvc/lib/fmilib_shared.dll $(OMBUILDDIR)/lib/omc/msvc/fmilib_shared.dll)
+	(cp -puf 3rdParty/FMIL/install_msvc/lib/fmilib_shared.lib $(OMBUILDDIR)/lib/omc/msvc/fmilib_shared.lib)
 
-CMinpack_msvc:
+CMinpack_msvc: getMSVCversion
 	rm -f $(OMBUILDDIR)/lib/omc/msvc/cminpack.*
 	rm -rf 3rdParty/CMinpack/build_msvc
 	rm -rf 3rdParty/CMinpack/install_msvc
@@ -229,10 +309,10 @@ CMinpack_msvc:
 	mkdir -p 3rdParty/CMinpack/build_msvc
 
 	# Create batch file, that builds with CMake and Visual Studio
-	test -f """${VS100COMNTOOLS}/../../VC/vcvarsall.bat"""
+	test -f """$(VSCOMNTOOLS)/../../VC/vcvarsall.bat"""
 	echo 'Building CMinpack with MSVC'
 	echo @echo on > 3rdParty/CMinpack/build_msvc/build.bat
-	echo call '"%VS100COMNTOOLS%\\..\\..\\VC\\vcvarsall.bat"' >> 3rdParty/CMinpack/build_msvc/build.bat
+	echo call '"$(VSCOMNTOOLS)\\..\\..\\VC\\vcvarsall.bat"' >> 3rdParty/CMinpack/build_msvc/build.bat
 	echo echo Calling CMake >> 3rdParty/CMinpack/build_msvc/build.bat
 	echo '%OMDEV%\\bin\\cmake\\bin\\cmake -DCMAKE_VERBOSE_MAKEFILE:Bool=ON -DSHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=../install_msvc ../ -G  "NMake Makefiles"' >> 3rdParty/CMinpack/build_msvc/build.bat
 	echo echo Building CMinpack >> 3rdParty/CMinpack/build_msvc/build.bat
@@ -248,7 +328,7 @@ CMinpack_msvc:
    	# copy dll to bin folder
 	(cp -puf 3rdParty/CMinpack/install_msvc/lib/cminpack.lib $(OMBUILDDIR)/lib/omc/msvc/)
 
-Umfpack_msvc:
+Umfpack_msvc: getMSVCversion
 	rm -f $(OMBUILDDIR)/lib/omc/msvc/amd.lib
 	rm -f $(OMBUILDDIR)/lib/omc/msvc/umfpack.lib
 	rm -rf $(OMBUILDDIR)/include/omc/msvc/suitesparse
@@ -260,10 +340,10 @@ Umfpack_msvc:
 	mkdir -p 3rdParty/SuiteSparse/build_msvc
 
 	# Create batch file, that builds with CMake and Visual Studio
-	test -f """${VS100COMNTOOLS}/../../VC/vcvarsall.bat"""
+	test -f """${VSCOMNTOOLS}/../../VC/vcvarsall.bat"""
 	echo 'Building Umfpack with MSVC'
 	echo @echo on > 3rdParty/SuiteSparse/build_msvc/build.bat
-	echo call '"%VS100COMNTOOLS%\\..\\..\\VC\\vcvarsall.bat"' >> 3rdParty/SuiteSparse/build_msvc/build.bat
+	echo call '"${VSCOMNTOOLS}\\..\\..\\VC\\vcvarsall.bat"' >> 3rdParty/SuiteSparse/build_msvc/build.bat
 	echo echo Calling CMake >> 3rdParty/SuiteSparse/build_msvc/build.bat
 	echo '%OMDEV%\\bin\\cmake\\bin\\cmake -DCMAKE_VERBOSE_MAKEFILE:Bool=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=../install_msvc ../ -G  "NMake Makefiles"' >> 3rdParty/SuiteSparse/build_msvc/build.bat
 	echo echo Building Umfpack >> 3rdParty/SuiteSparse/build_msvc/build.bat
@@ -281,22 +361,82 @@ Umfpack_msvc:
 	(cp -puf 3rdParty/SuiteSparse/install_msvc/lib/omc/*.lib $(OMBUILDDIR)/lib/omc/msvc/)
 	(cp -pur 3rdParty/SuiteSparse/install_msvc/include/omc/c/suitesparse/Include/ $(OMBUILDDIR)/include/omc/msvc/suitesparse)
 
-runtimeCPPmsvcinstall: mkbuilddirs CMinpack_msvc copycppheader
-	$(MAKE) -C SimulationRuntime/cpp/ -f Makefile.omdev.mingw runtimeCPPmsvc OMBUILDDIR=$(OMBUILDDIR)
-	# mkdir -p $(OMBUILDDIR)/lib/omc/msvc/ && cp -p ${OMDEV}/lib/3rdParty/Sundials/lib/release/vc100/*.lib $(OMBUILDDIR)/lib/omc/msvc/
-	cp -p ${OMDEV}/lib/3rdParty/Sundials/lib/release/vc100/*.dll $(OMBUILDDIR)/bin/
-	cp -p $(BOOST_PATH)/lib/*vc*.dll $(OMBUILDDIR)/bin/
-	cp -p $(BOOST_PATH)/lib/*vc*.lib $(OMBUILDDIR)/lib/omc/cpp/msvc
+# build sundials
+sundials_msvc: getMSVCversion 3rdParty/sundials/CMakeLists.txt
+	rm -f $(OMBUILDDIR)/lib/omc/msvc/sundials*
+	rm -f $(OMBUILDDIR)/bin/sundials*
+	rm -rf 3rdParty/sundials/build_msvc
+	mkdir -p $(OMBUILDDIR)/lib/omc/msvc/
+	# Goto build msvc directory
+	test -d 3rdParty/sundials
+	mkdir -p 3rdParty/sundials/build_msvc
 
-simulationruntimecmsvc: mkbuilddirs Umfpack_msvc CMinpack_msvc fmil_msvc
-	test -f """${VS100COMNTOOLS}/../../VC/vcvarsall.bat"""
+	# Create batch file, that builds with CMake and Visual Studio
+	test -f """${VSCOMNTOOLS}/../../VC/vcvarsall.bat"""
+	echo 'Building sundials with MSVC'
+	echo @echo on > 3rdParty/sundials/build_msvc/build.bat
+	echo call '"${VSCOMNTOOLS}\\..\\..\\VC\\vcvarsall.bat"' >> 3rdParty/sundials/build_msvc/build.bat
+	echo echo Calling CMake >> 3rdParty/sundials/build_msvc/build.bat
+	echo '%OMDEV%\\bin\\cmake\\bin\\cmake -DCMAKE_VERBOSE_MAKEFILE:Bool=ON -DBUILD_STATIC_LIBS=OFF -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=. ../ -G  "NMake Makefiles"' >> 3rdParty/sundials/build_msvc/build.bat
+	echo echo Building sundials >> 3rdParty/sundials/build_msvc/build.bat
+	echo @echo on >> 3rdParty/sundials/build_msvc/build.bat
+	echo set MAKE= >> 3rdParty/sundials/build_msvc/build.bat
+	echo set MAKEFLAGS= >> 3rdParty/sundials/build_msvc/build.bat
+	echo nmake /f Makefile install >> 3rdParty/sundials/build_msvc/build.bat
+
+	# Change into directory and run batch file
+	cd ./3rdParty/sundials/build_msvc; echo "change to 3rdParty/sundials/build_msvc";\
+	cmd /c build.bat
+
+   	# copy dll to lib and bin folder
+	mkdir -p $(OMBUILDDIR)/include/omc/msvc/sundials
+	(cp -pufr 3rdParty/sundials/build_msvc/include/* $(OMBUILDDIR)/include/omc/msvc/sundials)
+	(cp -puf 3rdParty/sundials/build_msvc/lib/* $(OMBUILDDIR)/lib/omc/msvc/)
+	(cp -puf 3rdParty/sundials/build_msvc/lib/*.dll $(OMBUILDDIR)/bin)
+
+# build trilinos nox
+nox_msvc: getMSVCversion 3rdParty/trilinos-nox/CMakeLists.txt
+	rm -f $(OMBUILDDIR)/lib/omc/msvc/nox*
+	rm -f $(OMBUILDDIR)/bin/nox*
+	#rm -rf 3rdParty/trilinos-nox/build_msvc
+	mkdir -p $(OMBUILDDIR)/lib/omc/msvc/
+	# Goto build msvc directory
+	test -d 3rdParty/trilinos-nox
+	mkdir -p 3rdParty/trilinos-nox/build_msvc
+
+	# Create batch file, that builds with CMake and Visual Studio
+	test -f """${VSCOMNTOOLS}/../../VC/vcvarsall.bat"""
+	echo 'Building trilinos-nox with MSVC'
+	echo @echo on > 3rdParty/trilinos-nox/build_msvc/build.bat
+	echo call '"${VSCOMNTOOLS}\\..\\..\\VC\\vcvarsall.bat"' >> 3rdParty/trilinos-nox/build_msvc/build.bat
+	echo echo Calling CMake >> 3rdParty/trilinos-nox/build_msvc/build.bat
+	echo '%OMDEV%\\bin\\cmake\\bin\\cmake -DCMAKE_VERBOSE_MAKEFILE:Bool=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=. ../ -G  "NMake Makefiles" -DOMDEV_DIR="$(OMDEVMSYS) ' >> 3rdParty/trilinos-nox/build_msvc/build.bat
+	echo echo Building trilinos-nox >> 3rdParty/trilinos-nox/build_msvc/build.bat
+	echo @echo on >> 3rdParty/trilinos-nox/build_msvc/build.bat
+	echo set MAKE= >> 3rdParty/trilinos-nox/build_msvc/build.bat
+	echo set MAKEFLAGS= >> 3rdParty/trilinos-nox/build_msvc/build.bat
+	echo nmake /f Makefile install >> 3rdParty/trilinos-nox/build_msvc/build.bat
+
+	# Change into directory and run batch file
+	cd ./3rdParty/trilinos-nox/build_msvc; echo "change to 3rdParty/trilinos-nox/build_msvc";\
+	cmd /c build.bat
+
+
+
+runtimeCPPmsvcinstall: mkbuilddirs CMinpack_msvc Umfpack_msvc sundials_msvc copycppmsvcheader
+	$(MAKE) -C SimulationRuntime/cpp/ -f Makefile.omdev.mingw runtimeCPPmsvc OMBUILDDIR=$(OMBUILDDIR)
+	cp -p $(BOOST_PATH_MSVC)/lib/*vc*.dll $(OMBUILDDIR)/bin/
+	cp -p $(BOOST_PATH_MSVC)/lib/*vc*.lib $(OMBUILDDIR)/lib/omc/cpp/msvc
+
+simulationruntimecmsvc: mkbuilddirs Umfpack_msvc CMinpack_msvc fmil_msvc sundials_msvc
+	test -f """${VSCOMNTOOLS}/../../VC/vcvarsall.bat"""
 	mkdir -p $(OMBUILDDIR)/include/omc/msvc/
 	mkdir -p $(OMBUILDDIR)/lib/omc/msvc/debug
 	mkdir -p $(OMBUILDDIR)/lib/omc/msvc/release
 	echo 'Build the MSVC RELEASE'
 	mkdir -p SimulationRuntime/build_c
 	echo @echo on > SimulationRuntime/build_c/build.bat
-	echo call '"%VS100COMNTOOLS%\\..\\..\\VC\\vcvarsall.bat"' >> SimulationRuntime/build_c/build.bat
+	echo call '"${VSCOMNTOOLS}\\..\\..\\VC\\vcvarsall.bat"' >> SimulationRuntime/build_c/build.bat
 	echo '%OMDEV%\\bin\\cmake\\bin\\cmake -DCMAKE_VERBOSE_MAKEFILE:Bool=ON -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX:String=../../build ../c -G "NMake Makefiles"' >> SimulationRuntime/build_c/build.bat
 	echo @echo on >> SimulationRuntime/build_c/build.bat
 	echo set MAKE= >> SimulationRuntime/build_c/build.bat
@@ -310,7 +450,7 @@ simulationruntimecmsvc: mkbuilddirs Umfpack_msvc CMinpack_msvc fmil_msvc
 	echo 'Build the MSVC DEBUG'
 	mkdir -p SimulationRuntime/build_debug_c
 	echo @echo on > SimulationRuntime/build_debug_c/build.bat
-	echo call '"%VS100COMNTOOLS%\\..\\..\\VC\\vcvarsall.bat"' >> SimulationRuntime/build_debug_c/build.bat
+	echo call '"${VSCOMNTOOLS}\\..\\..\\VC\\vcvarsall.bat"' >> SimulationRuntime/build_debug_c/build.bat
 	echo '%OMDEV%\\bin\\cmake\\bin\\cmake -DCMAKE_BUILD_TYPE=Debug -DCMAKE_INSTALL_PREFIX:String=../../build_debug ../c -G "NMake Makefiles"' >> SimulationRuntime/build_debug_c/build.bat
 	echo @echo on >> SimulationRuntime/build_debug_c/build.bat
 	echo set MAKE= >> SimulationRuntime/build_debug_c/build.bat
@@ -322,22 +462,20 @@ simulationruntimecmsvc: mkbuilddirs Umfpack_msvc CMinpack_msvc fmil_msvc
 	(cd SimulationRuntime/build_debug_c/ && find . -type f -path "*.pdb" -exec cp {} $(OMBUILDDIR)/lib/omc/msvc/debug/. \;)
 	rm -rf SimulationRuntime/build_debug_c/
 	echo 'Copy the needed .lib/.dll files from OMDev to $(OMBUILDDIR)/lib/omc'
-	cp -p ${OMDEV}/lib/libf2c/*.lib $(OMBUILDDIR)/lib/omc/msvc/release/
-	cp -p ${OMDEV}/lib/libf2c/debug/*.lib $(OMBUILDDIR)/lib/omc/msvc/debug/
-	cp -p ${OMDEV}/lib/3rdParty/Sundials/lib/release/vc100/*.lib $(OMBUILDDIR)/lib/omc/msvc/
-	cp -p ${OMDEV}/lib/expat-win32-msvc/*.lib $(OMBUILDDIR)/lib/omc/msvc/
-	cp -p ${OMDEV}/lib/3rdParty/Sundials/lib/release/vc100/*.dll $(OMBUILDDIR)/bin/
-	cp -p ${OMDEV}/lib/lapack-win32-msvc/*.lib $(OMBUILDDIR)/lib/omc/msvc/
-	cp -p $(OMDEV)/lib/lis/*.lib $(OMBUILDDIR)/lib/omc/msvc/
-	cp -p $(OMDEV)/lib/pthread/*.* $(OMBUILDDIR)/lib/omc/msvc/
-	cp -p $(OMDEV)/include/pthread/*.* $(OMBUILDDIR)/include/omc/msvc/
+	cp -p $(OMDEVMSYS)/lib/libf2c/*.lib $(OMBUILDDIR)/lib/omc/msvc/release/
+	cp -p $(OMDEVMSYS)/lib/libf2c/debug/*.lib $(OMBUILDDIR)/lib/omc/msvc/debug/
+	cp -p $(OMDEVMSYS)/lib/expat-win32-msvc/*.lib $(OMBUILDDIR)/lib/omc/msvc/
+	cp -p $(OMDEVMSYS)/lib/lapack-win32-msvc/*.lib $(OMBUILDDIR)/lib/omc/msvc/
+	cp -p $(OMDEVMSYS)/lib/lis/*.lib $(OMBUILDDIR)/lib/omc/msvc/
+	cp -p $(OMDEVMSYS)/lib/pthread/*.* $(OMBUILDDIR)/lib/omc/msvc/
+	cp -p $(OMDEVMSYS)/include/pthread/*.* $(OMBUILDDIR)/include/omc/msvc/
 	echo 'Copy the needed .dll files from OMDev to $(OMBUILDDIR)/omc'
-	cp -p $(OMDEV)/lib/pthread/pthreadV*.dll $(OMBUILDDIR)/bin/
+	cp -p $(OMDEVMSYS)/lib/pthread/pthreadV*.dll $(OMBUILDDIR)/bin/
 	# build gc as well, as it is needed for the msvc c runtime
 	echo 'Build gc (RelWithDebInfo)'
 	mkdir -p 3rdParty/gc/build_msvc
 	echo @echo on > 3rdParty/gc/build_msvc/build.bat
-	echo call '"%VS100COMNTOOLS%\\..\\..\\VC\\vcvarsall.bat"' >> 3rdParty/gc/build_msvc/build.bat
+	echo call '"${VSCOMNTOOLS}\\..\\..\\VC\\vcvarsall.bat"' >> 3rdParty/gc/build_msvc/build.bat
 	echo '%OMDEV%\\bin\\cmake\\bin\\cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo ../ -G "NMake Makefiles"' >> 3rdParty/gc/build_msvc/build.bat
 	echo @echo on >> 3rdParty/gc/build_msvc/build.bat
 	echo set MAKE= >> 3rdParty/gc/build_msvc/build.bat
@@ -348,108 +486,13 @@ simulationruntimecmsvc: mkbuilddirs Umfpack_msvc CMinpack_msvc fmil_msvc
 	cp -u 3rdParty/gc/build_msvc/gc-lib.* $(OMBUILDDIR)/lib/omc/msvc/
 	rm -rf 3rdParty/gc/build_msvc/
 
-omc-bootstrapped:
+omc-bootstrapped: mkbuilddirs
 	$(MAKE) -f $(defaultMakefileTarget) CFLAGS="$(CFLAGS)" OMBUILDDIR=$(OMBUILDDIR) bootstrap-dependencies sim-dependencies
 	$(MAKE) -f $(defaultMakefileTarget) -C Compiler/boot CFLAGS="$(CFLAGS)" OMBUILDDIR=$(OMBUILDDIR)
-
-modelica3d:
-	cd 3rdParty/modelica3d && mkdir -p build
-	cd 3rdParty/modelica3d/build && $(CMAKE) -DCMAKE_COLOR_MAKEFILE:Bool=OFF -DOSG_BACKEND=1 -DDBUS_INCLUDE_DIR=$(DBUS_INCLUDE_DIR) -DDBUS_INCLUDE_LIB_DIR=$(DBUS_INCLUDE_LIB_DIR) -DDBUS_LIBRARY=$(DBUS_PATH) -DBOOST_ROOT=$(BOOST_PATH) -DCMAKE_PREFIX_PATH=$(OSG_PATH) -DCMAKE_PROGRAM_PATH=$(PKG_CONFIG_PATH) -DUSE_OMC=0 .. -G $(CMAKE_TARGET)
-	$(MAKE) -C 3rdParty/modelica3d/build
-	cp -p 3rdParty/modelica3d/build/lib/modcount/libmodcount.a 3rdParty/modelica3d/build/lib/modbus/libmodbus.a $(OMBUILDDIR)/lib/omc/
-	mkdir -p $(OMBUILDDIR)/lib/omlibrary-modelica3d/blender2.59 $(OMBUILDDIR)/lib/omlibrary-modelica3d/osg-gtk/dbus-python/etc
-	# copy the dbus static lib required during the simulation
-	cp -rp $(OMDEV)/lib/dbus-1.6.0-win32/bin/libdbus-1.a $(OMBUILDDIR)/lib/omc/
-	cp -p 3rdParty/modelica3d/examples/multibody/src/modelica/*.mo $(OMBUILDDIR)/lib/omlibrary-modelica3d/
-	cp -p 3rdParty/modelica3d/backends/blender2.59/dbus-server.py $(OMBUILDDIR)/lib/omlibrary-modelica3d/blender2.59/
-	cp -p 3rdParty/modelica3d/backends/osg-gtk/python/dbus-server.py $(OMBUILDDIR)/lib/omlibrary-modelica3d/osg-gtk/
-	# copy the dbus-python bindings binaries required by osg-gtk python script
-	cp -rp $(OMDEV)/lib/dbus-python-1.1.1/lib/site-packages/* $(OMBUILDDIR)/lib/omlibrary-modelica3d/osg-gtk/dbus-python/
-	cp -rp $(OMDEV)/lib/dbus-python-1.1.1/bin/* $(OMBUILDDIR)/lib/omlibrary-modelica3d/osg-gtk/dbus-python/
-	cp -rp $(OMDEV)/lib/dbus-python-1.1.1/etc/* $(OMBUILDDIR)/lib/omlibrary-modelica3d/osg-gtk/dbus-python/etc
-	# copy the required gtk binaries
-	cp -p -u $(OMDEV)/lib/gtk+-2.24.10/bin/*.dll $(OMBUILDDIR)/lib/omlibrary-modelica3d/osg-gtk/
-	# copy the required modelica3D binaries
-	cp -p 3rdParty/modelica3d/build/backends/osg-gtk/libm3d-osg-gtk.* 3rdParty/modelica3d/build/lib/proc3d/libproc3d.* $(OMBUILDDIR)/lib/omlibrary-modelica3d/osg-gtk/
-	# copy the required osg binaries
-	mkdir -p  $(OMBUILDDIR)/lib/omlibrary-modelica3d/osg-gtk/osgPlugins-2.8.3
-	cp -p -u $(OMDEV)/lib/openscenegraph-2.8.3-mingw/bin/*.dll $(OMBUILDDIR)/lib/omlibrary-modelica3d/osg-gtk/
-	cp -p -u $(OMDEV)/lib/openscenegraph-2.8.3-mingw/bin/osgPlugins-2.8.3/*.dll $(OMBUILDDIR)/lib/omlibrary-modelica3d/osg-gtk/osgPlugins-2.8.3/
-
-# Empty; only Unix version uses QT makefiles, etc...
-qtclean:
-
-qwt:
-	$(MAKE) -C 3rdParty/qwt -f Makefile.omdev.mingw
-	test -f $(builddir_inc)/qwt/qwt_global.h || ($(MAKE) -C 3rdParty/qwt -f Makefile.omdev.mingw install && cp -a 3rdParty/qwt/build/include/*.h $(builddir_inc)/qwt)
-
-omplot: qwt
-	$(MAKE) -C OMPlot/OMPlotGUI -f Makefile.omdev.mingw
-
-omedit: omplot qjson
-	$(MAKE) -C OMEdit/OMEditGUI -f Makefile.omdev.mingw
-
-omnotebook: omplot
-	$(MAKE) -C OMNotebook/OMNotebookGUI -f Makefile.omdev.mingw
-
-omshell:
-	$(MAKE) -C OMShell/OMShellGUI -f Makefile.omdev.mingw
-
-omvisualize:
-	$(MAKE) -C OMVisualize/OMVisualizeGUI -f Makefile.omdev.mingw
-
-omoptimbasis: omplot
-	$(MAKE) -C OMOptimBasis/build -f Makefile.omdev.mingw
-
-omoptim: omoptimbasis
-	$(MAKE) -C OMOptim/build -f Makefile.omdev.mingw
-
-qtclients: omplot omedit omshell omvisualize omoptim omnotebook
-
-clean-qtclients:
-	$(MAKE) -C 3rdParty/qwt -f Makefile.omdev.mingw clean
-	rm -f $(OMBUILDDIR)/bin/OMPlot.exe $(OMBUILDDIR)/bin/OMVisualize.exe $(OMBUILDDIR)/bin/OMEdit.exe $(OMBUILDDIR)/bin/OMNotebook.exe $(OMBUILDDIR)/bin/OMShell.exe $(OMBUILDDIR)/bin/OMOptim.exe
-	rm -f $(OMBUILDDIR)/lib/libOMPlot.a $(OMBUILDDIR)/lib/libOMVisualize.a $(OMBUILDDIR)/lib/libOMOptimBasis.a $(OMBUILDDIR)/lib/libOMOptim.a
-	rm -rf $(OMBUILDDIR)/share/omedit* $(OMBUILDDIR)/share/omnotebook* $(OMBUILDDIR)/share/omshell*
-	$(MAKE) -C OMPlot/OMPlotGUI -f Makefile.omdev.mingw clean
-	$(MAKE) -C OMVisualize/OMVisualizeGUI -f Makefile.omdev.mingw clean
-	$(MAKE) -C OMEdit/OMEditGUI -f Makefile.omdev.mingw clean
-	$(MAKE) -C OMNotebook/OMNotebookGUI -f Makefile.omdev.mingw clean
-	$(MAKE) -C OMShell/OMShellGUI -f Makefile.omdev.mingw clean
-	$(MAKE) -C OMOptimBasis/build -f Makefile.omdev.mingw clean
-	$(MAKE) -C OMOptim/build -f Makefile.omdev.mingw clean
+	$(MAKE) -f $(defaultMakefileTarget) -C Compiler install_scripts OMBUILDDIR=$(OMBUILDDIR)
 
 lis:
 
 lis-clean:
-
-install-python: $(IDLPYTHONTARGET)
-
-.PHONY: script-files-python
-
-script-files-python: mkbuilddirs-python
-	# copy library files neeeded by OMPython
-	(cp -puf $(OMDEV)/lib/omniORB-4.1.6-msvc-10/lib/x86_win32/_omnipy.pyd $(builddir_lib)/python)
-	(cp -puf $(OMDEV)/lib/omniORB-4.1.6-msvc-10/lib/python/omniORB/__init__.py $(builddir_lib)/python/omniORB/)
-	(cp -puf $(OMDEV)/lib/omniORB-4.1.6-msvc-10/lib/python/omniORB/boxes_idl.py $(builddir_lib)/python/omniORB/)
-	(cp -puf $(OMDEV)/lib/omniORB-4.1.6-msvc-10/lib/python/omniORB/CORBA.py $(builddir_lib)/python/omniORB/)
-	(cp -puf $(OMDEV)/lib/omniORB-4.1.6-msvc-10/lib/python/omniORB/corbaidl_idl.py $(builddir_lib)/python/omniORB/)
-	(cp -puf $(OMDEV)/lib/omniORB-4.1.6-msvc-10/lib/python/omniORB/minorCodes.py $(builddir_lib)/python/omniORB/)
-	(cp -puf $(OMDEV)/lib/omniORB-4.1.6-msvc-10/lib/python/omniORB/PortableServer.py $(builddir_lib)/python/omniORB/)
-	(cp -puf $(OMDEV)/lib/omniORB-4.1.6-msvc-10/lib/python/omniORB/tcInternal.py $(builddir_lib)/python/omniORB/)
-	# copy OMPython files
-	cp -rfp OMPython/setup.py $(builddir_share)/omc/scripts/PythonInterface
-	cp -rfp OMPython/OMPython/* $(builddir_share)/omc/scripts/PythonInterface/OMPython
-
-$(IDLPYTHONTARGET) : $(IDLFILE) script-files-python
-	$(IDLPYTHON) -C$(builddir_share)/omc/scripts/PythonInterface $(IDLFILE)
-
-mkbuilddirs-python:
-	# create directories
-	mkdir -p $(builddir_lib)/python/omniORB
-	mkdir -p $(builddir_share)/omc/scripts/PythonInterface/OMPython/OMParser
-
-clean-python:
-	rm -rf OMPython/build/ OMPython/OMPythonIDL/ OMPython/OMPython/_GlobalID* OMPython/OMPython/omc_communication_idl.py
 
 .PRECIOUS: Makefile.omdev.mingw

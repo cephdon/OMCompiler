@@ -7,6 +7,11 @@
 #include <Core/Math/Functions.h>
 #include <stdexcept>
 
+#include <Core/Utils/numeric/bindings/ublas.hpp>
+#include <Core/Utils/numeric/utils.h>
+//#include <Core/Utils/extension/logger.hpp>
+namespace bindings = boost::numeric::bindings;
+
 /* Matrixes using column major order (as in Fortran) */
 #ifndef set_matrix_elt
 #define set_matrix_elt(A,r,c,n_rows,value) A[r + n_rows * c] = value
@@ -28,14 +33,20 @@
 #define min(a,b) ((a > b) ? (b) : (a))
 #endif
 
-double  division (const double &a,const double &b, const char* text)
+double  division (const double &a,const double &b, bool throwEx,const char* text)
 {
   if(b != 0)
     return a/b ;
     else
     {
-        std::string error_msg = "Division by zero: ";
-      throw ModelicaSimulationError(UTILITY,error_msg+string(text));
+      std::string error_msg = "Division by zero: ";
+      if(throwEx)
+	   throw ModelicaSimulationError(UTILITY,error_msg+string(text));
+     else
+	 {
+		// LOGGER_WRITE("Division: Solver will try to handle division by zero for" + string(text), LC_INIT, LL_DEBUG);
+		 return a;
+	 }
    }
 }
 
@@ -147,4 +158,6 @@ int pivot(double *A, int n_rows, int n_cols, int *rowInd, int *colInd)
   /* all fine */
   return 0;
 }
+
+
 /** @} */ // end of math

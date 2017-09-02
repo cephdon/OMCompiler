@@ -44,12 +44,17 @@ extern "C" {
 #endif
 
 #include "meta_modelica_builtin_boxptr.h"
+#include "util/modelica_string_lit.h"
 
 typedef modelica_metatype metamodelica_string;
 typedef const modelica_metatype metamodelica_string_const;
 
-extern metamodelica_string intString(modelica_integer);
+extern modelica_string intString(modelica_integer);
 extern modelica_string realString(modelica_real);
+static inline modelica_string boolString(modelica_integer i)
+{
+  return mmc_strings_boolString[i];
+}
 
 /* String Character Conversion */
 
@@ -58,13 +63,12 @@ extern modelica_integer nobox_stringCharInt(threadData_t *threadData,metamodelic
 #define intStringChar(X) nobox_intStringChar(threadData,X)
 extern metamodelica_string nobox_intStringChar(threadData_t *threadData,modelica_integer ix);
 
-/* String Operations */
+/* String Operations (MM extensions only) */
 #define stringInt(x) nobox_stringInt(threadData,x)
 #define stringReal(x) nobox_stringReal(threadData,x)
 extern modelica_integer nobox_stringInt(threadData_t*,metamodelica_string s);
 extern modelica_real nobox_stringReal(threadData_t*,metamodelica_string s);
 extern modelica_metatype stringListStringChar(metamodelica_string s);
-extern metamodelica_string_const stringAppend(metamodelica_string_const s1,metamodelica_string_const s2);
 extern metamodelica_string stringAppendList(modelica_metatype lst);
 extern metamodelica_string stringDelimitList(modelica_metatype lst,metamodelica_string_const delimiter);
 #define stringLength(x) MMC_STRLEN(x)
@@ -73,7 +77,7 @@ extern modelica_integer mmc_stringCompare(const void * str1,const void * str2);
 extern modelica_metatype boxptr_stringGetStringChar(threadData_t*,metamodelica_string str,modelica_metatype ix);
 #define stringGet(X,Y) nobox_stringGet(threadData,X,Y)
 extern modelica_integer nobox_stringGet(threadData_t *threadData,metamodelica_string str, modelica_integer ix);
-#define stringGetNoBoundsChecking(str,ix) MMC_STRINGDATA((str))[(ix)-1]
+#define stringGetNoBoundsChecking(str,ix) ((unsigned char*)MMC_STRINGDATA((str)))[(ix)-1]
 #define stringUpdateStringChar(X,Y,Z) boxptr_stringUpdateStringChar(threadData,X,Y,mmc_mk_icon(Z))
 extern modelica_metatype boxptr_stringUpdateStringChar(threadData_t *,metamodelica_string str, metamodelica_string c, modelica_metatype ix);
 extern modelica_integer stringHash(metamodelica_string_const);
@@ -92,6 +96,10 @@ extern modelica_metatype boxptr_stringHashDjb2Mod(threadData_t*,modelica_metatyp
 /* List Operations */
 extern modelica_metatype listReverse(modelica_metatype);
 extern modelica_metatype listReverseInPlace(modelica_metatype);
+#define listSetRest(X,Y) boxptr_listSetRest(threadData,X,Y)
+#define listSetFirst(X,Y) boxptr_listSetFirst(threadData,X,Y)
+extern void boxptr_listSetRest(threadData_t*,modelica_metatype,modelica_metatype);
+extern void boxptr_listSetFirst(threadData_t*,modelica_metatype,modelica_metatype);
 extern modelica_boolean listMember(modelica_metatype, modelica_metatype);
 extern modelica_metatype listAppend(modelica_metatype,modelica_metatype);
 extern modelica_integer listLength(modelica_metatype);
@@ -137,7 +145,7 @@ static inline modelica_metatype arrayCreate(modelica_integer nelts, modelica_met
   if (nelts < 0) {
     MMC_THROW();
   } else {
-    void* arr = (struct mmc_struct*)mmc_mk_box_no_assign(nelts, MMC_ARRAY_TAG);
+    void* arr = (struct mmc_struct*)mmc_mk_box_no_assign(nelts, MMC_ARRAY_TAG, MMC_IS_IMMEDIATE(val));
     void **arrp = MMC_STRUCTDATA(arr);
     int i = 0;
     for(i=0; i<nelts; i++)
@@ -152,11 +160,12 @@ static inline modelica_metatype arrayCreateNoInit(modelica_integer nelts, modeli
   if (nelts < 0) {
     MMC_THROW();
   } else {
-    return (struct mmc_struct*)mmc_mk_box_no_assign(nelts, MMC_ARRAY_TAG);
+    return (struct mmc_struct*)mmc_mk_box_no_assign(nelts, MMC_ARRAY_TAG, 0);
   }
 }
 #define arrayGetNoBoundsChecking(arr,ix) (MMC_STRUCTDATA((arr))[(ix)-1])
 #define arrayUpdate(X,Y,Z) boxptr_arrayUpdate(threadData,X,mmc_mk_icon(Y),Z)
+#define arrayUpdateNoBoundsChecking(X,Y,Z) boxptr_arrayUpdateNoBoundsChecking(threadData,X,mmc_mk_icon(Y),Z)
 extern modelica_metatype arrayAppend(modelica_metatype, modelica_metatype);
 
 extern modelica_metatype boxptr_arrayNth(threadData_t *threadData,modelica_metatype,modelica_metatype);
@@ -173,6 +182,15 @@ static inline modelica_metatype boxptr_arrayUpdate(threadData_t *threadData,mode
 
 extern modelica_metatype boxptr_arrayUpdate(threadData_t *threadData,modelica_metatype, modelica_metatype, modelica_metatype);
 
+static inline modelica_metatype boxptr_arrayUpdateNoBoundsChecking(threadData_t *threadData __attribute__((unused)), modelica_metatype arr, modelica_metatype i, modelica_metatype val)
+{
+  int ix = mmc_unbox_integer(i);
+  MMC_STRUCTDATA(arr)[ix-1] = val;
+  return arr;
+}
+
+extern modelica_metatype boxptr_arrayUpdateNoBoundsChecking(threadData_t *threadData,modelica_metatype, modelica_metatype, modelica_metatype);
+
 /* Misc Operations */
 #ifndef __cplusplus
 #define print(X) fputs(MMC_STRINGDATA(X), stdout)
@@ -187,6 +205,7 @@ extern void boxptr_equality(threadData_t *,modelica_metatype, modelica_metatype)
 #define getGlobalRoot(X) nobox_getGlobalRoot(threadData,X)
 #define setGlobalRoot(X,V) boxptr_setGlobalRoot(threadData,mmc_mk_icon(X),V)
 #define valueConstructor(val) MMC_HDRCTOR(MMC_GETHDR(val))
+#define isPresent(X) ((out##X)!=NULL)
 
 extern modelica_metatype nobox_getGlobalRoot(threadData_t*,modelica_integer);
 extern void boxptr_setGlobalRoot(threadData_t*,modelica_metatype, modelica_metatype);

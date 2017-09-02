@@ -3,6 +3,7 @@
 package CodegenCSharp
 
 import interface SimCodeTV;
+import ExpressionDumpTpl;
 
 // SECTION: SIMULATION TARGET, ROOT TEMPLATE
 
@@ -125,7 +126,7 @@ namespace Bodylight.Models<%modelNameSpace(modelInfo.name)%>
     <%functionAlgebraic(algebraicEquations, simCode)%>
 
     <% wrapIntoExtraFileIfModelTooBig(
-       functionDAE(allEquations, whenClauses, simCode),
+       functionDAE(allEquations, simCode),
        "FunctionDAE", simCode) %>
 
     <%functionZeroCrossing(zeroCrossings, simCode)%>
@@ -180,7 +181,7 @@ template literalExpConst(Exp lit, Integer index, SimCode simCode)
     <<
     static <%arrType%> <%name%> = new <%arrType%>(<%dims%>,-1, new <%sty%>[] { <%data%> });
     >>
-  else error(sourceInfo(), 'literalExpConst failed: <%printExpStr(lit)%>')
+  else error(sourceInfo(), 'literalExpConst failed: <%ExpressionDumpTpl.dumpExp(lit,"\"")%>')
 end literalExpConst;
 
 //should be identical to call daeExp()
@@ -193,7 +194,7 @@ template literalExpConstArrayVal(Exp lit)
     case RCONST(__) then real
     case ENUM_LITERAL(__) then '<%index%>/*ENUM:<%dotPath(name)%>*/'
     case SHARED_LITERAL(__) then '_OMC_LIT<%index%>'
-    else error(sourceInfo(), 'literalExpConstArrayVal failed: <%printExpStr(lit)%>')
+    else error(sourceInfo(), 'literalExpConstArrayVal failed: <%ExpressionDumpTpl.dumpExp(lit,"\"")%>')
 end literalExpConstArrayVal;
 
 template simulationFunctionsBody(SimCode simCode) ::=
@@ -260,7 +261,7 @@ case FUNCTION(__) then
                case (fv as VARIABLE(__)) :: _ then crefStr(fv.name,simCode)
   let varInits = variableDeclarations |> var => varInit(var, simCode)
                  ;separator="\n" //TODO:special end of line,see varInit
-  let bodyPart = (body |> stmt  => funStatement(stmt, simCode) ;separator="\n")
+  let bodyPart = funStatement(body, simCode)
   <<
   <%retType%> _<%fname%>(<%functionArguments |> var => funArgDefinition(var,simCode) ;separator=", "%>)
   {
@@ -364,16 +365,10 @@ template funArgDefinition(Variable var, SimCode simCode)
   else "UNSUPPORTED_VARIABLE_funArgDefinition"
 end funArgDefinition;
 
-template funStatement(Statement stmt, SimCode simCode)
+template funStatement(list<DAE.Statement> statementLst, SimCode simCode)
  "Generates function statements."
 ::=
-  match stmt
-  case ALGORITHM(__) then
-    (statementLst |> stmt =>
-      algStatement(stmt, contextFunction, simCode)
-    ;separator="\n")
-  else
-    "NOT IMPLEMENTED FUN STATEMENT"
+  statementLst |> stmt => algStatement(stmt, contextFunction, simCode)
 end funStatement;
 
 constant String localRepresentationArrayDefines =
@@ -814,8 +809,8 @@ template functionInitSample(list<BackendDAE.TimeEvent> timeEvents, SimCode simCo
 end functionInitSample;
 
 
-template functionDAE(list<SimEqSystem> allEquationsPlusWhen,
-                     list<SimWhenClause> whenClauses, SimCode simCode) ::=
+template functionDAE(list<SimEqSystem> allEquationsPlusWhen, SimCode simCode)
+::=
 let()= System.tmpTickReset(1)
 <<
 public override bool FunDAE()
@@ -825,10 +820,6 @@ public override bool FunDAE()
   var needToIterate = false;
 
   <%allEquationsPlusWhen |> eq => equation_(eq, contextSimulationDiscrete, simCode) ;separator="\n"%>
-
-  <%whenClauses |> when hasindex i0 =>  genreinits(when, i0, simCode)
-     ;separator="\n"
-  %>
 
   return needToIterate;
 }
@@ -842,50 +833,6 @@ template whenConditions(list<ComponentRef> conditions, SimCode simCode)
   (conditions |> cr => '<%cref(cr, simCode)%> && !<%preCref(cr, simCode)%> /* edge */';separator=" || ")
   //else "false"
 end whenConditions;
-
-template genreinits(SimWhenClause whenClauses, Integer widx, SimCode simCode)
-" Generates reinit statemeant"
-::=
-
-match whenClauses
-case SIM_WHEN_CLAUSE(__) then
-if reinits then
-  <<
-  //For whenclause index: <%widx%>
-  if (<%whenConditions(conditions, simCode)%>) {
-    <%functionWhenReinitStatementThen(reinits, simCode)%>
-  }
-  >>
-
-end genreinits;
-
-
-template functionWhenReinitStatementThen(list<WhenOperator> reinits, SimCode simCode)
- "Generates re-init statement for when equation."
-::=
-  reinits |> reinit =>
-    match reinit
-    case REINIT(__) then
-      let &preExp = buffer ""
-      let val = daeExp(value, contextSimulationDiscrete, &preExp, simCode)
-      <<
-      <%preExp%>
-      <%cref(stateVar, simCode)%> = <%val%>;
-      needToIterate = true;
-      >>
-    case TERMINATE(__) then
-      let &preExp = buffer ""
-      let msgVar = daeExp(message, contextSimulationDiscrete, &preExp, simCode)
-      <<
-      <%preExp%>
-      MODELICA_TERMINATE(<%msgVar%>);
-      >>
-    case ASSERT(source=SOURCE(info=info)) then
-      assertCommon(condition, message, info, contextSimulationDiscrete, simCode)
-   ;separator="\n"
-
-end functionWhenReinitStatementThen;
-
 
 template infoArgs(builtin.SourceInfo info)
 ::=
@@ -923,7 +870,7 @@ public override void FunZeroCrossings(double time, double[] gout) //TODO:??time 
      let &preExp = buffer ""
      let zc = zeroCrossing(relation_, &preExp, simCode)
      <<
-     //ZC for: <%ExpressionDump.printExpStr(relation_)%>
+     //ZC for: <%ExpressionDumpTpl.dumpExp(relation_,"\"")%>
      <%preExp%>
      gout[<%i0%>] = <%zc%>;
      >>
@@ -995,7 +942,7 @@ template zeroCrossing(Exp zcExp, Text &preExp, SimCode simCode) ::=
 **/
 
   else
-    error(sourceInfo(), 'Unexpected zero crossing expression: <%ExpressionDump.printExpStr(zcExp)%>')
+    error(sourceInfo(), 'Unexpected zero crossing expression: <%ExpressionDumpTpl.dumpExp(zcExp,"\"")%>')
 
 end zeroCrossing;
 
@@ -1049,13 +996,13 @@ template relationTpl(Integer index1, Exp relationExp, Context context, SimCode s
     let e1 = daeExp(exp1, context, &preExp, simCode)
     let e2 = daeExp(exp2, context, &preExp, simCode)
     <<
-    //relation[<%index%>]: <%ExpressionDump.printExpStr(relationExp)%>
+    //relation[<%index%>]: <%ExpressionDumpTpl.dumpExp(relationExp,"\"")%>
     <%preExp%>
     <%relationWithZeroCrossing(relationExp, e1, e2)%>
     >>
   else
     <<
-    // UNKNOWN Relation[<%index1%>]:  <%ExpressionDump.printExpStr(relationExp)%>
+    // UNKNOWN Relation[<%index1%>]:  <%ExpressionDumpTpl.dumpExp(relationExp,"\"")%>
     >>
 end relationTpl;
 
@@ -1268,22 +1215,10 @@ match eq
 case SES_SIMPLE_ASSIGN(__) then
   let &preExp = buffer ""
   let expPart = daeExp(exp, context, &preExp, simCode) //was daeExpToReal
-  //a hack - start values should be never on the right side of an equation,
-  //specially in FunInitialEquations()
-  let codeTxt =
-    <<
-    <%preExp%>
-    <%cref(cref, simCode)%> = <%expPart%>;
-    >>
-  match exp
-  case CALL(path=IDENT(name="$_start"), expLst={arg as CREF(__)}) then
-    <<
-    //### useless start value assignment ??
-    //<%codeTxt%>
-    //###
-    >>
-  else
-    codeTxt
+  <<
+  <%preExp%>
+  <%cref(cref, simCode)%> = <%expPart%>;
+  >>
 case SES_ARRAY_CALL_ASSIGN(__) then "SES_ARRAY_CALL_ASSIGN"
 case SES_ALGORITHM(__) then
   (statements |> stmt =>
@@ -1464,27 +1399,20 @@ case SES_NONLINEAR(nlSystem=nls as NONLINEARSYSTEM(__)) then
   old impl *********/
 
 case SES_WHEN(__) then
-  let &preExp = buffer ""
-  let rightExp = daeExp(right, context, &preExp, simCode)
+  let body = whenOperators(whenStmtLst, context, simCode)
   let elseWhenConds = match elseWhen case SOME(ew) then equationElseWhen(ew, context, simCode)
   if initialCall then
     <<
     if(Initial<%if conditions then " || " + whenConditions(conditions, simCode)%>) {
-      <%preExp%>
-      <%cref(left, simCode)%> = <%rightExp%>;
+      <%body%>
     }
     <%elseWhenConds%>
     >>
-    // what is that for ??
-    // else {
-    //  <%cref(left, simCode)%> = <%preCref(left, simCode)%>;
-    //}
   else
     <<
     if( ! Initial) {
       if(<%whenConditions(conditions, simCode)%>) {
-        <%preExp%>
-        <%cref(left, simCode)%> = <%rightExp%>;
+        <%body%>
       }
       <%elseWhenConds%>
     }
@@ -1497,17 +1425,55 @@ end equation_;
 template equationElseWhen(SimEqSystem eq, Context context, SimCode simCode) ::=
 match eq
 case SES_WHEN(__) then
-  let &preExp = buffer ""
-  let rightExp = daeExp(right, context, &preExp, simCode)
+  let body = whenOperators(whenStmtLst, context, simCode)
   let elseWhenConds = match elseWhen case SOME(ew) then equationElseWhen(ew, context, simCode)
   <<
   else if(<%whenConditions(conditions, simCode)%>) {
-    <%preExp%>
-    <%cref(left, simCode)%> = <%rightExp%>;
+    <%body%>
   }
   <%elseWhenConds%>
   >>
 end equationElseWhen;
+
+template whenOperators(list<WhenOperator> whenOps, Context context, SimCode simCode)
+ "Generates re-init statement for when equation."
+::=
+  whenOps |> whenOp =>
+    match whenOp
+    case ASSIGN(left = lhs as DAE.CREF(componentRef = left)) then
+      let preExp = ""
+      let rightExp = daeExp(right, context, &preExp, simCode)
+      <<
+      <%preExp%>
+      <%cref(left, simCode)%> = <%rightExp%>;
+      >>
+    case ASSIGN(__) then
+      let preExp = ""
+      let rightExp = daeExp(right, context, &preExp, simCode)
+      let leftExp = daeExp(left, context, &preExp, simCode)
+      <<
+      <%preExp%>
+      <%leftExp%> = <%rightExp%>;
+      >>
+    case REINIT(__) then
+      let &preExp = buffer ""
+      let val = daeExp(value, contextSimulationDiscrete, &preExp, simCode)
+      <<
+      <%preExp%>
+      <%cref(stateVar, simCode)%> = <%val%>;
+      needToIterate = true;
+      >>
+    case TERMINATE(__) then
+      let &preExp = buffer ""
+      let msgVar = daeExp(message, contextSimulationDiscrete, &preExp, simCode)
+      <<
+      <%preExp%>
+      MODELICA_TERMINATE(<%msgVar%>);
+      >>
+    case ASSERT(source=SOURCE(info=info)) then
+      assertCommon(condition, message, info, contextSimulationDiscrete, simCode)
+   ;separator="\n"
+end whenOperators;
 
 // SECTION: SIMULATION TARGET, FUNCTIONS FILE SPECIFIC TEMPLATES
 // not yet implemented
@@ -1621,23 +1587,6 @@ template old2Cref(ComponentRef cr, SimCode simCode) ::=
 '/*old2(<%crefStr(cr, simCode)%>)*/old2<%representationCref(cr, simCode)%>'
 end old2Cref;
 ***/
-
-//this one should be used only in InitialResidual( ..., double[][] startValues)
-template startCref(ComponentRef cr, SimCode simCode) ::=
-//'/*start(<%crefStr(cr, simCode)%>)*/start<%representationCref(cr, simCode)%>'
-
-    match cref2simvar(cr, simCode)
-    case sv as SIMVAR(__) then
-      let fviIndex =
-        match varKind
-        case STATE(__)     then "State"
-        case STATE_DER(__) then "StateDer"
-        case VARIABLE(__)  then "Algebraic"
-        case PARAM(__)     then "Parameter"
-        else /*error(sourceInfo(),*/ "UNEXPECTED_variable_varKind_in_startCref_template" //)
-      'startValues[(int)SimVarType.<%fviIndex%>][<%sv.index%>]'
-end startCref;
-
 
 //TODO: a HACK ? ... used in mixed system only
 template crefToReal(ComponentRef cr, SimCode simCode) ::=
@@ -2387,7 +2336,7 @@ end zeroCrossingRelationOperator;
 template relationWithZeroCrossing(Exp inRelationExp, Text e1, Text e2) ::=
  match inRelationExp
  case RELATION(__) then
-   //relation <%ExpressionDump.printExpStr(inRelationExp)%>
+   //relation <%ExpressionDumpTpl.dumpExp(inRelationExp,"\"")%>
    <<
    relsZC[<%index%>] = <%zeroCrossingValue(inRelationExp, e1, e2)%>;
    rels[<%index%>] = relsZC[<%index%>]<%zeroCrossingRelationOperator(inRelationExp)%>0.0;
@@ -2404,7 +2353,7 @@ then
   case rel as RELATION(__) then
      let &preExp +=
         <<
-        //relation[<%rel.index%>]:  <%ExpressionDump.printExpStr(inRelationExp)%><%\n%>
+        //relation[<%rel.index%>]:  <%ExpressionDumpTpl.dumpExp(inRelationExp,"\"")%><%\n%>
         >>
      match rel.index
        case -1 then
@@ -2647,7 +2596,7 @@ template daeExpCall(Exp inExp, Context context, Text &preExp, SimCode simCode) :
          //else
          '<%var1%> / <%var2%>'
     case _ then
-         let msg = Util.escapeModelicaStringToCString(printExpStr(e2))
+         let msg = Util.escapeModelicaStringToCString(ExpressionDumpTpl.dumpExp(e2,"\""))
          let &tmpVar2 = buffer ""
          let &preExp +=
             '<%tempDecl("var", &tmpVar2)%> = <%var2%>; if (<%tmpVar2%> == 0.0) throw new DivideByZeroException("<%msg%>");<%\n%>'
@@ -2676,9 +2625,6 @@ template daeExpCall(Exp inExp, Context context, Text &preExp, SimCode simCode) :
   case CALL(path=IDENT(name="Integer"), expLst={toBeCasted}) then
     let castedVar = daeExp(toBeCasted, context, &preExp, simCode)
     '((int)<%castedVar%>)'
-
-  case CALL(path=IDENT(name="$_start"), expLst={arg as CREF(__)}) then
-    startCref(arg.componentRef, simCode)
 
   //'(/*edge(h[<%idx%>])*/H[<%idx%>]!=0.0 && preH[<%idx%>]==0.0)'
   case CALL(path=IDENT(name="edge"), expLst={arg as CREF(__)}) then
@@ -2743,7 +2689,7 @@ template daeExpCall(Exp inExp, Context context, Text &preExp, SimCode simCode) :
   /* Begin code generation of event triggering math functions */
 
   case CALL(path=IDENT(name="integer"), expLst={valExp,index}) then
-    let &preExp += '//event trigger function: <%ExpressionDump.printExpStr(inExp)%><%\n%>'
+    let &preExp += '//event trigger function: <%ExpressionDumpTpl.dumpExp(inExp,"\"")%><%\n%>'
     let constIndex = daeExp(index, context, &preExp, simCode)
     match context
     case SIMULATION_CONTEXT(genDiscrete=true)
@@ -2769,10 +2715,10 @@ template daeExpCall(Exp inExp, Context context, Text &preExp, SimCode simCode) :
         }<%\n%>
         >>
       res
-    else error(sourceInfo(), 'Unexpected context for: <%ExpressionDump.printExpStr(inExp)%>')
+    else error(sourceInfo(), 'Unexpected context for: <%ExpressionDumpTpl.dumpExp(inExp,"\"")%>')
 
   case CALL(path=IDENT(name="floor"), expLst={valExp,index}, attr=CALL_ATTR(__)) then
-    let &preExp += '//event trigger function: <%ExpressionDump.printExpStr(inExp)%><%\n%>'
+    let &preExp += '//event trigger function: <%ExpressionDumpTpl.dumpExp(inExp,"\"")%><%\n%>'
     let constIndex = daeExp(index, context, &preExp, simCode)
     let retType =
       match attr.ty
@@ -2804,11 +2750,11 @@ template daeExpCall(Exp inExp, Context context, Text &preExp, SimCode simCode) :
             }<%\n%>
             >>
           res
-        else error(sourceInfo(), 'Unexpected context for: <%ExpressionDump.printExpStr(inExp)%>')
+        else error(sourceInfo(), 'Unexpected context for: <%ExpressionDumpTpl.dumpExp(inExp,"\"")%>')
       )
 
   case CALL(path=IDENT(name="ceil"), expLst={valExp,index}, attr=CALL_ATTR(__)) then
-    let &preExp += '//event trigger function: <%ExpressionDump.printExpStr(inExp)%><%\n%>'
+    let &preExp += '//event trigger function: <%ExpressionDumpTpl.dumpExp(inExp,"\"")%><%\n%>'
     let constIndex = daeExp(index, context, &preExp, simCode)
     let retType =
       match attr.ty
@@ -2840,11 +2786,11 @@ template daeExpCall(Exp inExp, Context context, Text &preExp, SimCode simCode) :
             }<%\n%>
             >>
           res
-        else error(sourceInfo(), 'Unexpected context for: <%ExpressionDump.printExpStr(inExp)%>')
+        else error(sourceInfo(), 'Unexpected context for: <%ExpressionDumpTpl.dumpExp(inExp,"\"")%>')
       )
 
   case CALL(path=IDENT(name="div"), expLst={e1,e2, index}, attr=CALL_ATTR(__)) then
-    let &preExp += '//event trigger function: <%ExpressionDump.printExpStr(inExp)%><%\n%>'
+    let &preExp += '//event trigger function: <%ExpressionDumpTpl.dumpExp(inExp,"\"")%><%\n%>'
     let constIndex = daeExp(index, context, &preExp, simCode)
     let stype = expTypeShort(attr.ty)
     match context
@@ -2886,7 +2832,7 @@ template daeExpCall(Exp inExp, Context context, Text &preExp, SimCode simCode) :
         }<%\n%>
         >>
       res
-    else error(sourceInfo(), 'Unexpected context for: <%ExpressionDump.printExpStr(inExp)%>')
+    else error(sourceInfo(), 'Unexpected context for: <%ExpressionDumpTpl.dumpExp(inExp,"\"")%>')
 
   /* end codegeneration of event triggering math functions */
 

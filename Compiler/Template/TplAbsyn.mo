@@ -37,16 +37,19 @@ encapsulated package TplAbsyn
   $Id$
 "
 
-protected import Debug;
-protected import Error;
-protected import Flags;
-protected import List;
-protected import System;
-protected import Util;
+import Tpl;
 
-public import Tpl;
-protected import TplCodegen;
+protected
 
+import AvlSetString;
+import Debug;
+import Error;
+import Flags;
+import List;
+import MetaModelica.Dangerous.listReverseInPlace;
+import System;
+import TplCodegen;
+import Util;
 
 /* Input AST */
 public type Ident = String;
@@ -577,7 +580,7 @@ algorithm
       equation
         tp = fullyQualifyTemplatePackage(inTplPackage);
         TEMPL_PACKAGE(name, astDefs, templateDefs, annotationFooter) = tp;
-        mmDeclarations = importDeclarations(astDefs, {});
+        mmDeclarations = importDeclarations(astDefs);
         mmDeclarations
          = transformTemplateDefs(templateDefs, tp, mmDeclarations);
         mmDeclarations = listReverse(mmDeclarations);
@@ -609,26 +612,15 @@ end fullyQualifyTemplatePackage;
 
 public function importDeclarations
   input list<ASTDef> inASTDefs;
-  input list<MMDeclaration> inAccMMDecls;
-
-  output list<MMDeclaration> outMMDecls;
+  output list<MMDeclaration> outMMDecls = {};
+protected
+  PathIdent importPackage;
+  Boolean isDefault;
 algorithm
-  outMMDecls := match (inASTDefs, inAccMMDecls)
-    local
-      list<ASTDef> restASTDefs;
-      PathIdent importPackage;
-      Boolean isDefault;
-      list<MMDeclaration> accMMDecls;
-
-    case ( {} , accMMDecls )
-      then accMMDecls;
-
-    case ( AST_DEF(importPackage = importPackage, isDefault = isDefault) :: restASTDefs, accMMDecls )
-      then
-        importDeclarations(restASTDefs,
-                          (MM_IMPORT(isDefault, importPackage) :: accMMDecls));
-
-  end match;
+  for astDef in inASTDefs loop
+    AST_DEF(importPackage = importPackage, isDefault = isDefault) := astDef;
+    outMMDecls := MM_IMPORT(isDefault, importPackage) :: outMMDecls;
+  end for;
 end importDeclarations;
 
 public function transformTemplateDefs
@@ -686,7 +678,7 @@ algorithm
         //TODO: should be done some checks for uniqueness / keywords collisions ...
         //tplname = encodeIdent(tplname);
         iargs = imlicitTxtArg :: encArgs;
-        oargs = List.filter(iargs, isText);
+        oargs = List.filterOnTrue(iargs, isText);
         stmts = listReverse(stmts);
         stmts = addOutPrefixes(stmts, oargs, {});
         (stmts, locals, accMMDecls) = inlineLastFunIfSingleCall(iargs, oargs, stmts, locals, accMMDecls);
@@ -934,38 +926,22 @@ public function addOutTextAssigns
   input TypedIdents inTextArgs;
   input list<tuple<Ident,Ident>> inTranslatedTextArgs;
 
-  output list<MMExp> outStmts;
+  output list<MMExp> outStmts = {};
+protected
+  String outident;
+  tuple<Ident, TypeSignature> id;
+  Ident ident;
 algorithm
-  (outStmts) := matchcontinue (inTextArgs, inTranslatedTextArgs)
-    local
-      list<MMExp> stmts;
-      TypedIdents restArgs;
-      Ident ident;
-      String outident;
-      list<tuple<Ident,Ident>> trIdents;
-
-    case (  {} , _)
-      then ( {} );
-
-    case (  (ident, _) :: restArgs , trIdents)
-      equation
-        _ = lookupTupleList(trIdents, ident);
-        stmts = addOutTextAssigns( restArgs, trIdents);
-      then ( stmts );
-
-    case ( (ident, _) :: restArgs , trIdents)
-      equation
-        //failure(_ = lookupTupleList(trIdents, ident));
-        outident = outPrefix + ident;
-        stmts = addOutTextAssigns( restArgs, trIdents);
-      then ( MM_ASSIGN({outident},MM_IDENT(IDENT(ident))) :: stmts );
-
+  for id in inTextArgs loop
+    (ident,_) := id;
+    try
+      _ := lookupTupleList(inTranslatedTextArgs, ident);
     else
-      equation
-        true = Flags.isSet(Flags.FAILTRACE); Debug.trace("-!!!addOutTextAssigns failed\n");
-      then
-        fail();
-  end matchcontinue;
+      outident := outPrefix + ident;
+      outStmts := MM_ASSIGN({outident},MM_IDENT(IDENT(ident))) :: outStmts;
+    end try;
+  end for;
+  outStmts := listReverseInPlace(outStmts);
 end addOutTextAssigns;
 
 
@@ -974,26 +950,17 @@ public function isAssignedIdent
   input Ident inIdent;
 
   output Boolean outIsAssigned;
+protected
+  list<Ident> largs;
 algorithm
-  (outIsAssigned) := matchcontinue (inStatementList, inIdent)
-    local
-      Ident ident;
-      list<Ident> largs;
-      list<MMExp> rest;
-
-    case ( {}, _ )  then  false;
-
-    case ( MM_ASSIGN(lhsArgs = largs) :: _, ident )
-      equation
-        true = listMember(ident, largs);
-      then
-        true;
-
-    case ( _ :: rest, ident )
-      then
-        isAssignedIdent(rest, ident);
-
-  end matchcontinue;
+  for st in inStatementList loop
+    MM_ASSIGN(lhsArgs = largs) := st;
+    if listMember(inIdent, largs) then
+      outIsAssigned := true;
+      return;
+    end if;
+  end for;
+  outIsAssigned := false;
 end isAssignedIdent;
 
 
@@ -2521,6 +2488,7 @@ algorithm
       list<MMExp> mmargs;
       list<Ident> lhsArgs;
       TemplPackage tplPackage;
+      MMExp exp;
 
     case ( _, _, {}, _)
       then
@@ -2537,10 +2505,11 @@ algorithm
     //a text argument that is input and output
     //an actual parameter ident ... non-internal idents all starts with "_"
     //- put it out
-    case ( MM_IDENT(IDENT(txtarg)) :: mmargs, _ :: iargs, _ :: oargs, tplPackage)
+    case ((exp as MM_IDENT(IDENT(txtarg))) :: mmargs, _ :: iargs, _ :: oargs, tplPackage)
       equation
         // obsolete ... "_" = stringGetStringChar(txtarg, 1);
         //areEqualInOutArgs(iarg , oarg);
+        false = listMember(exp, mmargs); // This makes only the last Text argument be cached, but it is the simplest solution
         lhsArgs = elabOutTextArgs(mmargs, iargs, oargs, tplPackage);
       then
         ( txtarg :: lhsArgs );
@@ -2675,8 +2644,8 @@ algorithm
         fname = listMapFunPrefix + intString(listLength(accMMDecls));
         iargs = imlicitTxtArg :: ("items",argtype) :: encodedExtargs;
         assignedIdents = getAssignedIdents(mapstmts, {});
-        //oargs = List.filter(extargs, isText);
-        oargs = List.filter1(encodedExtargs, isAssignedText, assignedIdents);
+        //oargs = List.filterOnTrue(extargs, isText);
+        oargs = List.filter1OnTrue(encodedExtargs, isAssignedText, assignedIdents);
         oargs = imlicitTxtArg :: oargs;
         lhsArgs = List.map(oargs, Util.tuple21);
         inMapExtargvals =  List.map(encodedExtargs, makeMMArgValue);
@@ -2781,8 +2750,8 @@ algorithm
         fname = scalarMapFunPrefix + intString(listLength(accMMDecls));
         iargs = imlicitTxtArg :: ("it",argtype) :: encodedExtargs;
         assignedIdents = getAssignedIdents(mapstmts, {});
-        //oargs = List.filter(extargs, isText); //it can be actually Text, but not to be as output stream
-        oargs = List.filter1(encodedExtargs, isAssignedText, assignedIdents);
+        //oargs = List.filterOnTrue(extargs, isText); //it can be actually Text, but not to be as output stream
+        oargs = List.filter1OnTrue(encodedExtargs, isAssignedText, assignedIdents);
         oargs = imlicitTxtArg :: oargs;
         mapstmts = listReverse(mapstmts);
         //add indexed value if needed
@@ -3109,7 +3078,7 @@ algorithm
 
         iargs = imlicitTxtArg :: (matchArgName, exptype) :: encodedExtargs;
 
-        oargs = List.filter1(encodedExtargs, isAssignedText, assignedIdents);
+        oargs = List.filter1OnTrue(encodedExtargs, isAssignedText, assignedIdents);
         oargs = imlicitTxtArg :: oargs;
 
         funLocals = listAppend(encodedExtargs, funLocals);
@@ -3200,25 +3169,29 @@ end makeMMArgValue;
 
 public function isText
   input tuple<Ident, TypeSignature> inArg;
+  output Boolean outB;
 algorithm
-  _:= match(inArg)
+  outB := match(inArg)
     case ( (_ , TEXT_TYPE()) )
-      then ();
+      then true;
+    else false;
   end match;
 end isText;
 
-function isAssignedText
+protected function isAssignedText
   input tuple<Ident, TypeSignature> inArg;
   input list<Ident> inAssignedTexts;
+  output Boolean outB;
 algorithm
-  _:= match(inArg, inAssignedTexts)
+  outB := match(inArg, inAssignedTexts)
     local
       Ident ident;
       list<Ident> assignedTexts;
     case ( (ident , TEXT_TYPE()), assignedTexts )
-      equation
-        true = listMember(ident,assignedTexts);
-      then ();
+      guard
+        listMember(ident,assignedTexts)
+      then true;
+    else false;
   end match;
 end isAssignedText;
 
@@ -4748,7 +4721,7 @@ algorithm
     //not yet in locals
     case ( ident, _, _, _, localNames, locals)
       equation
-        failure( _ = lookupTupleList(localNames, ident) );
+        // already failed in first case: failure( _ = lookupTupleList(localNames, ident) );
         encIdent = addPostfixToIdent(inEncIdent, inPostfix);
         failure( _ = lookupTupleList(locals, encIdent));
       then
@@ -4759,7 +4732,7 @@ algorithm
     //re-use from locals
     case ( ident, _, _, _, localNames, locals)
       equation
-        failure( _ = lookupTupleList(localNames, ident) );
+        // already failed in first case: failure( _ = lookupTupleList(localNames, ident) );
         encIdent = addPostfixToIdent(inEncIdent, inPostfix);
         loctype = lookupTupleList(locals, encIdent);
         equality(loctype = inType);
@@ -4769,7 +4742,7 @@ algorithm
     //try the next postfix
     case ( ident, _, _, _, localNames, locals)
       equation
-        failure( _ = lookupTupleList(localNames, ident) );
+        // already failed in first case: failure( _ = lookupTupleList(localNames, ident) );
         encIdent = addPostfixToIdent(inEncIdent, inPostfix);
         loctype = lookupTupleList(locals, encIdent);
         failure(equality(loctype = inType));
@@ -5466,6 +5439,14 @@ algorithm
   end matchcontinue;
 end splitPackageAndIdent;
 
+protected function getPackageIdent
+  input PathIdent inTypePathIdent;
+
+  output Ident outTypeIdent;
+algorithm
+  (_, outTypeIdent) := splitPackageAndIdent(inTypePathIdent);
+end getPackageIdent;
+
 
 public function makePathIdent
   input PathIdent inPackage;
@@ -5713,8 +5694,8 @@ protected function typesEqualConcrete "function typesEqualConcrete:
 This function compares two type signatures.
 It assumes the input types are deAliasedType-ed.
 "
-  input TypeSignature inTypeA "must be conrete - dealiased without type variables";
-  input TypeSignature inTypeB "must be conrete - dealiased without type variables";
+  input TypeSignature inTypeA "must be concrete - dealiased without type variables";
+  input TypeSignature inTypeB "must be concrete - dealiased without type variables";
   input list<ASTDef> inASTDefs;
 
 algorithm
@@ -5878,7 +5859,7 @@ algorithm
       equation
         TEMPLATE_DEF(args = iargs)  =  lookupTupleList(templateDefs, templname);
         iargs = imlicitTxtArg :: iargs;
-        oargs = List.filter(iargs, isText); //just for now, it is not inferred from the usage
+        oargs = List.filterOnTrue(iargs, isText); //just for now, it is not inferred from the usage
         //not encoding templates now
         //templname = encodeIdent(templname);
         //fname = IDENT( templname );
@@ -6581,32 +6562,30 @@ end canBeEscapedUnquoted;
 
 protected function canBeEscapedUnquotedChars
   input list<String> inChars;
-  output Boolean outCanBeUnquated;
+  output Boolean outCanBeUnquoted;
 algorithm
-  outCanBeUnquated :=
-  matchcontinue(inChars)
+  outCanBeUnquoted :=
+  match(inChars)
     local
       String c;
       list<String> chars;
 
     case ({}) then true;
 
-    case ( c  :: chars)
-      equation
         // \a \b \f \r \v  ... TODO: Error in the .srz or .c compilation(\r)
-        true =
-            (c == "\'")
+    case ( c  :: chars)
+      guard (c == "\'")
          or (c == "\"")
          or (c == "?")
          or (c == "\\")
          or (c == "\n")
          or (c == "\t")
-         or (c == " ");
+         or (c == " ")
       then canBeEscapedUnquotedChars(chars);
 
     else false;
 
-  end matchcontinue;
+  end match;
 end canBeEscapedUnquotedChars;
 
 
@@ -6686,6 +6665,131 @@ algorithm
   txt := TplCodegen.mmStatements(eTxt, inStmts); //<statements : mmExp(it, '=')\n>
   outStr := Tpl.textString(txt);
 end stmtsString;
+
+public function removeUnusedImports
+  input output MMPackage pkg;
+protected
+  AvlSetString.Tree set;
+  PathIdent name;
+  Boolean b;
+algorithm
+  set := AvlSetString.EMPTY();
+  for e in pkg.mmDeclarations loop
+    _ := match e
+      case MM_FUN()
+        algorithm
+          set := addTypedIdentsToSet(set, e.inArgs);
+          set := addTypedIdentsToSet(set, e.outArgs);
+          set := addTypedIdentsToSet(set, e.locals);
+          for exp in e.statements loop
+            set := addExpToSet(set, exp);
+          end for;
+        then ();
+      else ();
+    end match;
+  end for;
+  pkg.mmDeclarations := list(elt for elt guard match elt
+    case MM_IMPORT(packageName=name)
+      algorithm
+        b := AvlSetString.hasKey(set, getPackageIdent(name));
+        if not b and Flags.isSet(Flags.FAILTRACE) then
+          Debug.trace("removeUnusedImports: "+encodePathIdent(name,"")+"\n");
+        end if;
+      then b;
+    else true;
+  end match in pkg.mmDeclarations);
+end removeUnusedImports;
+
+protected
+
+function addTypedIdentsToSet
+  input output AvlSetString.Tree set;
+  input TypedIdents ids;
+protected
+  TypeSignature sig;
+algorithm
+  for tpl in ids loop
+    (_,sig) := tpl;
+    set := addTypeSignatureToSet(set,sig);
+  end for;
+end addTypedIdentsToSet;
+
+function addTypeSignatureToSet
+  input output AvlSetString.Tree set;
+  input TypeSignature sig;
+protected
+  TypeSignature sig2;
+  list<TypeSignature> sigs;
+  PathIdent name;
+algorithm
+  set := match sig
+    case LIST_TYPE(sig2) then addTypeSignatureToSet(set, sig2);
+    case ARRAY_TYPE(sig2) then addTypeSignatureToSet(set, sig2);
+    case OPTION_TYPE(sig2) then addTypeSignatureToSet(set, sig2);
+    case TUPLE_TYPE(sigs) then List.foldr(sigs, addTypeSignatureToSet, set);
+    case NAMED_TYPE(name) then addPathIdentToSet(set, name);
+    else set;
+  end match;
+end addTypeSignatureToSet;
+
+function addPathIdentToSet
+  input output AvlSetString.Tree set;
+  input PathIdent name;
+algorithm
+  set := match name
+    case IDENT() then AvlSetString.add(set, name.ident);
+    case PATH_IDENT() then AvlSetString.add(set, name.ident);
+  end match;
+end addPathIdentToSet;
+
+function addExpToSet
+  input output AvlSetString.Tree set;
+  input MMExp exp;
+algorithm
+  set := match exp
+    case MM_ASSIGN() then addExpToSet(set, exp.rhs);
+    case MM_FN_CALL() then List.foldr(exp.args, addExpToSet, addPathIdentToSet(set, exp.fnName));
+    case MM_IDENT() then addPathIdentToSet(set, exp.ident);
+    case MM_MATCH() then List.foldr(exp.matchCases, addMatchCaseToSet, set);
+    else set;
+  end match;
+end addExpToSet;
+
+function addMatchCaseToSet
+  input output AvlSetString.Tree set;
+  input MMMatchCase c;
+protected
+  list<MatchingExp> mexps;
+  list<MMExp> exps;
+algorithm
+  (mexps,exps) := c;
+  set := List.foldr(exps, addExpToSet, set);
+  set := List.foldr(mexps, addMatchingExpToSet, set);
+end addMatchCaseToSet;
+
+function addMatchingExpToSet
+  input output AvlSetString.Tree set;
+  input MatchingExp exp;
+protected
+  MatchingExp e;
+algorithm
+  set := match exp
+    case BIND_AS_MATCH() then addMatchingExpToSet(set, exp.matchingExp);
+    case RECORD_MATCH()
+      algorithm
+        set := addPathIdentToSet(set, exp.tagName);
+        for tpl in exp.fieldMatchings loop
+          (_, e) := tpl;
+          set := addMatchingExpToSet(set, e);
+        end for;
+      then set;
+    case SOME_MATCH() then addMatchingExpToSet(set, exp.value);
+    case TUPLE_MATCH() then List.foldr(exp.tupleArgs, addMatchingExpToSet, set);
+    case LIST_MATCH() then List.foldr(exp.listElts, addMatchingExpToSet, set);
+    case LIST_CONS_MATCH() then addMatchingExpToSet(addMatchingExpToSet(set, exp.head), exp.rest);
+    else set;
+  end match;
+end addMatchingExpToSet;
 
 annotation(__OpenModelica_Interface="susan");
 end TplAbsyn;

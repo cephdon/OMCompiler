@@ -43,7 +43,7 @@ extern "C" {
 
 #include "simulation_data.h"
 
-#include "util/memory_pool.h"
+#include "gc/omc_gc.h"
 #include "util/index_spec.h"
 #include "util/boolean_array.h"
 #include "util/integer_array.h"
@@ -54,12 +54,12 @@ extern "C" {
 #include "util/utility.h"
 
 struct OpenModelicaGeneratedFunctionCallbacks {
-int (*performSimulation)(DATA* data, void* solverInfo);
-int (*performQSSSimulation)(DATA* data, void* solverInfo);
-/* Function for calling external object constructors */
-void (*callExternalObjectConstructors)(DATA *data);
+/* Defined in perform_simulation.c and omp_perform_simulation.c */
+int (*performSimulation)(DATA* data, threadData_t*, void* solverInfo);
+int (*performQSSSimulation)(DATA* data, threadData_t*, void* solverInfo);
+void (*updateContinuousSystem)(DATA *data, threadData_t*);
 /* Function for calling external object deconstructors */
-void (*callExternalObjectDestructors)(DATA *_data);
+void (*callExternalObjectDestructors)(DATA *_data, threadData_t*);
 
 /*! \fn initialNonLinearSystem
  *
@@ -93,27 +93,39 @@ void (*initialMixedSystem)(int nMixedSystems, MIXED_SYSTEM_DATA *data);
  */
 void (*initializeStateSets)(int nStateSets, STATE_SET_DATA* statesetData, DATA *data);
 
+/*! \fn initializeDAEmodeData
+ *
+ *  This function to initialize the daeMode data structure in Data
+ *
+ *  \param [ref] [data]
+ */
+int (*initializeDAEmodeData)(DATA *data, DAEMODE_DATA* daeModeData);
+
 /* functionODE contains those equations that are needed
  * to calculate the dynamic part of the system */
-int (*functionODE)(DATA *data);
+int (*functionODE)(DATA *data, threadData_t*);
 
 /* functionAlgebraics contains all continuous equations that
  * are not part of the dynamic part of the system */
-int (*functionAlgebraics)(DATA *data);
+int (*functionAlgebraics)(DATA *data, threadData_t*);
 
 /* function for calculating all equation sorting order
    uses in EventHandle  */
-int (*functionDAE)(DATA *data);
+int (*functionDAE)(DATA *data, threadData_t*);
+
+/* function that evaluates all localKnownVars  */
+int (*functionLocalKnownVars)(DATA *data, threadData_t*);
 
 /* functions for input and output */
-int (*input_function)(DATA*);
-int (*input_function_init)(DATA*);
-int (*output_function)(DATA*);
+int (*input_function)(DATA*, threadData_t*);
+int (*input_function_init)(DATA*, threadData_t*);
+int (*input_function_updateStartValues)(DATA*, threadData_t*);
+int (*output_function)(DATA*, threadData_t*);
 
 /* function for storing value histories of delayed expressions
  * called from functionDAE_output()
  */
-int (*function_storeDelayed)(DATA *data);
+int (*function_storeDelayed)(DATA *data, threadData_t*);
 
 /*! \fn updateBoundVariableAttributes
  *
@@ -121,13 +133,7 @@ int (*function_storeDelayed)(DATA *data);
  *
  *  \param [ref] [data]
  */
-int (*updateBoundVariableAttributes)(DATA *data);
-
-/*! \var useHomotopy
- *
- * is 1 if homotopy(...) is used during initialization, otherwise 0
- */
-const int useHomotopy;
+int (*updateBoundVariableAttributes)(DATA *data, threadData_t*);
 
 /*! \fn functionInitialEquations
  *
@@ -135,7 +141,22 @@ const int useHomotopy;
  *
  *  \param [ref] [data]
  */
-int (*functionInitialEquations)(DATA *data);
+int (*functionInitialEquations)(DATA *data, threadData_t*);
+
+/*! \var useHomotopy
+ *
+ * 0: local homotopy approach
+ * 1: global homotopy approach
+ */
+const int useHomotopy;
+
+/*! \fn functionInitialEquations_lambda0
+ *
+ * function for calculate initial values from the initial equations and initial algorithms
+ *
+ *  \param [ref] [data]
+ */
+int (*functionInitialEquations_lambda0)(DATA *data, threadData_t*);
 
 /*! \fn functionRemovedInitialEquations
  *
@@ -145,7 +166,7 @@ int (*functionInitialEquations)(DATA *data);
  *
  *  \param [ref] [data]
  */
-int (*functionRemovedInitialEquations)(DATA *data);
+int (*functionRemovedInitialEquations)(DATA *data, threadData_t*);
 
 /*! \fn updateBoundParameters
  *
@@ -155,10 +176,10 @@ int (*functionRemovedInitialEquations)(DATA *data);
  *
  *  \param [ref] [data]
  */
-int (*updateBoundParameters)(DATA *data);
+int (*updateBoundParameters)(DATA *data, threadData_t*);
 
 /* function for checking for asserts and terminate */
-int (*checkForAsserts)(DATA *data);
+int (*checkForAsserts)(DATA *data, threadData_t*);
 
 /*! \fn function_ZeroCrossingsEquations
  *
@@ -166,7 +187,7 @@ int (*checkForAsserts)(DATA *data);
  *
  *  \param [ref] [data]
  */
-int (*function_ZeroCrossingsEquations)(DATA *data);
+int (*function_ZeroCrossingsEquations)(DATA *data, threadData_t*);
 
 /*! \fn function_ZeroCrossings
  *
@@ -175,7 +196,7 @@ int (*function_ZeroCrossingsEquations)(DATA *data);
  *  \param [ref] [data]
  *  \param [ref] [gout]
  */
-int (*function_ZeroCrossings)(DATA *data, double* gout);
+int (*function_ZeroCrossings)(DATA *data, threadData_t*, double* gout);
 
 /*! \fn function_updateRelations
  *
@@ -185,7 +206,7 @@ int (*function_ZeroCrossings)(DATA *data, double* gout);
  *  \param [in]  [evalZeroCross] flag for evaluating Relation with hysteresis
  *                              function or without
  */
-int (*function_updateRelations)(DATA *data, int evalZeroCross);
+int (*function_updateRelations)(DATA *data, threadData_t*, int evalZeroCross);
 
 /*! \fn checkForDiscreteChanges
  *
@@ -193,7 +214,7 @@ int (*function_updateRelations)(DATA *data, int evalZeroCross);
  *
  *  \param [ref] [data]
  */
-int (*checkForDiscreteChanges)(DATA *data);
+int (*checkForDiscreteChanges)(DATA *data, threadData_t*);
 
 /*! \var zeroCrossingDescription
  *
@@ -213,7 +234,7 @@ const char *(*relationDescription)(int i);
  *
  *  \param [ref] [data]
  */
-void (*function_initSample)(DATA *data);
+void (*function_initSample)(DATA *data, threadData_t*);
 
 /* function for calculation Jacobian */
 /*#ifdef D_OMC_JACOBIAN*/
@@ -227,22 +248,23 @@ const int INDEX_JAC_D;
  * Return-value 0: jac is present
  * Return-value 1: jac is not present
  */
-int (*initialAnalyticJacobianA)(void* data);
-int (*initialAnalyticJacobianB)(void* data);
-int (*initialAnalyticJacobianC)(void* data);
-int (*initialAnalyticJacobianD)(void* data);
+int (*initialAnalyticJacobianA)(void* data, threadData_t *threadData);
+int (*initialAnalyticJacobianB)(void* data, threadData_t *threadData);
+int (*initialAnalyticJacobianC)(void* data, threadData_t *threadData);
+int (*initialAnalyticJacobianD)(void* data, threadData_t *threadData);
 
 /*
  * These functions calculate specific jacobian column.
  */
-int (*functionJacA_column)(void* data);
-int (*functionJacB_column)(void* data);
-int (*functionJacC_column)(void* data);
-int (*functionJacD_column)(void* data);
+int (*functionJacA_column)(void* data, threadData_t *threadData);
+int (*functionJacB_column)(void* data, threadData_t *threadData);
+int (*functionJacC_column)(void* data, threadData_t *threadData);
+int (*functionJacD_column)(void* data, threadData_t *threadData);
 
 /*#endif*/
 
 const char *(*linear_model_frame)(void); /* printf format-string with holes for 6 strings */
+const char *(*linear_model_datarecovery_frame)(void); /* printf format-string with holes for 9 strings */
 
 /*
  * This function is used only for optimization purpose
@@ -263,11 +285,12 @@ int (*lagrange)(DATA* data, modelica_real** res, short *, short *);
  * and pick up the bounds of inputs. In case it's not present
  * a dummy function is added which return -1.
  */
-int (*pickUpBoundsForInputsInOptimization)(DATA* data, modelica_real* min, modelica_real* max, modelica_real*nominal, modelica_boolean *useNominal, char ** name, modelica_real * start, modelica_real * startTimeOpt);
+int (*pickUpBoundsForInputsInOptimization)(DATA* data, modelica_real* min, modelica_real* max, modelica_real*nominal,
+                                           modelica_boolean *useNominal, char ** name, modelica_real * start, modelica_real * startTimeOpt);
 
 /*
  * This function is used only for optimization purpose
- * and set simulationInfo.inputVars. In case it's not present
+ * and set simulationInfo->inputVars. In case it's not present
  * a dummy function is added which return -1.
  */
 int (*setInputData)(DATA* data, const modelica_boolean file);
@@ -282,11 +305,41 @@ int (*getTimeGrid)(DATA *data, modelica_integer * nsi, modelica_real**t);
 
 
 /*
- * update parameter for symEuler
+ * update parameter for symSolver
  */
 
-int (*symEulerUpdate)(DATA * data, modelica_real dt);
+int (*symbolicInlineSystems)(DATA * data, threadData_t *threadData);
 
+/*
+ * initialize clocks and subclocks info in modelData
+ */
+void (*function_initSynchronous)(DATA * data, threadData_t *threadData);
+
+/*
+ * Update clock interval.
+ */
+void (*function_updateSynchronous)(DATA *data, threadData_t *threadData, long i);
+
+/*
+ * Sub-partition's equations
+ */
+int (*function_equationsSynchronous)(DATA *data, threadData_t *threadData, long i);
+
+/*
+ * FMU's do not need the XML-file; they use this callback instead.
+ */
+void (*read_input_fmu)(MODEL_DATA* modelData, SIMULATION_INFO* simulationData);
+
+/*
+ * return input names
+ */
+int (*inputNames)(DATA* modelData, char ** names);
+#ifdef FMU_EXPERIMENTAL
+/* functionODEPartial contains those equations that are needed
+ * to calculate the state derivative i-th */
+void (*functionODEPartial)(DATA *data, threadData_t*, int i);
+void (*functionFMIJacobian)(DATA *data, threadData_t*, const unsigned *unknown, int nUnk, const unsigned *ders, int nKnown, double *dvKnown, double *out);
+#endif
 };
 
 #ifdef __cplusplus

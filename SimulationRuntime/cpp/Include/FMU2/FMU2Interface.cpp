@@ -36,6 +36,26 @@
 
 #include "FMU2Wrapper.h"
 
+/* FMI extension for multi-rate sampled data systems */
+typedef fmi2Status fmi2GetClockTYPE(fmi2Component, const int fmi2Integer[],
+                                    size_t, fmi2Boolean[]);
+typedef fmi2Status fmi2SetClockTYPE(fmi2Component, const int fmiInteger[],
+                                    size_t, const fmi2Boolean[],
+                                    const fmi2Boolean*);
+typedef fmi2Status fmi2GetIntervalTYPE(fmi2Component, const int fmiInteger[],
+                                       size_t, fmi2Real[]);
+typedef fmi2Status fmi2SetIntervalTYPE(fmi2Component, const int fmiInteger[],
+                                       size_t, const fmi2Real[]);
+
+extern "C"
+{
+  FMI2_Export fmi2GetClockTYPE fmi2GetClock;
+  FMI2_Export fmi2SetClockTYPE fmi2SetClock;
+  FMI2_Export fmi2GetIntervalTYPE fmi2GetInterval;
+  FMI2_Export fmi2SetIntervalTYPE fmi2SetInterval;
+}
+
+/* Common definitions */
 #define LOG_CALL(w, ...) \
   FMU2_LOG(w, fmi2OK, logFmi2Call, __VA_ARGS__)
 
@@ -226,6 +246,30 @@ extern "C"
     CATCH_EXCEPTION(w);
   }
 
+  fmi2Status fmi2GetClock(fmi2Component c,
+                          const fmi2Integer clockIndex[],
+                          size_t nClockIndex, fmi2Boolean tick[])
+  {
+    FMU2Wrapper *w = reinterpret_cast<FMU2Wrapper*>(c);
+    LOG_CALL(w, "fmi2GetClock(nClockIndex = %d)", nClockIndex);
+    try {
+      return w->getClock(clockIndex, nClockIndex, tick);
+    }
+    CATCH_EXCEPTION(w);
+  }
+
+  fmi2Status fmi2GetInterval(fmi2Component c,
+                             const fmi2Integer clockIndex[],
+                             size_t nClockIndex, fmi2Real interval[])
+  {
+    FMU2Wrapper *w = reinterpret_cast<FMU2Wrapper*>(c);
+    LOG_CALL(w, "fmi2GetInterval(nClockIndex = %d)", nClockIndex);
+    try {
+      return w->getInterval(clockIndex, nClockIndex, interval);
+    }
+    CATCH_EXCEPTION(w);
+  }
+
   fmi2Status fmi2SetReal(fmi2Component c,
                          const fmi2ValueReference vr[], size_t nvr,
                          const fmi2Real value[])
@@ -270,6 +314,31 @@ extern "C"
     LOG_CALL(w, "fmi2SetString(nvr = %d)", nvr);
     try {
       return w->setString(vr, nvr, value);
+    }
+    CATCH_EXCEPTION(w);
+  }
+
+  fmi2Status fmi2SetClock(fmi2Component c,
+                          const fmi2Integer clockIndex[],
+                          size_t nClockIndex, const fmi2Boolean tick[],
+                          const fmi2Boolean subactive[])
+  {
+    FMU2Wrapper *w = reinterpret_cast<FMU2Wrapper*>(c);
+    LOG_CALL(w, "fmi2SetClock(nClockIndex = %d)", nClockIndex);
+    try {
+      return w->setClock(clockIndex, nClockIndex, tick, subactive);
+    }
+    CATCH_EXCEPTION(w);
+  }
+
+  fmi2Status fmi2SetInterval(fmi2Component c,
+                             const fmi2Integer clockIndex[],
+                             size_t nClockIndex, const fmi2Real interval[])
+  {
+    FMU2Wrapper *w = reinterpret_cast<FMU2Wrapper*>(c);
+    LOG_CALL(w, "fmi2SetInterval(nClockIndex = %d)", nClockIndex);
+    try {
+      return w->setInterval(clockIndex, nClockIndex, interval);
     }
     CATCH_EXCEPTION(w);
   }

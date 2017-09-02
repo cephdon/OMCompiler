@@ -53,6 +53,7 @@ DLLDirection extern pthread_key_t modelicaParserKey;
 #define ModelicaParser_langStd ((parser_members*)pthread_getspecific(modelicaParserKey))->langStd
 #define ModelicaParser_lexerError ((parser_members*)pthread_getspecific(modelicaParserKey))->lexerError
 #define ModelicaParser_encoding ((parser_members*)pthread_getspecific(modelicaParserKey))->encoding
+#define ModelicaParser_threadData ((parser_members*)pthread_getspecific(mmc_thread_data_key))
 
 typedef struct antlr_members_struct {
   int lexerError;
@@ -65,6 +66,7 @@ typedef struct antlr_members_struct {
   int readonly;
   int flags;
   int langStd;
+  threadData_t *threadData;
 } parser_members;
 
 #define PARSE_MODELICA        0
@@ -76,9 +78,11 @@ typedef struct antlr_members_struct {
 #define PARSE_OPTIMICA        1<<5
 #define PARSE_PATH            1<<6
 #define PARSE_CREF            1<<7
+#define PARSE_PDEMODELICA     1<<8
 #define metamodelica_enabled() (ModelicaParser_flags&PARSE_META_MODELICA)
 #define parmodelica_enabled() (ModelicaParser_flags&PARSE_PARMODELICA)
 #define optimica_enabled() (ModelicaParser_flags&PARSE_OPTIMICA)
+#define pdemodelica_enabled() (ModelicaParser_flags&PARSE_PDEMODELICA)
 #define code_expressions_enabled() (ModelicaParser_flags&PARSE_CODE_EXPRESSION)
 #define flat_modelica_enabled() (ModelicaParser_flags&PARSE_FLAT)
 #define parse_expression_enabled() (ModelicaParser_flags&PARSE_EXPRESSION)

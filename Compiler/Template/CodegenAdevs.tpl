@@ -46,6 +46,7 @@
 package CodegenAdevs
 import interface SimCodeTV;
 import CodegenUtil.*;
+import ExpressionDumpTpl;
 
 template translateModel(SimCode simCode)
  "Generates Cpp code and header file for an adevs model."
@@ -890,7 +891,7 @@ template makeStateSelectHeader(list<StateSet> stateSets)
 ::=
   (stateSets |> stateSet as SES_STATESET(__) hasindex i0 =>
      let jacDecl =
-       (stateSet.jacobianMatrix |> (_,seedVars,name,(_,_),_,_,_) =>
+       (stateSet.jacobianMatrix |> JAC_MATRIX(seedVars=seedVars, matrixName=name) =>
            '<%declareJacobians2(name,seedVars)%>'
            ;separator="\n")
      <<
@@ -920,8 +921,8 @@ template selectState(list<DAE.ComponentRef> states, list<DAE.ComponentRef> state
 ::=
     let newStateAssign = (states |> stateVar hasindex i0 => '<%makeReinitDynamicState(stateVar,statescandidates,crA,nStates,i0)%>';separator="\n")
     <<
-    calc_Jacobian_<%(jacobianMatrix |> (_,_,name,_,_,_,_) => '<%name%>')%>();
-    if (selectDynamicStates(_Jacobian_<%(jacobianMatrix |> (_,_,name,_,_,_,_) => '<%name%>')%>,<%nStates%>,<%nCandidates%>,rowSelect<%crefarray(crA)%>,colSelect<%crefarray(crA)%>))
+    calc_Jacobian_<%(jacobianMatrix |> JAC_MATRIX(matrixName=name) => '<%name%>')%>();
+    if (selectDynamicStates(_Jacobian_<%(jacobianMatrix |> JAC_MATRIX(matrixName=name) => '<%name%>')%>,<%nStates%>,<%nCandidates%>,rowSelect<%crefarray(crA)%>,colSelect<%crefarray(crA)%>))
     {
         for (int row = 0; row < <%nStates%>; row++)
             for (int col = 0; col < <%nCandidates%>; col++)
@@ -1015,7 +1016,7 @@ case SIMCODE(modelInfo = MODELINFO(vars = vars as SIMVARS(__))) then
           <%(vars.stateVars |> SIMVAR(__) => '<%cref(name)%>=q[<%index%>];') ;separator="\n"%>
       }
       bound_params();
-      <%allEqns(allEquations,whenClauses,removedEquations)%>
+      <%allEqns(allEquations, removedEquations)%>
       // Alias assignments
       <%aliasAssign%>
       <%intAliasAssign%>
@@ -1030,7 +1031,7 @@ case SIMCODE(modelInfo = MODELINFO(vars = vars as SIMVARS(__))) then
   >>
 end makeDerFuncCalculator;
 
-template allEqns(list<SimEqSystem> allEquationsPlusWhen, list<SimWhenClause> whenClauses, list<SimEqSystem> removedEqns)
+template allEqns(list<SimEqSystem> allEquationsPlusWhen, list<SimEqSystem> removedEqns)
 ::=
   let &varDecls = buffer "" /*BUFD*/
   let eqs = (allEquationsPlusWhen |> eq =>
@@ -1039,17 +1040,12 @@ template allEqns(list<SimEqSystem> allEquationsPlusWhen, list<SimWhenClause> whe
   let aliasEqs = (removedEqns |> eq =>
       equation_(eq, contextSimulationDiscrete, &varDecls /*BUFD*/)
     ;separator="\n")
-  let reinit = (whenClauses |> when hasindex i0 =>
-      genreinits(when, &varDecls,i0)
-    ;separator="\n")
   <<
   <%varDecls%>
   // Primary equations
   <%eqs%>
   // Alias equations
   <%aliasEqs%>
-  // Reinits
-  <%reinit%>
   >>
 end allEqns;
 
@@ -1139,76 +1135,6 @@ template functionBoundParameters(list<SimEqSystem> parameterEquations)
   <%divbody%>
   >>
 end functionBoundParameters;
-
-template functionWhenReinitStatement(WhenOperator reinit, Text &varDecls /*BUFP*/)
- "Generates re-init statement for when equation."
-::=
-match reinit
-case REINIT(__) then
-  let &preExp = buffer "" /*BUFD*/
-  let val = daeExp(value, contextSimulationDiscrete,
-                 &preExp /*BUFC*/, &varDecls /*BUFD*/)
-  <<
-  <%preExp%>  <%cref(stateVar)%> = <%val%>;
-  >>
-case TERMINATE(__) then
-  let &preExp = buffer "" /*BUFD*/
-  let msgVar = daeExp(message, contextSimulationDiscrete, &preExp /*BUFC*/, &varDecls /*BUFD*/)
-  <<
-  <%preExp%>  MODELICA_TERMINATE(<%msgVar%>);
-  >>
-case ASSERT(source=SOURCE(info=info)) then
-  assertCommon(condition, message, contextSimulationDiscrete, &varDecls, info)
-end functionWhenReinitStatement;
-
-template genreinits(SimWhenClause whenClauses, Text &varDecls, Integer int)
-" Generates reinit statemeant"
-::=
-  match whenClauses
-    case SIM_WHEN_CLAUSE(__) then
-      let helpIf = (conditions |> e => '(<%cref(e)%> && !_PRE<%cref(e)%> /* edge */)';separator=" || ")
-      let ifthen = functionWhenReinitStatementThen(reinits, &varDecls /*BUFP*/)
-
-      if reinits then
-      <<
-      //Reinit inside whenclause index: <%int%>
-      if (atEvent) {
-         if (<%helpIf%>) {
-         <%ifthen%>
-         }
-      }
-      >>
-end genreinits;
-
-template functionWhenReinitStatementThen(list<WhenOperator> reinits, Text &varDecls /*BUFP*/)
- "Generates re-init statement for when equation."
-::=
-  let body = (reinits |> reinit =>
-    match reinit
-    case REINIT(__) then
-      let &preExp = buffer "" /*BUFD*/
-      let val = daeExp(value, contextSimulationDiscrete,
-                   &preExp /*BUFC*/, &varDecls /*BUFD*/)
-     <<
-      <%preExp%>
-                double <%cref(stateVar)%>_tmp = <%cref(stateVar)%>;
-                <%cref(stateVar)%> = <%val%>;
-                reInit = reInit || (<%cref(stateVar)%>_tmp != <%cref(stateVar)%>);
-                >>
-    case TERMINATE(__) then
-      let &preExp = buffer "" /*BUFD*/
-    let msgVar = daeExp(message, contextSimulationDiscrete, &preExp /*BUFC*/, &varDecls /*BUFD*/)
-    <<
-                <%preExp%>
-                MODELICA_TERMINATE(<%msgVar%>);
-                >>
-  case ASSERT(source=SOURCE(info=info)) then
-    assertCommon(condition, message, contextSimulationDiscrete, &varDecls, info)
-  ;separator="\n")
-  <<
-   <%body%>
-  >>
-end functionWhenReinitStatementThen;
 
 template zeroCrossingsRelationsTpl(list<ZeroCrossing> relations, Text &varDecls /*BUFP*/)
  "Generates code for zero crossings."
@@ -1486,35 +1412,26 @@ template equationWhen(SimEqSystem eq, Context context, Text &varDecls /*BUFP*/)
  "Generates a when equation."
 ::=
 match eq
-case SES_WHEN(left=left, right=right,conditions=conditions,elseWhen = NONE()) then
+case SES_WHEN(whenStmtLst = whenStmtLst,conditions=conditions,elseWhen = NONE()) then
   let helpIf = (conditions |> e => '(<%cref(e)%> && !_PRE<%cref(e)%> /* edge */)';separator=" || ")
-  let &preExp2 = buffer "" /*BUFD*/
-  let exp = daeExp(right, context, &preExp2 /*BUFC*/, &varDecls /*BUFD*/)
+  let body = whenOps(whenStmtLst, varDecls, context)
   <<
   if (atEvent) {
       if (<%helpIf%>) {
-          <%preExp2%>
-          <%cref(left)%> = <%exp%>;
-      } else {
-          <%cref(left)%> = _PRE<%cref(left)%>;
+          <%body%>
       }
   }
   >>
-  case SES_WHEN(left=left, right=right,conditions=conditions,elseWhen = SOME(elseWhenEq)) then
+  case SES_WHEN(whenStmtLst = whenStmtLst,conditions=conditions,elseWhen = SOME(elseWhenEq)) then
   let helpIf = (conditions |> e => '(<%cref(e)%> && !_PRE<%cref(e)%> /* edge */)';separator=" || ")
-  let &preExp2 = buffer "" /*BUFD*/
-  let exp = daeExp(right, context, &preExp2 /*BUFC*/, &varDecls /*BUFD*/)
+  let body = whenOps(whenStmtLst, varDecls, context)
   let elseWhen = equationElseWhen(elseWhenEq,context,varDecls)
   <<
   if (atEvent) {
       if (<%helpIf%>) {
-          <%preExp2%>
-          <%cref(left)%> = <%exp%>;
+          <%body%>
       }
       <%elseWhen%>
-      else {
-         <%cref(left)%> = _PRE<%cref(left)%>;
-      }
   }
   >>
 end equationWhen;
@@ -1523,29 +1440,62 @@ template equationElseWhen(SimEqSystem eq, Context context, Text &varDecls /*BUFP
  "Generates a else when equation."
 ::=
 match eq
-case SES_WHEN(left=left, right=right,conditions=conditions,elseWhen = NONE()) then
+case SES_WHEN(whenStmtLst = whenStmtLst, conditions=conditions, elseWhen = NONE()) then
   let helpIf = (conditions |> e => '(<%cref(e)%> && !_PRE<%cref(e)%> /* edge */)';separator=" || ")
-  let &preExp2 = buffer "" /*BUFD*/
-  let exp = daeExp(right, context, &preExp2 /*BUFC*/, &varDecls /*BUFD*/)
+  let body = whenOps(whenStmtLst, varDecls, context)
   <<
   else if (<%helpIf%>) {
-    <%preExp2%>
-    <%cref(left)%> = <%exp%>;
+    <%body%>
   }
   >>
-case SES_WHEN(left=left, right=right,conditions=conditions,elseWhen = SOME(elseWhenEq)) then
+case SES_WHEN(whenStmtLst = whenStmtLst, conditions=conditions, elseWhen = SOME(elseWhenEq)) then
   let helpIf = (conditions |> e => '(<%cref(e)%> && !_PRE<%cref(e)%> /* edge */)';separator=" || ")
-  let &preExp2 = buffer "" /*BUFD*/
-  let exp = daeExp(right, context, &preExp2 /*BUFC*/, &varDecls /*BUFD*/)
+  let body = whenOps(whenStmtLst, varDecls, context)
   let elseWhen = equationElseWhen(elseWhenEq,context,varDecls)
   <<
   else if (<%helpIf%>) {
-    <%preExp2%>
-    <%cref(left)%> = <%exp%>;
+    <%body%>
   }
   <%elseWhen%>
   >>
 end equationElseWhen;
+
+template whenOps(list<WhenOperator> whenOps, Text &varDecls /*BUFP*/, Context context)
+ "Generates re-init statement for when equation."
+::=
+  let body = (whenOps |> whenOp =>
+    match whenOp
+    case ASSIGN(left = lhs as DAE.CREF(componentRef = cr)) then
+    let &preExp = buffer "" /*BUFD*/
+    let exp = daeExp(right, context, &preExp /*BUFC*/, &varDecls /*BUFD*/)
+    <<
+    <%preExp%>
+    <%cref(cr)%> = <%exp%>;
+    >>
+    case REINIT(__) then
+    let &preExp = buffer "" /*BUFD*/
+    let val = daeExp(value, contextSimulationDiscrete,
+                   &preExp /*BUFC*/, &varDecls /*BUFD*/)
+    <<
+    <%preExp%>
+    double <%cref(stateVar)%>_tmp = <%cref(stateVar)%>;
+    <%cref(stateVar)%> = <%val%>;
+    reInit = reInit || (<%cref(stateVar)%>_tmp != <%cref(stateVar)%>);
+    >>
+    case TERMINATE(__) then
+    let &preExp = buffer "" /*BUFD*/
+    let msgVar = daeExp(message, contextSimulationDiscrete, &preExp /*BUFC*/, &varDecls /*BUFD*/)
+    <<
+    <%preExp%>
+    MODELICA_TERMINATE(<%msgVar%>);
+    >>
+  case ASSERT(source=SOURCE(info=info)) then
+    assertCommon(condition, message, contextSimulationDiscrete, &varDecls, info)
+  ;separator="\n")
+  <<
+   <%body%>
+  >>
+end whenOps;
 
 template allocArray(SimVar var, Text& prefix) ::=
   match var
@@ -1628,7 +1578,7 @@ template makeJacobianFunc(String matrixName, list<JacobianColumn> cols, list<Sim
   if seedVars then
     let varDecls = (seedVars |> var as SIMVAR(__) hasindex i0 =>
       'double &_<%jacobianVarsSeedDefine(name)%>$pDER<%matrixName%>$P<%jacobianVarsSeedDefine(name)%> = _S_[<%i0%>];';separator="\n")
-    let eqs = (cols |> (eqnSys,colVars,_) => '<%jacobianColumnEqn(eqnSys,colVars,matrixName,listLength(sparsePattern),listLength(seedVars))%>';separator="\n")
+    let eqs = (cols |> JAC_COLUMN(columnEqns=eqnSys,columnVars=colVars) => '<%jacobianColumnEqn(eqnSys,colVars,matrixName,listLength(sparsePattern),listLength(seedVars))%>';separator="\n")
     <<
     void <%modelName%>::calc_Jacobian_<%matrixName%>()
     {
@@ -1653,7 +1603,7 @@ end jacobianVarsSeedDefine;
 
 template makeJacobianFuncs(list<JacobianMatrix> jacobians, String modelName)
 ::=
-  let jacDecls = (jacobians |> (jacColumn,seedVars,name,(_,sparsePattern),_,_,_) =>
+  let jacDecls = (jacobians |> JAC_MATRIX(columns=jacColumn, seedVars=seedVars, matrixName=name, sparsityT=sparsePattern) =>
     '<%makeJacobianFunc(name,jacColumn,seedVars,sparsePattern,modelName)%>'
    ;separator="\n")
   <<
@@ -1685,7 +1635,7 @@ end declareJacobians2;
 
 template declareJacobians(list<JacobianMatrix> jacobians)
 ::=
-  let jacDecls = (jacobians |> (_,seedVars,name,_,_,_,_) =>
+  let jacDecls = (jacobians |> JAC_MATRIX(seedVars=seedVars, matrixName=name) =>
     '<%declareJacobians2(name,seedVars)%>'
    ;separator="\n")
   <<
@@ -2179,7 +2129,7 @@ template extReturnType(SimExtArg extArg)
   match extArg
   case ex as SIMEXTARG(__)    then extType(type_,true /*Treat this as an input (pass by value)*/,false)
   case SIMNOEXTARG(__)  then "void"
-  case SIMEXTARGEXP(__) then error(sourceInfo(), 'Expression types are unsupported as return arguments <%printExpStr(exp)%>')
+  case SIMEXTARGEXP(__) then error(sourceInfo(), 'Expression types are unsupported as return arguments <%ExpressionDumpTpl.dumpExp(exp,"\"")%>')
   else error(sourceInfo(), "Unsupported return argument")
 end extReturnType;
 
@@ -2315,7 +2265,7 @@ case FUNCTION(__) then
   let addRootsInputs = (functionArguments |> var => addRoots(var) ;separator="\n")
   let addRootsOutputs = (outVars |> var => addRoots(var) ;separator="\n")
   let funArgs = (functionArguments |> var => functionArg(var, &varInits) ;separator="\n")
-  let bodyPart = (body |> stmt  => funStatement(stmt, &varDecls /*BUFD*/) ;separator="\n")
+  let bodyPart = funStatement(body, &varDecls)
   let &outVarInits = buffer ""
   let &outVarCopy = buffer ""
   let &outVarAssign = buffer ""
@@ -3065,16 +3015,10 @@ template tempSizeVarName(ComponentRef c, DAE.Exp indices)
   else "tempSizeVarName:UNHANDLED_EXPRESSION"
 end tempSizeVarName;
 
-template funStatement(Statement stmt, Text &varDecls /*BUFP*/)
+template funStatement(list<DAE.Statement> statementLst, Text &varDecls /*BUFP*/)
  "Generates function statements."
 ::=
-  match stmt
-  case ALGORITHM(__) then
-    (statementLst |> stmt =>
-      algStatement(stmt, contextFunction, &varDecls /*BUFD*/)
-    ;separator="\n")
-  else
-    "NOT IMPLEMENTED FUN STATEMENT"
+  statementLst |> stmt => algStatement(stmt, contextFunction, &varDecls /*BUFD*/) ; separator="\n"
 end funStatement;
 
 template statementInfoString(DAE.Statement stmt)
@@ -3685,7 +3629,7 @@ template daeExp(Exp exp, Context context, Text &preExp /*BUFP*/, Text &varDecls 
   case e as BOX(__)             then daeExpBox(e, context, &preExp /*BUFC*/, &varDecls /*BUFD*/)
   case e as UNBOX(__)           then daeExpUnbox(e, context, &preExp /*BUFC*/, &varDecls /*BUFD*/)
   case e as SHARED_LITERAL(__)  then daeExpSharedLiteral(e, context, &preExp /*BUFC*/, &varDecls /*BUFD*/)
-  else error(sourceInfo(), 'Unknown expression: <%ExpressionDump.printExpStr(exp)%>')
+  else error(sourceInfo(), 'Unknown expression: <%ExpressionDumpTpl.dumpExp(exp,"\"")%>')
 end daeExp;
 
 
@@ -4182,17 +4126,17 @@ template daeExpCall(Exp call, Context context, Text &preExp /*BUFP*/,
   case CALL(path=IDENT(name="der"), expLst={arg as CREF(__)}) then
     '_DER<%cref(arg.componentRef)%>'
   case CALL(path=IDENT(name="der"), expLst={exp}) then
-    error(sourceInfo(), 'Code generation does not support der(<%printExpStr(exp)%>)')
+    error(sourceInfo(), 'Code generation does not support der(<%ExpressionDumpTpl.dumpExp(exp,"\"")%>)')
   case CALL(path=IDENT(name="pre"), expLst={arg}) then
     daeExpCallPre(arg, context, preExp, varDecls)
   case CALL(path=IDENT(name="edge"), expLst={arg as CREF(__)}) then
     '(<%cref(arg.componentRef)%> && !_PRE<%cref(arg.componentRef)%>)'
   case CALL(path=IDENT(name="edge"), expLst={exp}) then
-    error(sourceInfo(), 'Code generation does not support edge(<%printExpStr(exp)%>)')
+    error(sourceInfo(), 'Code generation does not support edge(<%ExpressionDumpTpl.dumpExp(exp,"\"")%>)')
   case CALL(path=IDENT(name="change"), expLst={arg as CREF(__)}) then
     '(<%cref(arg.componentRef)%> != _PRE<%cref(arg.componentRef)%>)'
   case CALL(path=IDENT(name="change"), expLst={exp}) then
-    error(sourceInfo(), 'Code generation does not support change(<%printExpStr(exp)%>)')
+    error(sourceInfo(), 'Code generation does not support change(<%ExpressionDumpTpl.dumpExp(exp,"\"")%>)')
 
   case CALL(path=IDENT(name="print"), expLst={e1}) then
     let var1 = daeExp(e1, context, &preExp, &varDecls)
@@ -4680,7 +4624,7 @@ template daeExpCallPre(Exp exp, Context context, Text &preExp /*BUFP*/,
     let cref = cref(cr.componentRef)
     '*(&_PRE<%cref%> + <%offset%>)'
   else
-    error(sourceInfo(), 'Code generation does not support pre(<%printExpStr(exp)%>)')
+    error(sourceInfo(), 'Code generation does not support pre(<%ExpressionDumpTpl.dumpExp(exp,"\"")%>)')
 end daeExpCallPre;
 
 template daeExpSize(Exp exp, Context context, Text &preExp /*BUFP*/,
@@ -4817,7 +4761,7 @@ template daeExpReduction(Exp exp, Context context, Text &preExp /*BUFP*/,
   }<%\n%>
   >>
   resTmp
-  else error(sourceInfo(), 'Code generation does not support multiple iterators: <%printExpStr(exp)%>')
+  else error(sourceInfo(), 'Code generation does not support multiple iterators: <%ExpressionDumpTpl.dumpExp(exp,"\"")%>')
 end daeExpReduction;
 
 template daeExpMatch(Exp exp, Context context, Text &preExp /*BUFP*/, Text &varDecls /*BUFP*/)
@@ -4862,7 +4806,7 @@ case exp as MATCHEXPRESSION(__) then
 
       '<%prefix%>_in<%switchIndex%>'
     case MATCH(switch=SOME(_)) then
-      error(sourceInfo(), 'Unknown switch: <%printExpStr(exp)%>')
+      error(sourceInfo(), 'Unknown switch: <%ExpressionDumpTpl.dumpExp(exp,"\"")%>')
     else tempDecl('int', &varDeclsInner)
   let done = tempDecl('int', &varDeclsInner)
   let onPatternFail = match exp.matchType case MATCHCONTINUE(__) then "MMC_THROW()" case MATCH(__) then "break"
@@ -5365,7 +5309,7 @@ template expTypeFromExpFlag(Exp exp, Integer flag)
   case BOX(__)           then match flag case 1 then "metatype" else "modelica_metatype"
   case c as UNBOX(__)    then expTypeFlag(c.ty, flag)
   case c as SHARED_LITERAL(__) then expTypeFromExpFlag(c.exp, flag)
-  else error(sourceInfo(), 'expTypeFromExpFlag:<%printExpStr(exp)%>')
+  else error(sourceInfo(), 'expTypeFromExpFlag:<%ExpressionDumpTpl.dumpExp(exp,"\"")%>')
 end expTypeFromExpFlag;
 
 
@@ -5598,7 +5542,7 @@ template literalExpConst(Exp lit, Integer index) "These should all be declared s
     static const MMC_DEFSTRUCTLIT(<%tmp%>,<%intAdd(1,listLength(args))%>,<%newIndex%>) {&<%underscorePath(path)%>__desc,<%args |> exp => literalExpConstBoxedVal(exp); separator=","%>}};
     #define <%name%> MMC_REFSTRUCTLIT(<%tmp%>)
     >>
-  else error(sourceInfo(), 'literalExpConst failed: <%printExpStr(lit)%>')
+  else error(sourceInfo(), 'literalExpConst failed: <%ExpressionDumpTpl.dumpExp(lit,"\"")%>')
 end literalExpConst;
 
 template literalExpConstBoxedVal(Exp lit)
@@ -5616,7 +5560,7 @@ template literalExpConstBoxedVal(Exp lit)
     >>
   case BOX(__) then literalExpConstBoxedVal(exp)
   case lit as SHARED_LITERAL(__) then '_OMC_LIT<%lit.index%>'
-  else error(sourceInfo(), 'literalExpConstBoxedVal failed: <%printExpStr(lit)%>')
+  else error(sourceInfo(), 'literalExpConstBoxedVal failed: <%ExpressionDumpTpl.dumpExp(lit,"\"")%>')
 end literalExpConstBoxedVal;
 
 template error(builtin.SourceInfo srcInfo, String errMessage)

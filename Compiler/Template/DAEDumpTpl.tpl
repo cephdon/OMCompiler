@@ -27,11 +27,12 @@ template dumpComp(DAEDump.compWithSplitElements fixedDae)
   match fixedDae case COMP_WITH_SPLIT(__) then
     let cmt_str = dumpCommentOpt(comment)
     let ann_str = dumpClassAnnotation(comment)
+    let name_rep = if (Flags.getConfigBool(Flags.MODELICA_OUTPUT)) then System.stringReplace(name, ".","__") else name
     <<
-    class <%name%><%cmt_str%>
+    class <%name_rep%><%cmt_str%>
     <%dumpCompStream(spltElems)%>
     <%if ann_str then "  "%><%ann_str%>
-    end <%name%>;<%\n%>
+    end <%name_rep%>;<%\n%>
     >>
 end dumpComp;
 
@@ -44,8 +45,10 @@ template dumpCompStream(DAEDump.splitElements elems)
       let ial_str = dumpInitialAlgorithmSection(ia)
       let eq_str =  dumpEquationSection(e)
       let al_str = dumpAlgorithmSection(a)
+      let sm_str = (sm |> flatSM => dumpStateMachineSection(flatSM) ;separator="\n")
       <<
       <%var_str%>
+      <%sm_str%>
       <%ieq_str%>
       <%ial_str%>
       <%eq_str%>
@@ -311,8 +314,8 @@ template dumpType(Type ty, Text &attributes)
     case T_METALIST(__) then 'list<<%dumpType(ty, attributes)%>>'
     case T_METAARRAY(__) then 'array<<%dumpType(ty, attributes)%>>'
     case T_METAPOLYMORPHIC(__) then 'polymorphic<<%name%>>'
-    case T_METAUNIONTYPE(source = {p}) then AbsynDumpTpl.dumpPathNoQual(p)
-    case T_METARECORD(source = {p}) then AbsynDumpTpl.dumpPathNoQual(p)
+    case T_METAUNIONTYPE(__) then AbsynDumpTpl.dumpPathNoQual(path)
+    case T_METARECORD(__) then AbsynDumpTpl.dumpPathNoQual(path)
     case T_METABOXED(__) then '#<%dumpType(ty, attributes)%>'
     case T_METAOPTION(ty = DAE.T_UNKNOWN(__)) then 'Option<Any>'
     case T_METAOPTION(__) then 'Option<<%dumpType(ty, &attributes)%>>'
@@ -347,7 +350,7 @@ template dumpFunctionType(Type ty)
 match ty
   case T_FUNCTION(__) then
     let args_str = (funcArg |> arg => dumpFuncArg(arg) ;separator=", ")
-    let src_str = (source |> src => AbsynDumpTpl.dumpPath(src) ;separator=", ")
+    let src_str = AbsynDumpTpl.dumpPath(path)
     let &attr = buffer ""
     let res_str = dumpType(funcResultType, &attr)
     '<%src_str%><function>(<%args_str%>) => <%res_str%>'
@@ -524,6 +527,11 @@ template dumpCref(ComponentRef c)
 ::=
 match c
   case CREF_QUAL(__) then
+    if (Flags.getConfigBool(Flags.MODELICA_OUTPUT)) then
+    <<
+    <%ident%><%dumpSubscripts(subscriptLst)%>__<%dumpCref(componentRef)%>
+    >>
+    else
     <<
     <%ident%><%dumpSubscripts(subscriptLst)%>.<%dumpCref(componentRef)%>
     >>
@@ -548,6 +556,10 @@ end dumpTypeDimensions;
 template dumpSubscripts(list<Subscript> subscriptLst)
 ::=
   if subscriptLst then
+    if (Flags.getConfigBool(Flags.MODELICA_OUTPUT)) then
+    let sub_str = (subscriptLst |> s => dumpSubscript(s) ;separator="_")
+    '_<%sub_str%>'
+    else
     let sub_str = (subscriptLst |> s => dumpSubscript(s) ;separator=",")
     '[<%sub_str%>]'
 end dumpSubscripts;
@@ -597,7 +609,9 @@ match lst
   case WHEN_EQUATION(__) then dumpWhenEquation(lst)
   case IF_EQUATION(__) then dumpIfEquation(condition1, equations2, equations3, source)
   case ASSERT(__) then dumpAssert(condition, message, level, source)
+  case INITIAL_ASSERT(__) then dumpAssert(condition, message, level, source)
   case TERMINATE(__) then dumpTerminate(message, source)
+  case INITIAL_TERMINATE(__) then dumpTerminate(message, source)
   case REINIT(__) then dumpReinit(componentRef, exp, source)
   case NORETCALL(__) then dumpNoRetCall(exp, source)
   case INITIALDEFINE(__) then dumpDefine(componentRef, exp, source)
@@ -942,6 +956,30 @@ match stmt
     reinit(<%exp_str%>, <%new_exp_str%>)<%src_str%>;
     >>
 end dumpReinitStatement;
+
+/*****************************************************************************
+ *     SECTION: STATE MACHINES                                           *
+ *****************************************************************************/
+template dumpStateMachineSection(DAEDump.compWithSplitElements fixedDae)
+::=
+match fixedDae case COMP_WITH_SPLIT(__) then
+  /* Whether we have a DAE.FLAT_SM (stateMachine) or DAE.STATE_SM (state) is encoded in the comment.
+     That is a bit hackish */
+  let kind = match comment case SOME(co) then dumpStateMachineComment(co)
+  <<
+  <%kind%> <%name%>
+    <%dumpCompStream(spltElems)%>
+  end <%name%>;<%\n%>
+  >>
+end dumpStateMachineSection;
+
+template dumpStateMachineComment(SCode.Comment cmt)
+::=
+match cmt case COMMENT(__) then
+    let kind_str = match comment case SOME(co) then co
+    '<%kind_str%>'
+end dumpStateMachineComment;
+
 
 /*****************************************************************************
  *     SECTION: EXPRESSIONS                                                  *

@@ -2,6 +2,7 @@
 #define CONFIGURE_COMMANDLINE "Configured @date@ using arguments: '@CONFIGURE_ARGS@'"
 #define LDFLAGS_RT "@RT_LDFLAGS_GENERATED_CODE@"
 #define LDFLAGS_RT_SIM "@RT_LDFLAGS_GENERATED_CODE_SIM@"
+#define LDFLAGS_RT_SOURCE_FMU "@RT_LDFLAGS_GENERATED_CODE_SOURCE_FMU@"
 #define CONFIG_EXE_EXT ""
 #define CONFIG_DLL_EXT "@SHREXT@"
 #define CONFIG_PLATFORM "Unix"
@@ -10,7 +11,7 @@
 
 #define DEFAULT_CC "@RUNTIMECC@"
 #define DEFAULT_CXX "@CXX@"
-#define DEFAULT_OMPCC "@OMPCC@"
+#define DEFAULT_OMPCC "@CC@ @OMPCFLAGS@"
 #define DEFAULT_MAKE "@MAKE@"
 #define DEFAULT_TRIPLE "@host_short@"
 
@@ -26,11 +27,7 @@
 #endif
 
 #define DEFAULT_CFLAGS "@RUNTIMECFLAGS@ ${MODELICAUSERCFLAGS}"
-#ifdef __APPLE_CC__
-  #define CONFIG_OS "OSX"
-#else
-  #define CONFIG_OS "linux"
-#endif
+#define CONFIG_OS "@CONFIG_OS@"
 
 #define CONFIG_LPSOLVEINC "@LPSOLVEINC@"
 @NO_LPLIB@
@@ -40,7 +37,6 @@
 #define CONFIG_DEFAULT_OPENMODELICAHOME "@prefix@"
 #define CONFIG_PATH_DELIMITER "/"
 #define CONFIG_GROUP_DELIMITER ":"
-#define CONFIG_USER_IS_ROOT (geteuid() == 0 ? 1 : 0)
 #define CONFIG_CORBALIBS "@CORBALIBS@"
 #define CONFIG_LPSOLVE55 "@LIBLPSOLVE55@"
 #define CONFIG_REVISION "@SOURCE_REVISION@"
@@ -48,10 +44,11 @@
 
 /* Skip compiling against some stuff for the JavaScript runtime */
 #if !defined(OMC_EMCC) && !defined(OMC_MINIMAL_RUNTIME)
-@WITH_SUNDIALS@
-@WITH_IPOPT@
+#define WITH_SUNDIALS
+#define WITH_IPOPT
 @WITH_UMFPACK@
 @WITH_HWLOC@
+@WITH_UUID@
 #endif
 #if !defined(OMC_MINIMAL_RUNTIME)
 #define WITH_DASSL
@@ -77,3 +74,4 @@
 #define USE_PATOH @USE_PATOH@
 #define USE_METIS @USE_METIS@
 #endif
+@HAVE_GETTEXT@

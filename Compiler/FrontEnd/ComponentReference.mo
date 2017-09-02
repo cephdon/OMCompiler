@@ -34,7 +34,6 @@ encapsulated package ComponentReference
   package:     ComponentReference
   description: All stuff for ComponentRef datatypes
 
-  RCS: $Id$
 
   This file contains the module ComponentReference,
   which contains functions for ComponentRef."
@@ -42,6 +41,7 @@ encapsulated package ComponentReference
 // public imports
 public import Absyn;
 public import DAE;
+public import File;
 
 // protected imports
 protected import ClassInf;
@@ -53,10 +53,12 @@ protected import Expression;
 protected import ExpressionDump;
 protected import Flags;
 protected import List;
+protected import MetaModelica.Dangerous;
 protected import Print;
 protected import System;
 protected import Types;
 protected import Util;
+
 
 // do not make this public. instead use the function below.
 protected constant DAE.ComponentRef dummyCref = DAE.CREF_IDENT("dummy", DAE.T_UNKNOWN_DEFAULT, {});
@@ -141,7 +143,7 @@ protected function hashSubscript "help function"
   input DAE.Subscript sub;
   output Integer hash;
 algorithm
- hash := matchcontinue(sub)
+ hash := match(sub)
    local
      DAE.Exp exp;
      Integer i;
@@ -151,7 +153,7 @@ algorithm
    case(DAE.SLICE(exp)) then Expression.hashExp(exp);
    case(DAE.INDEX(exp)) then Expression.hashExp(exp);
    case(DAE.WHOLE_NONEXP(exp)) then Expression.hashExp(exp);
- end matchcontinue;
+ end match;
 end hashSubscript;
 
 public function createEmptyCrefMemory
@@ -388,126 +390,50 @@ algorithm
 end unelabSubscripts;
 
 public function toExpCref
-"Translate an Absyn.ComponentRef into a ComponentRef.
-  Note: Only support for indexed subscripts of integers"
-  input Absyn.ComponentRef inComponentRef;
-  output DAE.ComponentRef outComponentRef;
+  "Translates an Absyn cref to an untyped DAE cref."
+  input Absyn.ComponentRef absynCref;
+  output DAE.ComponentRef daeCref;
 algorithm
-  outComponentRef := match (inComponentRef)
+  daeCref := match absynCref
     local
-      list<DAE.Subscript> subs_1;
-      DAE.Ident id;
-      list<Absyn.Subscript> subs;
-      DAE.ComponentRef cr_1;
-      Absyn.ComponentRef cr;
 
-    // ids
-    case (Absyn.CREF_IDENT(name = id,subscripts = subs))
-      equation
-        subs_1 = toExpCrefSubs(subs);
-      then
-        makeCrefIdent(id,DAE.T_UNKNOWN_DEFAULT,subs_1);
+    case Absyn.CREF_IDENT()
+      then makeCrefIdent(absynCref.name, DAE.T_UNKNOWN_DEFAULT,
+        toExpCrefSubs(absynCref.subscripts));
 
-    // qualified
-    case (Absyn.CREF_QUAL(name = id,subscripts = subs,componentRef = cr))
-      equation
-        cr_1 = toExpCref(cr);
-        subs_1 = toExpCrefSubs(subs);
-      then
-        makeCrefQual(id,DAE.T_UNKNOWN_DEFAULT,subs_1,cr_1);
+    case Absyn.CREF_QUAL()
+      then makeCrefQual(absynCref.name, DAE.T_UNKNOWN_DEFAULT,
+        toExpCrefSubs(absynCref.subscripts), toExpCref(absynCref.componentRef));
 
-    // fully qualified
-    case (Absyn.CREF_FULLYQUALIFIED(componentRef = cr))
-      equation
-        cr_1 = toExpCref(cr);
-      then
-        cr_1; // There is no fullyqualified cref, translate to qualified cref
+    case Absyn.CREF_FULLYQUALIFIED()
+      then toExpCref(absynCref.componentRef);
+
+    case Absyn.WILD() then DAE.WILD();
+    case Absyn.ALLWILD() then DAE.WILD();
   end match;
 end toExpCref;
 
 protected function toExpCrefSubs
-"Helper function to toExpCref."
-  input list<Absyn.Subscript> inAbsynSubscriptLst;
-  output list<DAE.Subscript> outSubscriptLst;
+  "Translates a list of Absyn subscripts to a list of untyped DAE subscripts."
+  input list<Absyn.Subscript> absynSubs;
+  output list<DAE.Subscript> daeSubs;
+protected
+  Integer i;
 algorithm
-  outSubscriptLst := matchcontinue (inAbsynSubscriptLst)
-    local
-      list<DAE.Subscript> xs_1;
-      Integer i;
-      list<Absyn.Subscript> xs;
-      DAE.ComponentRef cr_1;
-      Absyn.ComponentRef cr;
-      DAE.Ident s,str;
-      Absyn.Subscript e;
-      DAE.Exp exp;
-
-    // empty list
-    case ({}) then {};
-
-    // integer subscripts become indexes of integers
-    case ((Absyn.SUBSCRIPT(subscript = Absyn.INTEGER(value = i)) :: xs))
-      equation
-        xs_1 = toExpCrefSubs(xs);
-      then
-        (DAE.INDEX(DAE.ICONST(i)) :: xs_1);
-
-    // cref subscripts become indexes of crefs
-    // => Assumes index is INTEGER. FIXME! TODO!: what about if index is an array?
-    case ((Absyn.SUBSCRIPT(subscript = Absyn.CREF(componentRef = cr)) :: xs))
-      equation
-        cr_1 = toExpCref(cr);
-        xs_1 = toExpCrefSubs(xs);
-        exp = Expression.makeCrefExp(cr_1,DAE.T_INTEGER_DEFAULT);
-      then
-        (DAE.INDEX(exp) :: xs_1);
-
-    // when there is an error, move to next TODO! FIXME! report an error!
-    case ((e :: xs))
-      equation
-        s = Dump.printSubscriptsStr({e});
-        _ = stringAppendList({"#Error converting subscript: ",s," to Expression.\n"});
-        //print("#Error converting subscript: " + s + " to Expression.\n");
-        //Print.printErrorBuf(str);
-        xs_1 = toExpCrefSubs(xs);
-      then
-        xs_1;
-  end matchcontinue;
+  daeSubs := list(
+    match sub
+      case Absyn.SUBSCRIPT() then DAE.INDEX(Expression.fromAbsynExp(sub.subscript));
+      case Absyn.NOSUB() then DAE.WHOLEDIM();
+    end match
+  for sub in absynSubs);
 end toExpCrefSubs;
-
-
-public function crefToStr
-"This function converts a ComponentRef to a String.
-  It is a tail recursive implementation, because of that it
-  neads inPreString. Use inNameSeperator to define the
-  Separator inbetween and between the namespace names and the name"
-  input String inPreString;
-  input DAE.ComponentRef inComponentRef "The ComponentReference";
-  input String inNameSeparator "The Separator between the Names";
-  output String outString;
-algorithm
-  outString:=
-  match (inPreString,inComponentRef,inNameSeparator)
-    local
-      DAE.Ident s,ns,ss;
-      DAE.ComponentRef n;
-    case (_,DAE.CREF_IDENT(ident = s),_)
-      equation
-        ss = stringAppend(inPreString, s);
-      then ss;
-    case (_,DAE.CREF_QUAL(ident = s,componentRef = n),_)
-      equation
-        ns = stringAppendList({inPreString, s, inNameSeparator});
-        ss = crefToStr(ns,n,inNameSeparator);
-      then ss;
-  end match;
-end crefToStr;
 
 public function crefStr
 "This function simply converts a ComponentRef to a String."
   input DAE.ComponentRef inComponentRef;
   output String outString;
 algorithm
-  outString:= crefToStr("",inComponentRef,".");
+  outString := stringDelimitList(toStringList(inComponentRef), if Flags.getConfigBool(Flags.MODELICA_OUTPUT) then "__" else ".");
 end crefStr;
 
 public function crefModelicaStr
@@ -515,7 +441,7 @@ public function crefModelicaStr
   input DAE.ComponentRef inComponentRef;
   output String outString;
 algorithm
-  outString:= crefToStr("",inComponentRef,"_");
+  outString := stringDelimitList(toStringList(inComponentRef), "_");
 end crefModelicaStr;
 
 public function printComponentRefOptStr
@@ -752,13 +678,144 @@ algorithm
   outEqual := stringEq(id1, id2);
 end crefFirstIdentEqual;
 
+protected
+
+type CompareWithSubsType = enumeration(WithoutSubscripts, WithGenericSubscript, WithGenericSubscriptNotAlphabetic, WithIntSubscript);
+
+package CompareWithGenericSubscript "Package that can be modified to do different kinds of comparisons"
+  constant CompareWithSubsType compareSubscript=CompareWithSubsType.WithGenericSubscript;
+  function compare
+    input DAE.ComponentRef cr1, cr2;
+    output Integer res;
+  algorithm
+    res := match (cr1, cr2)
+      case (DAE.CREF_IDENT(),DAE.CREF_IDENT())
+        algorithm
+          res := stringCompare(cr1.ident, cr2.ident);
+          if compareSubscript==CompareWithSubsType.WithoutSubscripts or res <> 0 then
+            return;
+          end if;
+        then compareSubs(cr1.subscriptLst, cr2.subscriptLst);
+      case (DAE.CREF_QUAL(),DAE.CREF_QUAL())
+        algorithm
+          res := stringCompare(cr1.ident, cr2.ident);
+          if res <> 0 then
+            return;
+          end if;
+          if compareSubscript<>CompareWithSubsType.WithoutSubscripts then
+            res := compareSubs(cr1.subscriptLst, cr2.subscriptLst);
+            if res <> 0 then
+              return;
+            end if;
+          end if;
+        then compare(cr1.componentRef, cr2.componentRef);
+      case (DAE.CREF_QUAL(),DAE.CREF_IDENT())
+        algorithm
+          res := stringCompare(cr1.ident, cr2.ident);
+          if res <> 0 then
+            return;
+          end if;
+          if compareSubscript<>CompareWithSubsType.WithoutSubscripts then
+            res := compareSubs(cr1.subscriptLst, cr2.subscriptLst);
+          end if;
+          if res <> 0 then
+            return;
+          end if;
+        then 1;
+      case (DAE.CREF_IDENT(),DAE.CREF_QUAL())
+        algorithm
+          res := stringCompare(cr1.ident, cr2.ident);
+          if res <> 0 then
+            return;
+          end if;
+          if compareSubscript<>CompareWithSubsType.WithoutSubscripts then
+            res := compareSubs(cr1.subscriptLst, cr2.subscriptLst);
+          end if;
+          if res <> 0 then
+            return;
+          end if;
+        then -1;
+    end match;
+  end compare;
+  function compareSubs
+    input list<DAE.Subscript> ss1, ss2;
+    output Integer res=0;
+  protected
+    list<DAE.Subscript> ss=ss2;
+    DAE.Subscript s2;
+    Integer i1, i2;
+    DAE.Exp e1, e2;
+  algorithm
+    for s1 in ss1 loop
+      if listEmpty(ss) then
+        res := -1;
+        return;
+      end if;
+      s2::ss := ss;
+      if compareSubscript == CompareWithSubsType.WithGenericSubscript then
+        e1 := Expression.getSubscriptExp(s1);
+        e2 := Expression.getSubscriptExp(s2);
+        res := stringCompare(ExpressionDump.printExpStr(e1),ExpressionDump.printExpStr(e2));
+      elseif compareSubscript == CompareWithSubsType.WithGenericSubscriptNotAlphabetic then
+        e1 := Expression.getSubscriptExp(s1);
+        e2 := Expression.getSubscriptExp(s2);
+        res := Expression.compare(e1, e2);
+      else
+        i1 := Expression.subscriptInt(s1);
+        i2 := Expression.subscriptInt(s2);
+        res := if i1 < i2 then -1 elseif i1 > i2 then 1 else 0;
+      end if;
+      if res <> 0 then
+        return;
+      end if;
+    end for;
+    if not listEmpty(ss) then
+      res := 1;
+    end if;
+  end compareSubs;
+end CompareWithGenericSubscript;
+
+package CompareWithGenericSubscriptNotAlphabetic
+  extends CompareWithGenericSubscript(compareSubscript=CompareWithSubsType.WithGenericSubscriptNotAlphabetic);
+end CompareWithGenericSubscriptNotAlphabetic;
+package CompareWithoutSubscripts
+  extends CompareWithGenericSubscript(compareSubscript=CompareWithSubsType.WithoutSubscripts);
+end CompareWithoutSubscripts;
+package CompareWithIntSubscript "More efficient than CompareWithGenericSubscript, assuming all subscripts are integers"
+  extends CompareWithGenericSubscript(compareSubscript=CompareWithSubsType.WithIntSubscript);
+end CompareWithIntSubscript;
+
 public function crefSortFunc "A sorting function (greatherThan) for crefs"
   input DAE.ComponentRef cr1;
   input DAE.ComponentRef cr2;
   output Boolean greaterThan;
 algorithm
-  greaterThan := stringCompare(printComponentRefStr(cr1),printComponentRefStr(cr2)) > 0;
+  greaterThan := CompareWithGenericSubscript.compare(cr1,cr2) > 0;
 end crefSortFunc;
+
+public function crefCompareGeneric "A sorting function for crefs"
+  input DAE.ComponentRef cr1;
+  input DAE.ComponentRef cr2;
+  output Integer comp;
+algorithm
+  comp := CompareWithGenericSubscript.compare(cr1,cr2);
+end crefCompareGeneric;
+
+public function crefCompareIntSubscript "A sorting function for crefs"
+  input DAE.ComponentRef cr1;
+  input DAE.ComponentRef cr2;
+  output Integer comp;
+algorithm
+  comp := CompareWithIntSubscript.compare(cr1,cr2);
+end crefCompareIntSubscript;
+
+public function crefCompareGenericNotAlphabetic "A sorting function for crefs"
+  input DAE.ComponentRef cr1;
+  input DAE.ComponentRef cr2;
+  output Integer comp;
+algorithm
+  comp := CompareWithGenericSubscriptNotAlphabetic.compare(cr1,cr2);
+end crefCompareGenericNotAlphabetic;
 
 public function crefLexicalGreaterSubsAtEnd
 "mahge:
@@ -770,10 +827,10 @@ public function crefLexicalGreaterSubsAtEnd
   input DAE.ComponentRef cr2;
   output Boolean isGreater;
 algorithm
-  isGreater := crefLexicalCompareubsAtEnd(cr1,cr2) > 0;
+  isGreater := crefLexicalCompareSubsAtEnd(cr1,cr2) > 0;
 end crefLexicalGreaterSubsAtEnd;
 
-public function crefLexicalCompareubsAtEnd
+public function crefLexicalCompareSubsAtEnd
 "mahge:
   Compares two crefs lexically. Subscripts are treated as if they are
   they are at the end of the whole component reference.
@@ -781,77 +838,40 @@ public function crefLexicalCompareubsAtEnd
   returns value is same as C strcmp. 0 if equal, 1 if first is greater, -1 otherwise"
   input DAE.ComponentRef cr1;
   input DAE.ComponentRef cr2;
-  output Integer comapred;
+  output Integer res;
 protected
-  String cr1_nosub_str;
-  String cr2_nosub_str;
   list<Integer> subs1;
   list<Integer> subs2;
-  Integer idents_comapred;
 algorithm
-  cr1_nosub_str := crefStr(cr1);
-  cr2_nosub_str := crefStr(cr2);
+  res := CompareWithoutSubscripts.compare(cr1, cr2);
+  if res <> 0 then
+    return;
+  end if;
   subs1 := Expression.subscriptsInt(crefSubs(cr1));
   subs2 := Expression.subscriptsInt(crefSubs(cr2));
-  idents_comapred := stringCompare(cr1_nosub_str, cr2_nosub_str);
-  comapred := crefLexicalCompareubsAtEnd2(idents_comapred, subs1, subs2);
-end crefLexicalCompareubsAtEnd;
+  res := crefLexicalCompareSubsAtEnd2(subs1, subs2);
+end crefLexicalCompareSubsAtEnd;
 
-protected function crefLexicalCompareubsAtEnd2
+protected function crefLexicalCompareSubsAtEnd2
 "mahge:
   Helper function for crefLexicalCompareubsAtEnd
   compares subs. However only if the crefs with out subs are equal.
   (i.e. identsCompared is 0)
-  otheriwse just returns"
-  input Integer identsCompared;
+  otherwise just returns"
   input list<Integer> inSubs1;
   input list<Integer> inSubs2;
-  output Integer outCompared;
+  output Integer res = 0;
+protected
+  list<Integer> rest=inSubs2;
 algorithm
-  outCompared := matchcontinue(identsCompared, inSubs1, inSubs2)
-    local
-      Integer sub1, sub2;
-      list<Integer> rest1, rest2;
-
-    case (1, _, _)
-      then 1;
-
-    case (-1, _, _)
-      then -1;
-
-    // No subs
-    case (_, {}, {})
-      then identsCompared;
-
-    // One of them has subs while the nosub crefs are the same
-    case (0, {}, _)
-      then -1;
-
-    case (0, _, {})
-      then 1;
-
-    case (0, sub1::rest1, sub2::rest2)
-      equation
-        true = intEq(sub1,sub2);
-       then
-         crefLexicalCompareubsAtEnd2(0, rest1,rest2);
-
-    case (0, sub1::_, sub2::_)
-      equation
-        true = intGe(sub1,sub2);
-       then 1;
-
-    case (0, _::_, _::_)
-       then -1;
-
-    case (_, _, _)
-      equation
-        print("ComponentReference.crefLexicalCompareubsAtEnd2 failed \n");
-       then
-         fail();
-
-  end matchcontinue;
-end crefLexicalCompareubsAtEnd2;
+  for i in inSubs1 loop
+    res::rest := rest;
+    res := if i>res then 1 elseif i<res then -1 else 0;
+    if res <> 0 then
+      return;
+    end if;
+  end for;
+end crefLexicalCompareSubsAtEnd2;
 
 public function crefContainedIn
 "author: PA
@@ -930,6 +950,33 @@ algorithm
   end match;
 end crefPrefixOf;
 
+public function crefPrefixOfIgnoreSubscripts
+"author: PA
+  Returns true if prefixCref is a prefix of fullCref
+  For example, a.b is a prefix of a.b.c.
+  This function ignores the subscripts"
+  input DAE.ComponentRef prefixCref;
+  input DAE.ComponentRef fullCref;
+  output Boolean outPrefixOf;
+algorithm
+  outPrefixOf := match (prefixCref,fullCref)
+    // both are qualified, dive into
+    case (DAE.CREF_QUAL(), DAE.CREF_QUAL())
+      then prefixCref.ident == fullCref.ident and
+           crefPrefixOfIgnoreSubscripts(prefixCref.componentRef, fullCref.componentRef);
+
+    // first is an ID, second is qualified, see if one is prefix of the other
+    case (DAE.CREF_IDENT(), DAE.CREF_QUAL())
+      then prefixCref.ident == fullCref.ident;
+
+    case (DAE.CREF_IDENT(), DAE.CREF_IDENT())
+      then prefixCref.ident == fullCref.ident;
+
+    // they are not a prefix of one-another
+    else false;
+  end match;
+end crefPrefixOfIgnoreSubscripts;
+
 public function crefNotPrefixOf "negation of crefPrefixOf"
   input DAE.ComponentRef cr1;
   input DAE.ComponentRef cr2;
@@ -959,6 +1006,14 @@ public function crefInLst  "returns true if the cref is in the list of crefs"
 algorithm
   b := List.isMemberOnTrue(cref,lst,crefEqual);
 end crefInLst;
+
+public function crefNotInLst  "returns true if the cref is not in the list of crefs"
+  input DAE.ComponentRef cref;
+  input list<DAE.ComponentRef> lst;
+  output Boolean b;
+algorithm
+  b := not List.isMemberOnTrue(cref,lst,crefEqual);
+end crefNotInLst;
 
 public function crefEqualVerySlowStringCompareDoNotUse
 "Returns true if two component references are equal,
@@ -1211,10 +1266,20 @@ public function isPreCref
   output Boolean b;
 algorithm
   b := match(cr)
-    case(DAE.CREF_QUAL(ident = "$PRE")) then true;
+    case(DAE.CREF_QUAL(ident=DAE.preNamePrefix)) then true;
     else false;
   end match;
 end isPreCref;
+
+public function isStartCref
+  input DAE.ComponentRef cr;
+  output Boolean b;
+algorithm
+  b := match(cr)
+    case(DAE.CREF_QUAL(ident=DAE.startNamePrefix)) then true;
+    else false;
+  end match;
+end isStartCref;
 
 public function popPreCref
   input DAE.ComponentRef inCR;
@@ -1471,22 +1536,21 @@ algorithm
       DAE.Type tty;
       DAE.Dimensions ad;
       DAE.Exp es1;
-      DAE.TypeSource ts;
 
     case({},_) then false;
 
-    case((DAE.WHOLEDIM())::_,DAE.T_ARRAY(_,_,_)) then true;
+    case((DAE.WHOLEDIM())::_,DAE.T_ARRAY()) then true;
 
-    case((DAE.SLICE(es1))::_, DAE.T_ARRAY(_,ad,_))
+    case((DAE.SLICE(es1))::_, DAE.T_ARRAY(dims=ad))
       equation
         true = containWholeDim3(es1,ad);
       then
         true;
 
-    case(_::ssl,DAE.T_ARRAY(tty,ad,ts))
+    case(_::ssl,DAE.T_ARRAY(tty,ad))
       equation
         ad = List.stripFirst(ad);
-        b = containWholeDim2(ssl,DAE.T_ARRAY(tty,ad,ts));
+        b = containWholeDim2(ssl,DAE.T_ARRAY(tty,ad));
       then
         b;
 
@@ -1551,7 +1615,7 @@ algorithm
         dims := Types.getDimensions(ty);
         diff := listLength(dims) - listLength(subs);
         newsubs := List.fill(DAE.INDEX(DAE.ICONST(1)), diff);
-        subs := List.appendNoCopy(subs,newsubs);
+        subs := listAppend(subs,newsubs);
       then
         DAE.CREF_IDENT(i, ty, subs);
 
@@ -1560,7 +1624,7 @@ algorithm
         dims := Types.getDimensions(ty);
         diff := listLength(dims) - listLength(subs);
         newsubs := List.fill(DAE.INDEX(DAE.ICONST(1)), diff);
-        subs := List.appendNoCopy(subs,newsubs);
+        subs := listAppend(subs,newsubs);
         cr := crefArrayGetFirstCref(cr);
       then
         DAE.CREF_QUAL(i, ty, subs, cr);
@@ -1637,8 +1701,92 @@ algorithm
   end match;
 end crefLastCref;
 
+public function crefRest
+  input DAE.ComponentRef inCref;
+  output DAE.ComponentRef outCref;
+algorithm
+  DAE.CREF_QUAL(componentRef = outCref) := inCref;
+end crefRest;
+
+public function crefTypeFull2
+  "Helper function to crefTypeFull."
+  input DAE.ComponentRef inCref;
+  input list<DAE.Dimension> accumDims = {};
+  output DAE.Type outType;
+  output list<DAE.Dimension> outDims;
+algorithm
+  (outType, outDims) := match(inCref)
+    local
+      DAE.ComponentRef cr;
+      DAE.Type ty, basety;
+      list<DAE.Dimension> dims;
+      list<DAE.Subscript> subs;
+
+    case DAE.CREF_IDENT(identType = ty, subscriptLst = subs)
+      equation
+        (ty,dims) = Types.flattenArrayType(ty);
+        dims = List.stripN(dims, listLength(subs));
+
+        if not listEmpty(accumDims) then
+          dims = listReverse(List.append_reverse(dims, accumDims));
+        end if;
+      then (ty, dims);
+
+    case DAE.CREF_QUAL(identType = ty, subscriptLst = subs, componentRef = cr)
+      equation
+        (ty,dims) = Types.flattenArrayType(ty);
+        dims = List.stripN(dims,listLength(subs));
+
+        (basety, dims) = crefTypeFull2(cr, List.append_reverse(dims, accumDims));
+      then (basety, dims);
+
+    else
+      equation
+        true = Flags.isSet(Flags.FAILTRACE);
+        Debug.trace("ComponentReference.crefTypeFull2 failed on cref: ");
+        Debug.traceln(printComponentRefStr(inCref));
+      then
+        fail();
+  end match;
+end crefTypeFull2;
+
+public function crefTypeFull
+  "mahge:
+   This function gives the type of a cref.
+   This is done by considering how many dimensions and subscripts
+   the cref has. It also takes in to consideration where the subscripts
+   are loacated in a qualifed cref. e.g. consider :
+    record R
+      Real [4]
+    end R;
+
+    R a[3][2];
+
+    if we have a cref a[1][1].b[1] --> Real
+                      a[1].b --> Real[2][4]
+                      a.b[1] --> Real[3][2]
+                      a[1][1].b --> Real[4]
+                      a[1].b[1] --> Real[2]
+
+   "
+  input DAE.ComponentRef inCref;
+  output DAE.Type outType;
+protected
+  DAE.Type ty;
+  list<DAE.Dimension> dims;
+algorithm
+  (ty,dims) := crefTypeFull2(inCref);
+  if listEmpty(dims) then
+    outType := ty;
+  else
+    outType := DAE.T_ARRAY(ty, dims);
+  end if;
+end crefTypeFull;
+
 public function crefType
-  "Function for extracting the type of the first identifier of a cref."
+  " ***deprecated. Use crefTypeFull unless you really specifically want the type of the first cref.
+  Function for extracting the type of the first identifier of a cref.
+  "
   input DAE.ComponentRef inCref;
   output DAE.Type outType;
 algorithm
@@ -1660,7 +1808,12 @@ algorithm
   end match;
 end crefType;
 
-public function crefLastType "returns the 'last' type of a cref.
+public function crefLastType
+" ***deprecated.
+  mahge: Use crefTypeFull unless you really specifically want the type of the last cref.
+  Remember the type of a cref is not the same as the type of the last cref!!.
+
+returns the 'last' type of a cref.
 For instance, for the cref 'a.b' it returns the type in identifier 'b'
 adrpo:
   NOTE THAT THIS WILL BE AN ARRAY TYPE IF THE LAST CREF IS AN ARRAY TYPE
@@ -1705,7 +1858,7 @@ end crefDims;
 
 public function crefSubs "
 function: crefSubs
-  Return the all subscripts of a ComponentRef"
+  Return all subscripts of a ComponentRef"
   input DAE.ComponentRef inComponentRef;
   output list<DAE.Subscript> outSubscriptLst;
 algorithm
@@ -1725,6 +1878,17 @@ algorithm
         res;
   end match;
 end crefSubs;
+
+public function crefFirstSubs
+  input DAE.ComponentRef inCref;
+  output list<DAE.Subscript> outSubscripts;
+algorithm
+  outSubscripts := match inCref
+    case DAE.CREF_IDENT() then inCref.subscriptLst;
+    case DAE.CREF_QUAL() then inCref.subscriptLst;
+    else {};
+  end match;
+end crefFirstSubs;
 
 public function crefLastSubs "Return the last subscripts of a ComponentRef"
   input DAE.ComponentRef inComponentRef;
@@ -1761,7 +1925,12 @@ algorithm
   end match;
 end crefFirstCref;
 
-public function crefTypeConsiderSubs "Function: crefTypeConsiderSubs
+public function crefTypeConsiderSubs
+" ***deprecated.
+  mahge: use crefTypeFull(). This is not what you want. We need to consider not just the last subs but all subs.
+  We can have slices.
+
+Function: crefTypeConsiderSubs
 Author: PA
 Function for extracting the type out of a componentReference and consider the influence of the last subscript list.
 For exampel. If the last cref type is Real[3,3] and the last subscript list is {Expression.INDEX(1)}, the type becomes Real[3], i.e
@@ -1900,6 +2069,14 @@ public function crefPrefixPre "public function crefPrefixPre
 algorithm
   outCref := makeCrefQual(DAE.preNamePrefix, DAE.T_UNKNOWN_DEFAULT, {}, inCref);
 end crefPrefixPre;
+
+public function crefPrefixPrevious "public function crefPrefixPrevious
+  Appends $CLKPRE to a cref, so a => $CLKPRE.a"
+  input DAE.ComponentRef inCref;
+  output DAE.ComponentRef outCref;
+algorithm
+  outCref := makeCrefQual(DAE.previousNamePrefix, DAE.T_UNKNOWN_DEFAULT, {}, inCref);
+end crefPrefixPrevious;
 
 public function crefPrefixStart "public function crefPrefixStart
   Appends $START to a cref, so a => $START.a"
@@ -2076,10 +2253,8 @@ algorithm
 end appendStringLastIdent;
 
 public function joinCrefs
-"Join two component references by concatenating them.
-
+"Joins two component references by concatenating them.
   alternative names: crefAppend
-
   "
   input DAE.ComponentRef inComponentRef1 " first part of the new componentref";
   input DAE.ComponentRef inComponentRef2 " last part of the new componentref";
@@ -2128,6 +2303,24 @@ algorithm
         makeCrefQual(id,t2,sub,cr_1);
   end match;
 end joinCrefsR;
+
+public function joinCrefsExp
+"Like joinCrefs but first argument is an expression"
+  input output DAE.Exp exp;
+  input output DAE.ComponentRef cref;
+algorithm
+  exp := match (exp)
+    local
+      DAE.ComponentRef cr;
+      DAE.Type tp;
+    case (DAE.CREF(cr, tp))
+      equation
+        cr = joinCrefs(cref, cr);
+      then
+        DAE.CREF(cr,tp);
+     else exp;
+  end match;
+end joinCrefsExp;
 
 public function subscriptCref
 "The subscriptCref function adds a subscript to the ComponentRef
@@ -2178,7 +2371,7 @@ algorithm
     case (DAE.CREF_IDENT(ident = id, subscriptLst = subs, identType = ty), _)
       equation
         new_sub = DAE.INDEX(DAE.ICONST(inSubscript));
-        subs = listAppend(subs, {new_sub});
+        subs = List.appendElt(new_sub, subs);
         ty = Expression.unliftArray(ty);
       then
         makeCrefIdent(id, ty, subs);
@@ -2326,9 +2519,8 @@ algorithm
     case(DAE.CREF_QUAL(name,identType,subs,child),_)
       equation
         true = (listLength(Expression.arrayTypeDimensions(identType)) >= (listLength(subs)+1));
-        subs = listAppend(subs,newSub);
       then
-        makeCrefQual(name,identType,subs,child);
+        makeCrefQual(name, identType, listAppend(subs, newSub), child);
 
     // DAE.CREF_QUAL without DAE.SLICE, search child
     case(DAE.CREF_QUAL(name,identType,subs,child),_)
@@ -2436,7 +2628,7 @@ algorithm
       then
         (makeCrefIdent(id,ty,{}),idx,SOME(cr));
 
-    case (DAE.CREF_QUAL(componentRef = cr, identType=ty, subscriptLst=subs, ident=id))
+    case (DAE.CREF_QUAL(componentRef = cr, identType=ty, ident=id))
       equation
         // continue
         outCref = stripCrefIdentSliceSubs(cr);
@@ -2448,21 +2640,15 @@ end stripArrayCref;
 protected function removeSliceSubs "
 helper function for stripCrefIdentSliceSubs"
   input list<DAE.Subscript> subs;
-  output list<DAE.Subscript> osubs;
+  output list<DAE.Subscript> osubs = {};
 algorithm
-  osubs := matchcontinue(subs)
-    local DAE.Subscript s; list<DAE.Subscript> rest;
-
-    case({}) then {};
-
-    case(DAE.SLICE()::rest) then removeSliceSubs(rest);
-
-    case (s::rest)
-      equation
-        osubs = removeSliceSubs(rest);
-      then
-        s::osubs;
-  end matchcontinue;
+  for s in subs loop
+    osubs := match s
+      case DAE.SLICE() then osubs;
+      else s::osubs;
+    end match;
+  end for;
+  osubs := Dangerous.listReverseInPlace(osubs);
 end removeSliceSubs;
 
 public function crefStripSubs "
@@ -2809,10 +2995,10 @@ algorithm
     case(_,0)
       then (inCref);
 
-    case(DAE.CREF_QUAL(id, ty, subs, last),1)
+    case(DAE.CREF_QUAL(id, ty, subs, _),1)
       then DAE.CREF_IDENT(id, ty, subs);
 
-    case(DAE.CREF_IDENT(id, ty, subs),_)
+    case(DAE.CREF_IDENT(_, _, _),_)
       then inCref;
 
     case (DAE.CREF_QUAL(id, ty, subs, last),)
@@ -2845,7 +3031,7 @@ public function toStringList
   input DAE.ComponentRef inCref;
   output list<String> outStringList;
 algorithm
-  outStringList := toStringList_tail(inCref, {});
+  outStringList := Dangerous.listReverseInPlace(toStringList_tail(inCref, {}));
 end toStringList;
 
 protected function toStringList_tail
@@ -2863,7 +3049,7 @@ algorithm
       then toStringList_tail(cref, id :: inAccumStrings);
 
     case (DAE.CREF_IDENT(ident = id), _)
-      then listReverse(id :: inAccumStrings);
+      then id :: inAccumStrings;
 
     else {};
 
@@ -2939,7 +3125,6 @@ algorithm
     local
       DAE.Ident id;
       DAE.Type ty, basety,correctTy;
-      DAE.TypeSource source;
       list<DAE.Dimension> dims;
       list<DAE.Subscript> subs;
       DAE.ComponentRef cref;
@@ -2956,11 +3141,11 @@ algorithm
         List.map1Flat(crefs,expandCref_impl,true);
 
     // A array record ident cref without subscripts. Expand record true
-    case (DAE.CREF_IDENT(id, ty as DAE.T_ARRAY(source=source), {}),true)
+    case (DAE.CREF_IDENT(id, ty as DAE.T_ARRAY(), {}),true)
       equation
         // Flatten T_ARRAY(T_ARRAY(T_COMPLEX(), dim2,src), dim1,src) types to one level T_ARRAY(simpletype, alldims, src)
-        (basety as DAE.T_COMPLEX(varLst=varLst,complexClassType=ClassInf.RECORD(_)), dims) = Types.flattenArrayTypeOpt(ty);
-        correctTy = DAE.T_ARRAY(basety,dims,source);
+        (basety as DAE.T_COMPLEX(varLst=varLst,complexClassType=ClassInf.RECORD()), dims) = Types.flattenArrayType(ty);
+        correctTy = DAE.T_ARRAY(basety,dims);
         // Create a list of : subscripts to generate all elements.
         subs = List.fill(DAE.WHOLEDIM(), listLength(dims));
         crefs = expandCref2(id, correctTy, subs, dims);
@@ -2968,53 +3153,53 @@ algorithm
         expandCrefLst(crefs,varLst,{});
 
     // A array type cref (possibly record but no expansion of records) without subscripts.
-    case (DAE.CREF_IDENT(id, ty as DAE.T_ARRAY(source=source), {}),_)
+    case (DAE.CREF_IDENT(id, ty as DAE.T_ARRAY(), {}),_)
       equation
         // Flatten T_ARRAY(T_ARRAY(T_..., dim2,src), dim1,src) types to one level T_ARRAY(simpletype, alldims, src)
-        (basety, dims) = Types.flattenArrayTypeOpt(ty);
-        correctTy = DAE.T_ARRAY(basety,dims,source);
+        (basety, dims) = Types.flattenArrayType(ty);
+        correctTy = DAE.T_ARRAY(basety,dims);
         // Create a list of : subscripts to generate all elements.
         subs = List.fill(DAE.WHOLEDIM(), listLength(dims));
       then
         expandCref2(id, correctTy, subs, dims);
 
     // A array complex cref with subscripts. Expand record true
-    case (DAE.CREF_IDENT(id, ty as DAE.T_ARRAY(source=source), subs),true)
+    case (DAE.CREF_IDENT(id, ty as DAE.T_ARRAY(), subs),true)
       equation
         // Flatten T_ARRAY(T_ARRAY(T_COMPLEX(), dim2,src), dim1,src) types to one level T_ARRAY(simpletype, alldims, src)
-        (basety as DAE.T_COMPLEX(varLst=varLst,complexClassType=ClassInf.RECORD(_)), dims) = Types.flattenArrayTypeOpt(ty);
-        correctTy = DAE.T_ARRAY(basety,dims,source);
+        (basety as DAE.T_COMPLEX(varLst=varLst,complexClassType=ClassInf.RECORD()), dims) = Types.flattenArrayType(ty);
+        correctTy = DAE.T_ARRAY(basety,dims);
         // Use the subscripts to generate only the wanted elements.
          crefs = expandCref2(id, correctTy, subs, dims);
       then
         expandCrefLst(crefs,varLst,{});
 
     // A array type cref (possibly record but no expansion of records) with subscripts.
-    case (DAE.CREF_IDENT(id, ty as DAE.T_ARRAY(source=source), subs),_)
+    case (DAE.CREF_IDENT(id, ty as DAE.T_ARRAY(), subs),_)
       equation
         // Flatten T_ARRAY(T_ARRAY(T_..., dim2,src), dim1,src) types to one level T_ARRAY(simpletype, alldims, src)
-        (basety, dims) = Types.flattenArrayTypeOpt(ty);
-        correctTy = DAE.T_ARRAY(basety,dims,source);
+        (basety, dims) = Types.flattenArrayType(ty);
+        correctTy = DAE.T_ARRAY(basety,dims);
         // Use the subscripts to generate only the wanted elements.
       then
         expandCref2(id, correctTy, subs, dims);
 
 
     // A qualified cref with array type.
-    case (DAE.CREF_QUAL(id, ty as DAE.T_ARRAY(source=source), subs, cref),_)
+    case (DAE.CREF_QUAL(id, ty as DAE.T_ARRAY(), subs, cref),_)
       equation
         // Expand the rest of the cref.
         crefs = expandCref_impl(cref,expandRecord);
         // Flatten T_ARRAY(T_ARRAY(T_..., dim2,src), dim1,src) types to one level T_ARRAY(simpletype, alldims, src)
-        (basety, dims) = Types.flattenArrayTypeOpt(ty);
-        correctTy = DAE.T_ARRAY(basety,dims,source);
+        (basety, dims) = Types.flattenArrayType(ty);
+        correctTy = DAE.T_ARRAY(basety,dims);
         // Create a simple identifier for the head of the cref and expand it.
         cref = DAE.CREF_IDENT(id, correctTy, subs);
         crefs2 = expandCref_impl(cref,false);
         crefs2 = listReverse(crefs2);
         // crefs2 = List.map1(crefs2,crefSetType,correctTy);
         // Create all combinations of the two lists.
-        crefs = expandCrefQual(crefs2, crefs, {});
+        crefs = expandCrefQual(crefs2, crefs);
       then
         crefs;
 
@@ -3055,31 +3240,20 @@ algorithm
   end match;
 end expandCrefLst;
 
-
 protected function expandCrefQual
   "Helper function to expandCref_impl. Constructs all combinations of the head
    and rest cref lists. E.g.:
     expandCrefQual({x, y}, {a, b}) => {x.a, x.b, y.a, y.b} "
   input list<DAE.ComponentRef> inHeadCrefs;
   input list<DAE.ComponentRef> inRestCrefs;
-  input list<DAE.ComponentRef> inAccumCrefs;
-  output list<DAE.ComponentRef> outCrefs;
+  output list<DAE.ComponentRef> outCrefs = {};
+protected
+  list<DAE.ComponentRef> crefs;
 algorithm
-  outCrefs := match(inHeadCrefs, inRestCrefs, inAccumCrefs)
-    local
-      list<DAE.ComponentRef> crefs, rest_crefs;
-      DAE.ComponentRef cref;
-
-    case (cref :: rest_crefs, _, _)
-      equation
-        crefs = List.map1r(inRestCrefs, joinCrefs, cref);
-        crefs = listAppend(crefs, inAccumCrefs);
-      then
-        expandCrefQual(rest_crefs, inRestCrefs, crefs);
-
-    else inAccumCrefs;
-
-  end match;
+  for cref in inHeadCrefs loop
+    crefs := list(joinCrefs(cref, rest_cref) for rest_cref in inRestCrefs);
+    outCrefs := listAppend(crefs, outCrefs);
+  end for;
 end expandCrefQual;
 
 protected function expandCref2
@@ -3121,20 +3295,20 @@ algorithm
       equation
         identType = Expression.unliftArrayTypeWithSubs(subscriptLst,identType);
         cr1 = replaceSubsWithString(cr);
-        str = ExpressionDump.printListStr(subscriptLst, ExpressionDump.printSubscriptStr, "_");
-        ident1 = stringAppendList({ident, "_", str, "_"});
+        cr = makeCrefsFromSubScriptLst(subscriptLst, DAE.CREF_IDENT(ident, identType, {}));
       then
-        DAE.CREF_QUAL(ident1,identType,{},cr1);
+        joinCrefs(cr, cr1);
+
     case DAE.CREF_IDENT(subscriptLst={})
       then
         inCref;
     case DAE.CREF_IDENT(ident=ident,identType=identType,subscriptLst=subscriptLst)
       equation
         identType = Expression.unliftArrayTypeWithSubs(subscriptLst,identType);
-        str = ExpressionDump.printListStr(subscriptLst, ExpressionDump.printSubscriptStr, "_");
-        ident1 = stringAppendList({ident, "_", str, "_"});
+        cr = makeCrefsFromSubScriptLst(subscriptLst, DAE.CREF_IDENT(ident, identType, {}));
       then
-        DAE.CREF_IDENT(ident1,identType,{});
+        cr;
+
     case DAE.CREF_ITER()
       then
         inCref;
@@ -3143,6 +3317,75 @@ algorithm
         inCref;
   end match;
 end replaceSubsWithString;
+
+public function makeCrefsFromSubScriptLst
+  input list<DAE.Subscript> inSubscriptLst;
+  input DAE.ComponentRef inPreCref;
+  output DAE.ComponentRef outCref = inPreCref;
+algorithm
+  for subScript in inSubscriptLst loop
+    outCref := match(subScript)
+      local
+        DAE.ComponentRef cr;
+        DAE.Exp e;
+        String str;
+      case DAE.INDEX(exp = e) equation
+        cr = makeCrefsFromSubScriptExp(e);
+      then
+        joinCrefs(outCref, cr);
+
+      // all other should probably fails or evaluated before
+      else equation
+        str = ExpressionDump.printSubscriptStr(subScript);
+        Error.addInternalError("function ComponentReference.makeCrefsFromSubScriptLst for:" + str + "\n", sourceInfo());
+      then
+        fail();
+    end match;
+  end for;
+end makeCrefsFromSubScriptLst;
+
+public function makeCrefsFromSubScriptExp
+  input DAE.Exp inExp;
+  output DAE.ComponentRef outCref;
+algorithm
+    outCref := match(inExp)
+    local
+      DAE.Operator op;
+      DAE.ComponentRef cr1, cr2;
+      String str;
+      DAE.Exp e1, e2;
+      Absyn.Path enum_lit;
+
+    case DAE.ICONST() equation
+      str = ExpressionDump.printExpStr(inExp);
+    then
+      DAE.CREF_IDENT(str,DAE.T_UNKNOWN_DEFAULT,{});
+
+    case DAE.CREF()
+    then
+      Expression.expCref(inExp);
+
+    case DAE.BINARY(operator=op, exp1=e1, exp2=e2) equation
+      str = ExpressionDump.binopSymbol(op);
+      cr1 = makeCrefsFromSubScriptExp(e1);
+      cr2 = makeCrefsFromSubScriptExp(e2);
+      outCref = prependStringCref(str, cr1);
+      outCref = joinCrefs(outCref, cr2);
+    then
+      outCref;
+
+    case DAE.ENUM_LITERAL(name = enum_lit) equation
+      str = System.stringReplace(Absyn.pathString(enum_lit), ".", "$P");
+    then
+      DAE.CREF_IDENT(str,DAE.T_UNKNOWN_DEFAULT,{});
+
+    else equation
+      str = ExpressionDump.dumpExpStr(inExp, 0);
+      Error.addInternalError("function ComponentReference.makeCrefsFromSubScriptExp for:" + str + "\n", sourceInfo());
+    then
+      fail();
+  end match;
+end makeCrefsFromSubScriptExp;
 
 public function replaceLast
   "Replaces the last part of a cref with a new cref."
@@ -3222,7 +3465,7 @@ public function explode
   input DAE.ComponentRef inCref;
   output list<DAE.ComponentRef> outParts;
 algorithm
-  outParts := listReverse(explode_tail(inCref, {}));
+  outParts := Dangerous.listReverse(explode_tail(inCref, {}));
 end explode;
 
 protected function explode_tail
@@ -3485,11 +3728,88 @@ public function crefAppendedSubs
 protected
   String s1,s2;
 algorithm
-  s1 := crefToStr("",cref,"_P");
-  s2 := stringDelimitList(List.map(List.map(crefSubs(cref),Expression.getSubscriptExp),ExpressionDump.printExpStr),",");
+  s1 := stringDelimitList(toStringList(cref), "_P");
+  s2 := stringDelimitList(List.mapMap(crefSubs(cref),Expression.getSubscriptExp,ExpressionDump.printExpStr),",");
   s := s1+"["+s2+"]";
-end  crefAppendedSubs;
+end crefAppendedSubs;
+
+public function writeCref
+  input File.File file;
+  input DAE.ComponentRef cref;
+  input File.Escape escape = File.Escape.None;
+protected
+  DAE.ComponentRef c = cref;
+algorithm
+  while true loop
+    c := match c
+      case DAE.CREF_IDENT()
+        algorithm
+          File.writeEscape(file, c.ident, escape);
+          writeSubscripts(file, c.subscriptLst, escape);
+          return;
+        then fail();
+      case DAE.CREF_QUAL(ident="$DER")
+        algorithm
+          File.write(file, "der(");
+          writeCref(file, c.componentRef, escape);
+          File.write(file, ")");
+          return;
+        then fail();
+      case DAE.CREF_QUAL(ident="$CLKPRE")
+        algorithm
+          File.write(file, "previous(");
+          writeCref(file, c.componentRef, escape);
+          File.write(file, ")");
+          return;
+        then fail();
+      case DAE.CREF_QUAL()
+        algorithm
+          File.writeEscape(file, c.ident, escape);
+          writeSubscripts(file, c.subscriptLst, escape);
+          File.write(file, ".");
+        then c.componentRef;
+    end match;
+  end while;
+end writeCref;
+
+public function writeSubscripts
+  input File.File file;
+  input list<DAE.Subscript> subs;
+  input File.Escape escape = File.Escape.None;
+protected
+  Boolean first=true;
+  Integer i;
+  DAE.Exp exp;
+algorithm
+  if listEmpty(subs) then
+    return;
+  end if;
+  File.write(file, "[");
+  for s in subs loop
+    if not first then
+      File.write(file, ",");
+    else
+      first := false;
+    end if;
+    _ := match s
+      case DAE.WHOLEDIM()
+        algorithm File.write(file, ":"); then ();
+      case DAE.SLICE(DAE.ICONST(i))
+        algorithm File.writeInt(file, i); then ();
+      case DAE.INDEX(DAE.ICONST(i))
+        algorithm File.writeInt(file, i); then ();
+      case DAE.WHOLE_NONEXP(DAE.ICONST(i))
+        algorithm File.writeInt(file, i); then ();
+      case DAE.SLICE(exp)
+        algorithm File.write(file, ExpressionDump.printExpStr(exp)); then ();
+      case DAE.INDEX(exp)
+        algorithm File.write(file, ExpressionDump.printExpStr(exp)); then ();
+      case DAE.WHOLE_NONEXP(exp)
+        algorithm File.write(file, ExpressionDump.printExpStr(exp)); then ();
+    end match;
+  end for;
+  File.write(file, "]");
+end writeSubscripts;
 
 annotation(__OpenModelica_Interface="frontend");
 end ComponentReference;
-

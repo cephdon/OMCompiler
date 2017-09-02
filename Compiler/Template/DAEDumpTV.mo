@@ -206,6 +206,7 @@ uniontype splitElements
     list<DAE.Element> co;
     list<DAE.Element> o;
     list<DAE.Element> ca;
+    list<compWithSplitElements> sm;
   end SPLIT_ELEMENTS;
 end splitElements;
 
@@ -326,6 +327,14 @@ package DAE
       ElementSource source "the origin of the component/equation/algorithm";
     end INITIAL_ARRAY_EQUATION;
 
+    record CONNECT_EQUATION "a connect equation"
+      Element lhsElement;
+      Connect.Face lhsFace;
+      Element rhsElement;
+      Connect.Face rhsFace;
+      ElementSource source "the origin of the component/equation/algorithm";
+    end CONNECT_EQUATION;
+
     record COMPLEX_EQUATION "an equation of complex type, e.g. record = func(..)"
       Exp lhs;
       Exp rhs;
@@ -394,10 +403,22 @@ package DAE
       ElementSource source "the origin of the component/equation/algorithm";
     end ASSERT;
 
+    record INITIAL_ASSERT " The Modelica builtin assert"
+      Exp condition;
+      Exp message;
+      Exp level;
+      ElementSource source "the origin of the component/equation/algorithm";
+    end INITIAL_ASSERT;
+
     record TERMINATE " The Modelica builtin terminate(msg)"
       Exp message;
       ElementSource source "the origin of the component/equation/algorithm";
     end TERMINATE;
+
+    record INITIAL_TERMINATE " The Modelica builtin terminate(msg)"
+      Exp message;
+      ElementSource source "the origin of the component/equation/algorithm";
+    end INITIAL_TERMINATE;
 
     record REINIT " reinit operator for reinitialization of states"
       ComponentRef componentRef;
@@ -710,8 +731,7 @@ package DAE
 
   uniontype Attributes "- Attributes"
     record ATTR
-      SCode.Flow          flowPrefix "flow" ;
-      SCode.Stream        streamPrefix "stream" ;
+      ConnectorType       connectorType "flow, stream or unspecified";
       SCode.Parallelism   parallelism "parallelism";
       SCode.Variability   variability "variability" ;
       Absyn.Direction     direction "direction" ;
@@ -766,6 +786,15 @@ package DAE
     record PARAM "parameter"   end PARAM;
     record CONST "constant"    end CONST;
   end VarKind;
+
+  uniontype ConnectorType "The type of a connector element."
+    record POTENTIAL end POTENTIAL;
+    record FLOW end FLOW;
+    record STREAM
+      Option<ComponentRef> associatedFlow;
+    end STREAM;
+    record NON_CONNECTOR end NON_CONNECTOR;
+  end ConnectorType;
 
   uniontype VarDirection
     record INPUT  "input"                   end INPUT;
@@ -925,27 +954,22 @@ package DAE
 
     record T_INTEGER
       list<Var> varLst;
-      TypeSource source;
     end T_INTEGER;
 
     record T_REAL
       list<Var> varLst;
-      TypeSource source;
     end T_REAL;
 
     record T_STRING
       list<Var> varLst;
-      TypeSource source;
     end T_STRING;
 
     record T_BOOL
       list<Var> varLst;
-      TypeSource source;
     end T_BOOL;
 
     record T_CLOCK
       list<Var> varLst;
-      TypeSource source;
     end T_CLOCK;
 
     record T_ENUMERATION "If the list of names is empty, this is the super-enumeration that is the super-class of all enumerations"
@@ -954,7 +978,6 @@ package DAE
       list<String> names "names" ;
       list<Var> literalVarLst;
       list<Var> attributeLst;
-      TypeSource source;
     end T_ENUMERATION;
 
     record T_ARRAY
@@ -964,22 +987,18 @@ package DAE
          In general Inst generates 1 and all the others generates 2"
       Type ty "Type";
       Dimensions dims "dims";
-      TypeSource source;
     end T_ARRAY;
 
     record T_NORETCALL "For functions not returning any values."
-      TypeSource source;
     end T_NORETCALL;
 
     record T_UNKNOWN "Used when type is not yet determined"
-      TypeSource source;
     end T_UNKNOWN;
 
     record T_COMPLEX
       ClassInf.State complexClassType "The type of a class" ;
       list<Var> varLst "The variables of a complex type" ;
       EqualityConstraint equalityConstraint;
-      TypeSource source;
     end T_COMPLEX;
 
     record T_SUBTYPE_BASIC
@@ -987,19 +1006,17 @@ package DAE
       list<Var> varLst "complexVarLst; The variables of a complex type! Should be empty, kept here to verify!";
       Type complexType "complexType; A complex type can be a subtype of another (primitive) type (through extends)";
       EqualityConstraint equalityConstraint;
-      TypeSource source;
     end T_SUBTYPE_BASIC;
 
     record T_FUNCTION
       list<FuncArg> funcArg;
       Type funcResultType "Only single-result" ;
       FunctionAttributes functionAttributes;
-      TypeSource source;
+      Absyn.Path path;
     end T_FUNCTION;
 
     record T_FUNCTION_REFERENCE_VAR "MetaModelica Function Reference that is a variable"
       Type functionType "the type of the function";
-      TypeSource source;
     end T_FUNCTION_REFERENCE_VAR;
 
     record T_FUNCTION_REFERENCE_FUNC "MetaModelica Function Reference that is a direct reference to a function"
@@ -1010,7 +1027,6 @@ package DAE
 
     record T_TUPLE
       list<Type> types "For functions returning multiple values.";
-      TypeSource source;
     end T_TUPLE;
 
     record T_CODE
@@ -1020,59 +1036,51 @@ package DAE
 
     record T_ANYTYPE
       Option<ClassInf.State> anyClassType "anyClassType - used for generic types. When class state present the type is assumed to be a complex type which has that restriction.";
-      TypeSource source;
     end T_ANYTYPE;
 
     // MetaModelica extensions
     record T_METALIST "MetaModelica list type"
       Type ty "listType";
-      TypeSource source;
     end T_METALIST;
 
     record T_METATUPLE "MetaModelica tuple type"
       list<Type> types;
-      TypeSource source;
     end T_METATUPLE;
 
     record T_METAOPTION "MetaModelica option type"
       Type ty;
-      TypeSource source;
     end T_METAOPTION;
 
     record T_METAUNIONTYPE "MetaModelica Uniontype"
       list<Absyn.Path> paths;
       Boolean knownSingleton "The runtime system (dynload), does not know if the value is a singleton. But optimizations are safe if this is true.";
-      TypeSource source;
+      Absyn.Path path;
     end T_METAUNIONTYPE;
 
     record T_METARECORD "MetaModelica Record, used by Uniontypes. added by simbj"
+      Absyn.Path path;
       Absyn.Path utPath "the path to its uniontype; this is what we match the type against";
       // If the metarecord constructor was added to the FunctionTree, this would
       // not be needed. They are used to create the datatype in the runtime...
       Integer index; //The index in the uniontype
       list<Var> fields;
       Boolean knownSingleton "The runtime system (dynload), does not know if the value is a singleton. But optimizations are safe if this is true.";
-      TypeSource source;
     end T_METARECORD;
 
     record T_METAARRAY
       Type ty;
-      TypeSource source;
     end T_METAARRAY;
 
     record T_METABOXED "Used for MetaModelica generic types"
       Type ty;
-      TypeSource source;
     end T_METABOXED;
 
     record T_METAPOLYMORPHIC
       String name;
-      TypeSource source;
     end T_METAPOLYMORPHIC;
 
     record T_METATYPE "this type contains all the meta types"
       Type ty;
-      TypeSource source;
     end T_METATYPE;
 
   end Type;
@@ -1397,6 +1405,31 @@ package System
     input Boolean unescapeNewline;
     output String escapedString;
   end escapedString;
+
+  function stringReplace
+    input String str;
+    input String source;
+    input String target;
+    output String res;
+  end stringReplace;
+
 end System;
+
+package Flags
+  uniontype ConfigFlag end ConfigFlag;
+  constant ConfigFlag MODELICA_OUTPUT;
+  function getConfigBool
+    input ConfigFlag inFlag;
+    output Boolean outValue;
+  end getConfigBool;
+end Flags;
+
+package Connect
+  uniontype Face
+    record INSIDE "This is an inside connection" end INSIDE;
+    record OUTSIDE "This is an outside connection" end OUTSIDE;
+    record NO_FACE end NO_FACE;
+  end Face;
+end Connect;
 
 end DAEDumpTV;

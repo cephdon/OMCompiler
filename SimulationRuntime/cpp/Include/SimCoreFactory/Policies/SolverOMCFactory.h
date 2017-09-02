@@ -8,6 +8,12 @@
 #include <Core/Solver/ISolver.h>
 #include <Core/SimulationSettings//ISettingsFactory.h>
 
+/* use boost filesystem locally */
+#include <boost/filesystem/operations.hpp>
+#include <boost/filesystem/path.hpp>
+
+namespace fs = boost::filesystem;
+
 /*
 Policy class to create solver object
 */
@@ -34,7 +40,7 @@ public:
 
     }
 
-    virtual boost::shared_ptr<ISettingsFactory> createSettingsFactory()
+    virtual shared_ptr<ISettingsFactory> createSettingsFactory()
     {
           std::map<std::string, factory<ISettingsFactory,PATH,PATH,PATH> >::iterator iter;
           std::map<std::string, factory<ISettingsFactory,PATH,PATH,PATH> >& factories(_settings_type_map->get());
@@ -43,18 +49,29 @@ public:
           {
                 throw ModelicaSimulationError(MODEL_FACTORY,"No such settings library");
             }
-         boost::shared_ptr<ISettingsFactory>  settings_factory = boost::shared_ptr<ISettingsFactory>(iter->second.create(ObjectFactory<CreationPolicy>::_library_path,ObjectFactory<CreationPolicy>::_modelicasystem_path,ObjectFactory<CreationPolicy>::_config_path));
+         shared_ptr<ISettingsFactory>  settings_factory = shared_ptr<ISettingsFactory>(iter->second.create(ObjectFactory<CreationPolicy>::_library_path,ObjectFactory<CreationPolicy>::_modelicasystem_path,ObjectFactory<CreationPolicy>::_config_path));
 
          return settings_factory;
     }
 
-    virtual boost::shared_ptr<ISolver> createSolver(IMixedSystem* system, string solvername, boost::shared_ptr<ISolverSettings> solver_settings)
+    virtual shared_ptr<ISolver> createSolver(IMixedSystem* system, string solvername, shared_ptr<ISolverSettings> solver_settings)
     {
-
-        if(solvername.compare("euler")==0)
+        if(solvername.compare("cppdassl")==0)
         {
-             PATH euler_path = ObjectFactory<CreationPolicy>::_library_path;
-            PATH euler_name(EULER_LIB);
+            fs::path cppdassl_path = ObjectFactory<CreationPolicy>::_library_path;
+            fs::path cppdassl_name(CPPDASSL_LIB);
+            cppdassl_path/=cppdassl_name;
+            LOADERRESULT result = ObjectFactory<CreationPolicy>::_factory->LoadLibrary(cppdassl_path.string(),*_solver_type_map);
+            if (result != LOADER_SUCCESS)
+            {
+                throw ModelicaSimulationError(MODEL_FACTORY,"Failed loading CppDASSL solver library!");
+            }
+
+        }
+        else if(solvername.compare("euler")==0)
+        {
+            fs::path euler_path = ObjectFactory<CreationPolicy>::_library_path;
+            fs::path euler_name(EULER_LIB);
             euler_path/=euler_name;
             LOADERRESULT result = ObjectFactory<CreationPolicy>::_factory->LoadLibrary(euler_path.string(),*_solver_type_map);
             if (result != LOADER_SUCCESS)
@@ -63,10 +80,22 @@ public:
             }
 
         }
+        else if(solvername.compare("rk12")==0)
+        {
+           fs::path rk12_path = ObjectFactory<CreationPolicy>::_library_path;
+           fs::path rk12_name(RK12_LIB);
+           rk12_path/=rk12_name;
+           std::cerr << rk12_path.string() << std::endl;
+           LOADERRESULT result = ObjectFactory<CreationPolicy>::_factory->LoadLibrary(rk12_path.string(),*_solver_type_map);
+           if (result != LOADER_SUCCESS)
+           {
+               throw ModelicaSimulationError(MODEL_FACTORY,"Failed loading RK12 solver library!");
+           }
+        }
         else if(solvername.compare("peer")==0)
         {
-           PATH peer_path = ObjectFactory<CreationPolicy>::_library_path;
-           PATH peer_name(PEER_LIB);
+           fs::path peer_path = ObjectFactory<CreationPolicy>::_library_path;
+           fs::path peer_name(PEER_LIB);
            peer_path/=peer_name;
            LOADERRESULT result = ObjectFactory<CreationPolicy>::_factory->LoadLibrary(peer_path.string(),*_solver_type_map);
            if (result != LOADER_SUCCESS)
@@ -74,15 +103,26 @@ public:
                throw ModelicaSimulationError(MODEL_FACTORY,"Failed loading Peer solver library!");
            }
         }
-     else if(solvername.compare("rtrk")==0)
+        else if(solvername.compare("rtrk")==0)
         {
-           PATH rtrk_path = ObjectFactory<CreationPolicy>::_library_path;
-           PATH rtrk_name(RTRK_LIB);
+           fs::path rtrk_path = ObjectFactory<CreationPolicy>::_library_path;
+           fs::path rtrk_name(RTRK_LIB);
            rtrk_path/=rtrk_name;
            LOADERRESULT result = ObjectFactory<CreationPolicy>::_factory->LoadLibrary(rtrk_path.string(),*_solver_type_map);
            if (result != LOADER_SUCCESS)
            {
                throw ModelicaSimulationError(MODEL_FACTORY,"Failed loading RTRK solver library!");
+           }
+        }
+        else if(solvername.compare("RTEuler")==0)
+        {
+           fs::path RTEuler_path = ObjectFactory<CreationPolicy>::_library_path;
+           fs::path RTEuler_name(RTEULER_LIB);
+           RTEuler_path/= RTEuler_name;
+           LOADERRESULT result = ObjectFactory<CreationPolicy>::_factory->LoadLibrary(RTEuler_path.string(),*_solver_type_map);
+           if (result != LOADER_SUCCESS)
+           {
+               throw ModelicaSimulationError(MODEL_FACTORY,"Failed loading RTEuler solver library!");
            }
         }
         else if(solvername.compare("idas")==0)
@@ -92,8 +132,8 @@ public:
         else if(solvername.compare("ida")==0)
         {
             solvername = "ida"; //workound for dassl, using cvode instead
-            PATH ida_path = ObjectFactory<CreationPolicy>::_library_path;
-            PATH ida_name(IDA_LIB);
+            fs::path ida_path = ObjectFactory<CreationPolicy>::_library_path;
+            fs::path ida_name(IDA_LIB);
             ida_path/=ida_name;
             LOADERRESULT result = ObjectFactory<CreationPolicy>::_factory->LoadLibrary(ida_path.string(),*_solver_type_map);
             if (result != LOADER_SUCCESS)
@@ -104,13 +144,24 @@ public:
         else if((solvername.compare("cvode")==0)||(solvername.compare("dassl")==0))
         {
             solvername = "cvode"; //workound for dassl, using cvode instead
-            PATH cvode_path = ObjectFactory<CreationPolicy>::_library_path;
-            PATH cvode_name(CVODE_LIB);
+            fs::path cvode_path = ObjectFactory<CreationPolicy>::_library_path;
+            fs::path cvode_name(CVODE_LIB);
             cvode_path/=cvode_name;
             LOADERRESULT result = ObjectFactory<CreationPolicy>::_factory->LoadLibrary(cvode_path.string(),*_solver_type_map);
             if (result != LOADER_SUCCESS)
             {
                 throw ModelicaSimulationError(MODEL_FACTORY,"Failed loading CVode solver library!");
+            }
+        }
+		else if((solvername.compare("arkode")==0))
+        {
+            fs::path arkode_path = ObjectFactory<CreationPolicy>::_library_path;
+            fs::path arkode_name(ARKODE_LIB);
+            arkode_path /= arkode_name;
+            LOADERRESULT result = ObjectFactory<CreationPolicy>::_factory->LoadLibrary(arkode_path.string(),*_solver_type_map);
+            if (result != LOADER_SUCCESS)
+            {
+                throw ModelicaSimulationError(MODEL_FACTORY,"Failed loading ARKode solver library!");
             }
         }
         else
@@ -125,7 +176,7 @@ public:
                 throw ModelicaSimulationError(MODEL_FACTORY,"No such Solver " + solver_key);
         }
 
-        boost::shared_ptr<ISolver> solver = boost::shared_ptr<ISolver>(iter->second.create(system,solver_settings.get()));
+        shared_ptr<ISolver> solver = shared_ptr<ISolver>(iter->second.create(system,solver_settings.get()));
 
         return solver;
     }
@@ -135,8 +186,8 @@ protected:
 
         LOADERRESULT result;
 
-    PATH math_path = ObjectFactory<CreationPolicy>::_library_path;
-        PATH math_name(MATH_LIB);
+        fs::path math_path = ObjectFactory<CreationPolicy>::_library_path;
+        fs::path math_name(MATH_LIB);
         math_path/=math_name;
 
         result = ObjectFactory<CreationPolicy>::_factory->LoadLibrary(math_path.string(),*_settings_type_map);
@@ -149,8 +200,8 @@ protected:
 
 
 
-        PATH settingsfactory_path = ObjectFactory<CreationPolicy>::_library_path;
-        PATH settingsfactory_name(SETTINGSFACTORY_LIB);
+        fs::path settingsfactory_path = ObjectFactory<CreationPolicy>::_library_path;
+        fs::path settingsfactory_name(SETTINGSFACTORY_LIB);
         settingsfactory_path/=settingsfactory_name;
 
         result = ObjectFactory<CreationPolicy>::_factory->LoadLibrary(settingsfactory_path.string(),*_settings_type_map);
@@ -161,8 +212,8 @@ protected:
             throw ModelicaSimulationError(MODEL_FACTORY,"Failed loading SimulationSettings library!");
         }
 
-        PATH solver_path = ObjectFactory<CreationPolicy>::_library_path;
-        PATH solver_name(SOLVER_LIB);
+        fs::path solver_path = ObjectFactory<CreationPolicy>::_library_path;
+        fs::path solver_name(SOLVER_LIB);
         solver_path/=solver_name;
 
         result = ObjectFactory<CreationPolicy>::_factory->LoadLibrary(solver_path.string(),*_solver_type_map);

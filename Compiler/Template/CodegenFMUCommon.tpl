@@ -48,6 +48,7 @@ package CodegenFMUCommon
 import interface SimCodeTV;
 import interface SimCodeBackendTV;
 import CodegenUtil.*;
+import CodegenUtilSimulation.*;
 import CodegenC.*; //unqualified import, no need the CodegenC is optional when calling a template; or mandatory when the same named template exists in this package (name hiding)
 import CodegenCFunctions.*;
 
@@ -59,66 +60,68 @@ case SIMCODE(__) then
   let modelIdentifier = modelNamePrefix(simCode)
   <<
   <ModelExchange
-    modelIdentifier="<%modelIdentifier%>">
+    modelIdentifier="<%modelIdentifier%>"<% if Flags.isSet(FMU_EXPERIMENTAL) then ' providesDirectionalDerivative="true"'%>>
   </ModelExchange>
   >>
 end ModelExchange;
 
-template fmiModelVariables(ModelInfo modelInfo, String FMUVersion)
+template fmiModelVariables(SimCode simCode, String FMUVersion)
  "Generates code for ModelVariables file for FMU target."
 ::=
+match simCode
+case SIMCODE(modelInfo=modelInfo) then
 match modelInfo
 case MODELINFO(vars=SIMVARS(stateVars=stateVars)) then
   <<
   <ModelVariables>
   <%System.tmpTickReset(0)%>
   <%vars.stateVars |> var =>
-    ScalarVariable(stateVars, var, FMUVersion)
+    ScalarVariable(var, simCode, stateVars, FMUVersion)
   ;separator="\n"%>
   <%vars.derivativeVars |> var =>
-    ScalarVariable(stateVars, var, FMUVersion)
+    ScalarVariable(var, simCode, stateVars, FMUVersion)
   ;separator="\n"%>
   <%vars.algVars |> var =>
-    ScalarVariable(stateVars, var, FMUVersion)
+    ScalarVariable(var, simCode, stateVars, FMUVersion)
   ;separator="\n"%>
   <%vars.discreteAlgVars |> var =>
-    ScalarVariable(stateVars, var, FMUVersion)
+    ScalarVariable(var, simCode, stateVars, FMUVersion)
   ;separator="\n"%>
   <%vars.paramVars |> var =>
-    ScalarVariable(stateVars, var, FMUVersion)
+    ScalarVariable(var, simCode, stateVars, FMUVersion)
   ;separator="\n"%>
   <%vars.aliasVars |> var =>
-    ScalarVariable(stateVars, var, FMUVersion)
+    ScalarVariable(var, simCode, stateVars, FMUVersion)
   ;separator="\n"%>
   <%System.tmpTickReset(0)%>
   <%vars.intAlgVars |> var =>
-    ScalarVariable(stateVars, var, FMUVersion)
+    ScalarVariable(var, simCode, stateVars, FMUVersion)
   ;separator="\n"%>
   <%vars.intParamVars |> var =>
-    ScalarVariable(stateVars, var, FMUVersion)
+    ScalarVariable(var, simCode, stateVars, FMUVersion)
   ;separator="\n"%>
   <%vars.intAliasVars |> var =>
-    ScalarVariable(stateVars, var, FMUVersion)
+    ScalarVariable(var, simCode, stateVars, FMUVersion)
   ;separator="\n"%>
   <%System.tmpTickReset(0)%>
   <%vars.boolAlgVars |> var =>
-    ScalarVariable(stateVars, var, FMUVersion)
+    ScalarVariable(var, simCode, stateVars, FMUVersion)
   ;separator="\n"%>
   <%vars.boolParamVars |> var =>
-    ScalarVariable(stateVars, var, FMUVersion)
+    ScalarVariable(var, simCode, stateVars, FMUVersion)
   ;separator="\n"%>
   <%vars.boolAliasVars |> var =>
-    ScalarVariable(stateVars, var, FMUVersion)
+    ScalarVariable(var, simCode, stateVars, FMUVersion)
   ;separator="\n"%>
   <%System.tmpTickReset(0)%>
   <%vars.stringAlgVars |> var =>
-    ScalarVariable(stateVars, var, FMUVersion)
+    ScalarVariable(var, simCode, stateVars, FMUVersion)
   ;separator="\n"%>
   <%vars.stringParamVars |> var =>
-    ScalarVariable(stateVars, var, FMUVersion)
+    ScalarVariable(var, simCode, stateVars, FMUVersion)
   ;separator="\n"%>
   <%vars.stringAliasVars |> var =>
-    ScalarVariable(stateVars, var, FMUVersion)
+    ScalarVariable(var, simCode, stateVars, FMUVersion)
   ;separator="\n"%>
   <%System.tmpTickReset(0)%>
   <%externalFunctions(modelInfo)%>
@@ -126,7 +129,7 @@ case MODELINFO(vars=SIMVARS(stateVars=stateVars)) then
   >>
 end fmiModelVariables;
 
-template ScalarVariable(list<SimVar> stateVars, SimVar simVar, String FMUVersion)
+template ScalarVariable(SimVar simVar, SimCode simCode, list<SimVar> stateVars, String FMUVersion)
  "Generates code for ScalarVariable file for FMU target."
 ::=
 match simVar
@@ -139,7 +142,7 @@ case SIMVAR(__) then
   <<
   <!-- Index of variable = "<%getVariableIndex(simVar)%>" -->
   <ScalarVariable
-    <%ScalarVariableAttribute2(simVar)%>>
+    <%ScalarVariableAttribute2(simVar, simCode)%>>
     <%ScalarVariableType2(simVar, stateVars)%>
   </ScalarVariable>
   >>
@@ -215,7 +218,7 @@ case SIMVAR(__) then
     case T_REAL(__) then '<Real<%StartString(simvar)/*%> <%ScalarVariableTypeRealAttribute(unit,displayUnit)*/%>/>'
     case T_BOOL(__) then '<Boolean<%StartString(simvar)%>/>'
     case T_STRING(__) then '<String<%StartString(simvar)%>/>'
-    case T_ENUMERATION(__) then '<Enumeration declaredType="<%Absyn.pathString2NoLeadingDot(path, ".")%>"<%StartString(simvar)%>/>'
+    case T_ENUMERATION(__) then '<Enumeration declaredType="<%Absyn.pathString(path, ".", false)%>"<%StartString(simvar)%>/>'
     else 'UNKOWN_TYPE'
 end ScalarVariableType;
 
@@ -275,7 +278,7 @@ template Implementation()
       <Capabilities
         canHandleVariableCommunicationStepSize="true"
         canHandleEvents="true"
-        canBeInstantiatedOnlyOncePerProcess="true"
+        canBeInstantiatedOnlyOncePerProcess="false"
         canInterpolateInputs="true"
         maxOutputDerivativeOrder="1"/>
     </CoSimulation_StandAlone>
@@ -283,18 +286,8 @@ template Implementation()
   >>
 end Implementation;
 
-template ModelStructure(SimCode simCode, list<JacobianMatrix> jacobianMatrixes)
- "Generates Model Structure."
-::=
-  <<
-  <ModelStructure>
-    //ModelStructureHelper(getFMIModelStructure(simCode, jacobianMatrixes))
-  </ModelStructure>
-  >>
-end ModelStructure;
-
-template ModelStructureHelper(Option<FmiModelStructure> fmiModelStructure)
- "Helper function to ModelStructure."
+template ModelStructure(Option<FmiModelStructure> fmiModelStructure)
+ "Generates ModelStructure"
 ::=
 match fmiModelStructure
 case SOME(fmistruct as FMIMODELSTRUCTURE(__)) then
@@ -302,6 +295,7 @@ case SOME(fmistruct as FMIMODELSTRUCTURE(__)) then
   <ModelStructure>
     <%ModelStructureOutputs(fmistruct.fmiOutputs)%>
     <%ModelStructureDerivatives(fmistruct.fmiDerivatives)%>
+    <%ModelStructureDiscreteStates(fmistruct.fmiDiscreteStates)%>
     <%ModelStructureInitialUnknowns(fmistruct.fmiInitialUnknowns)%>
   </ModelStructure>
   >>
@@ -310,12 +304,68 @@ else
   <ModelStructure>
   </ModelStructure>
   >>
-end ModelStructureHelper;
+end ModelStructure;
+
+template TypeDefinitionsClocks(SimCode simCode)
+ "Generates TypeDefinitions Clocks"
+::=
+match simCode
+case SIMCODE(modelInfo = MODELINFO(__)) then
+  let clocks = (clockedPartitions |> partition =>
+    match partition
+    case CLOCKED_PARTITION(baseClock=baseClock, subPartitions=subPartitions) then
+      match baseClock
+      case REAL_CLOCK(interval=baseInterval as RCONST(real=bi)) then
+        (subPartitions |> subPartition =>
+          match subPartition
+          case SUBPARTITION(subClock=SUBCLOCK(factor=RATIONAL(nom=fnom, denom=fres), shift=RATIONAL(nom=snom, denom=sres))) then
+          <<
+          <Clock><Periodic
+                  baseInterval="<%bi%>"
+                  <%if intGt(fnom, 1) then 'subSampleFactor="'+fnom+'"'%>
+                  <%if intGt(fres, 1) then 'superSampleFactor="'+fres+'"'%>
+                  <%if intGt(snom, 0) then 'shiftCounter="'+snom+'"'%>
+                  /></Clock>
+          >>
+        ; separator="\n")
+      case INTEGER_CLOCK(intervalCounter=ic as ICONST(integer=bic), resolution=res as ICONST(integer=resi)) then
+        (subPartitions |> subPartition =>
+          match subPartition
+          case SUBPARTITION(subClock=SUBCLOCK(factor=RATIONAL(nom=fnom, denom=fres), shift=RATIONAL(nom=snom, denom=sres))) then
+          <<
+          <Clock><Periodic
+                  intervalCounter="<%bic%>"
+                  resolution="<%resi%>"
+                  <%if intGt(fnom, 1) then 'subSampleFactor="'+fnom+'"'%>
+                  <%if intGt(snom, 0) then 'shiftCounter="'+snom+'"'%>
+                  /></Clock>
+          >>
+        ; separator="\n")
+      case INFERRED_CLOCK(__) then
+        <<
+        <Clock><Inferred/></Clock>
+        >>
+      else
+        <<
+        <Clock><Triggered/></Clock>
+        >>
+    ;separator="\n")
+  match clocks
+  case "" then
+    <<>>
+  else
+    <<
+    <Clocks>
+      <%clocks%>
+    </Clocks>
+    >>
+end TypeDefinitionsClocks;
 
 template ModelStructureOutputs(FmiOutputs fmiOutputs)
  "Generates Model Structure Outputs."
 ::=
 match fmiOutputs
+case FMIOUTPUTS(fmiUnknownsList={}) then ""
 case FMIOUTPUTS(__) then
   <<
   <Outputs>
@@ -328,6 +378,7 @@ template ModelStructureDerivatives(FmiDerivatives fmiDerivatives)
  "Generates Model Structure Derivatives."
 ::=
 match fmiDerivatives
+case FMIDERIVATIVES(fmiUnknownsList={}) then ""
 case FMIDERIVATIVES(__) then
   <<
   <Derivatives>
@@ -336,16 +387,32 @@ case FMIDERIVATIVES(__) then
   >>
 end ModelStructureDerivatives;
 
+template ModelStructureDiscreteStates(FmiDiscreteStates fmiDiscreteStates)
+ "Generates Model Structure DiscreteStates."
+::=
+match fmiDiscreteStates
+  // don't generate if model has no discrete states for FMI 2.0 compatibility
+case FMIDISCRETESTATES(fmiUnknownsList={}) then ""
+case FMIDISCRETESTATES(__) then
+  <<
+  <DiscreteStates>
+    <%ModelStructureUnknowns(fmiUnknownsList)%>
+  </DiscreteStates>
+  >>
+end ModelStructureDiscreteStates;
+
 template ModelStructureInitialUnknowns(FmiInitialUnknowns fmiInitialUnknowns)
  "Generates Model Structure InitialUnknowns."
 ::=
 match fmiInitialUnknowns
+case FMIINITIALUNKNOWNS(fmiUnknownsList={}) then ""
 case FMIINITIALUNKNOWNS(__) then
   <<
   <InitialUnknowns>
     <%ModelStructureUnknowns(fmiUnknownsList)%>
   </InitialUnknowns>
   >>
+end match
 end ModelStructureInitialUnknowns;
 
 template ModelStructureUnknowns(list<FmiUnknown> fmiUnknownsList)
@@ -368,7 +435,8 @@ end FmiUnknownAttributes;
 
 template FmiUnknownDependencies(list<Integer> dependencies)
 ::=
-  if intGt(listLength(dependencies), 0) then
+  // Note: dependencies="" means no dependencies;
+  // missing dependencies means dependent on all knowns (see FMI 2.0 spec).
   <<
    dependencies="<%dependencies |> dependency => dependency ;separator=" "%>"
   >>
@@ -376,29 +444,33 @@ end FmiUnknownDependencies;
 
 template FmiUnknownDependenciesKind(list<String> dependenciesKind)
 ::=
-  if intGt(listLength(dependenciesKind), 0) then
   <<
    dependenciesKind="<%dependenciesKind |> dependencyKind => dependencyKind ;separator=" "%>"
   >>
 end FmiUnknownDependenciesKind;
 
-template ScalarVariableAttribute2(SimVar simVar)
+template ScalarVariableAttribute2(SimVar simVar, SimCode simCode)
  "Generates code for ScalarVariable Attribute file for FMU 2.0 target."
 ::=
 match simVar
   case SIMVAR(__) then
-  let valueReference = '<%System.tmpTick()%>'
+  let defaultValueReference = '<%System.tmpTick()%>'
+  let valueReference = getValueReference(simVar, simCode, false)
   let description = if comment then 'description="<%Util.escapeModelicaStringToXmlString(comment)%>"'
-  let variability = getVariability2(varKind, type_)
+  let variability = if getClockIndex(simVar, simCode) then "discrete" else getVariability2(varKind, type_)
+  let clockIndex = getClockIndex(simVar, simCode)
+  let previous = match varKind case CLOCKED_STATE(__) then '<%getVariableIndex(cref2simvar(previousName, simCode))%>'
   let caus = getCausality2(causality, varKind, isValueChangeable)
-  let initial = getInitialType(varKind, initialValue, causality, isValueChangeable)
+  let initial = getInitialType2(variability, caus, initialValue)
   <<
   name="<%System.stringReplace(crefStrNoUnderscore(name),"$", "_D_")%>"
   valueReference="<%valueReference%>"
   <%description%>
   variability="<%variability%>"
   causality="<%caus%>"
-  initial="<%initial%>"
+  <%if boolNot(stringEq(clockIndex, "")) then 'clockIndex="'+clockIndex+'"' %>
+  <%if boolNot(stringEq(previous, "")) then 'previous="'+previous+'"' %>
+  <%if boolNot(stringEq(initial, "")) then match aliasvar case SimCodeVar.ALIAS(__) then "" else 'initial="'+initial+'"' %>
   >>
 end ScalarVariableAttribute2;
 
@@ -435,20 +507,45 @@ match varKind
   else "local"
 end getCausality2Helper;
 
-template getInitialType(VarKind varKind, Option<DAE.Exp> initialValue, Causality c, Boolean isValueChangeable)
+template getNumberOfEventIndicators(SimCode simCode)
+ "Get the number of event indicators, which depends on the selected code target (c or cpp)."
+::=
+match simCode
+  case SIMCODE(zeroCrossings = zeroCrossings, modelInfo = MODELINFO(varInfo = vi as VARINFO(__))) then
+    match Config.simCodeTarget()
+      case "Cpp" then listLength(zeroCrossings)
+      else vi.numZeroCrossings
+    end match
+  else ""
+end getNumberOfEventIndicators;
+
+template getInitialType2(String variability, String causality, Option<DAE.Exp> initialValue)
  "Returns the Initial Attribute of ScalarVariable."
 ::=
-match c
-  case INPUT(__) then "approx"
-  else
-  match initialValue
-    case SOME(exp) then
-    match varKind
-      case STATE_DER(__) then "calculated"
-      case PARAM(__) then if isValueChangeable then "exact" else "calculated"
-      else "approx"
-    else "calculated"
-end getInitialType;
+match variability
+  case "constant" then
+    match causality
+      case "output"
+      case "local" then "exact"
+      else ""
+  case "fixed"
+  case "tunable" then
+    match causality
+      case "parameter" then "exact"
+      case "calculatedParameter"
+      case "local" then "calculated"
+      else ""
+  case "discrete"
+  case "continuous" then
+    match causality
+      case "output"
+      case "local" then
+        match initialValue
+        case SOME(exp) then "exact"
+        else "calculated"
+      else ""
+  else ""
+end getInitialType2;
 
 template ScalarVariableType2(SimVar simvar, list<SimVar> stateVars)
  "Generates code for ScalarVariable Type file for FMU 2.0 target.
@@ -462,7 +559,7 @@ case SIMVAR(__) then
     case T_INTEGER(__) then '<Integer<%ScalarVariableTypeCommonAttribute2(simvar, stateVars)%>/>'
     case T_BOOL(__) then '<Boolean<%ScalarVariableTypeCommonAttribute2(simvar, stateVars)%>/>'
     case T_STRING(__) then '<String<%ScalarVariableTypeCommonAttribute2(simvar, stateVars)%>/>'
-    case T_ENUMERATION(__) then '<Enumeration declaredType="<%Absyn.pathString2NoLeadingDot(path, ".")%>"<%ScalarVariableTypeCommonAttribute2(simvar, stateVars)%>/>'
+    case T_ENUMERATION(__) then '<Enumeration declaredType="<%Absyn.pathString(path, ".", false)%>"<%ScalarVariableTypeCommonAttribute2(simvar, stateVars)%>/>'
     else 'UNKOWN_TYPE'
 end ScalarVariableType2;
 
@@ -470,7 +567,7 @@ template ScalarVariableTypeCommonAttribute2(SimVar simvar, list<SimVar> stateVar
  "Generates code for ScalarVariable Type file for FMU 2.0 target."
 ::=
 match simvar
-case SIMVAR(varKind = varKind, initialValue = initialValue, isValueChangeable = isValueChangeable, index = index) then
+case SIMVAR(varKind = varKind, isValueChangeable = isValueChangeable, index = index) then
   match varKind
   case STATE_DER(__) then ' derivative="<%getStateSimVarIndexFromIndex(stateVars, index)%>"'
   case PARAM(__) then if isValueChangeable then '<%StartString2(simvar)%><%MinString2(simvar)%><%MaxString2(simvar)%><%NominalString2(simvar)%>' else '<%MinString2(simvar)%><%MaxString2(simvar)%><%NominalString2(simvar)%>'
@@ -480,7 +577,9 @@ end ScalarVariableTypeCommonAttribute2;
 template StartString2(SimVar simvar)
 ::=
 match simvar
-case SIMVAR(initialValue = initialValue, causality = causality, type_ = type_) then
+case SIMVAR(aliasvar = SimCodeVar.ALIAS(__)) then
+  ''
+case SIMVAR(initialValue = initialValue, varKind = varKind, causality = causality, type_ = type_, isValueChangeable = isValueChangeable) then
   match initialValue
     case SOME(e as ICONST(__)) then ' start="<%initValXml(e)%>"'
     case SOME(e as RCONST(__)) then ' start="<%initValXml(e)%>"'
@@ -488,9 +587,11 @@ case SIMVAR(initialValue = initialValue, causality = causality, type_ = type_) t
     case SOME(e as BCONST(__)) then ' start="<%initValXml(e)%>"'
     case SOME(e as ENUM_LITERAL(__)) then ' start="<%initValXml(e)%>"'
     else
-      match causality
-        case INPUT(__) then ' start="<%initDefaultValXml(type_)%>"'
-        else ''
+      let variability = getVariability2(varKind, type_)
+      let caus = getCausality2(causality, varKind, isValueChangeable)
+      let initial = getInitialType2(variability, caus, initialValue)
+      if boolOr(stringEq(initial, "exact"), boolOr(stringEq(initial, "approx"), stringEq(caus, "input"))) then ' start="<%initDefaultValXml(type_)%>"'
+      else ''
 end StartString2;
 
 template MinString2(SimVar simvar)
@@ -552,23 +653,27 @@ case SIMCODE(__) then
   >>
 end UnitDefinitions;
 
-template fmiTypeDefinitions(ModelInfo modelInfo, String FMUVersion)
+template fmiTypeDefinitions(SimCode simCode, String FMUVersion)
  "Generates code for TypeDefinitions for FMU target."
 ::=
+match simCode
+case SIMCODE(modelInfo=modelInfo) then
 match modelInfo
 case MODELINFO(vars=SIMVARS(__)) then
   <<
-  <%TypeDefinitionsHelper(SimCodeUtil.getEnumerationTypes(vars), FMUVersion)%>
+  <%TypeDefinitionsHelper(simCode, SimCodeUtil.getEnumerationTypes(vars), FMUVersion)%>
   >>
 end fmiTypeDefinitions;
 
-template TypeDefinitionsHelper(list<SimCodeVar.SimVar> vars, String FMUVersion)
+template TypeDefinitionsHelper(SimCode simCode, list<SimCodeVar.SimVar> vars, String FMUVersion)
  "Generates code for TypeDefinitions for FMU target."
 ::=
-  if intGt(listLength(vars), 0) then
+  let clocks = if isFMIVersion10(FMUVersion) then "" else TypeDefinitionsClocks(simCode)
+  if boolOr(intGt(listLength(vars), 0), boolNot(stringEq(clocks, ""))) then
   <<
   <TypeDefinitions>
     <%vars |> var => TypeDefinition(var,FMUVersion) ;separator="\n"%>
+    <%clocks%>
   </TypeDefinitions>
   >>
 end TypeDefinitionsHelper;
@@ -589,7 +694,7 @@ match type_
   case T_ENUMERATION(__) then
   if isFMIVersion20(FMUVersion) then
   <<
-  <SimpleType name="<%Absyn.pathString2NoLeadingDot(path, ".")%>">
+  <SimpleType name="<%Absyn.pathString(path, ".", false)%>">
     <Enumeration>
       <%names |> name hasindex i0 fromindex 1 => '<Item name="<%name%>" value="<%i0%>"/>' ;separator="\n"%>
     </Enumeration>
@@ -597,7 +702,7 @@ match type_
   >>
   else
   <<
-  <Type name="<%Absyn.pathString2NoLeadingDot(path, ".")%>">
+  <Type name="<%Absyn.pathString(path, ".", false)%>">
     <EnumerationType>
       <%names |> name => '<Item name="<%name%>"/>' ;separator="\n"%>
     </EnumerationType>

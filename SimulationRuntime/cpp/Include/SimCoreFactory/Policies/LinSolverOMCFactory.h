@@ -24,14 +24,14 @@ public:
     // ObjectFactory<CreationPolicy>::_factory->UnloadAllLibs(); todo solver lib wird in linsolver factory entlanden
   }
 
-  virtual boost::shared_ptr<ILinSolverSettings> createLinSolverSettings(string lin_solver)
+  virtual shared_ptr<ILinSolverSettings> createLinSolverSettings(string lin_solver)
     {
     string lin_solver_key;
 
         if(lin_solver.compare("umfpack") == 0)
         {
-            PATH umfpack_path = ObjectFactory<CreationPolicy>::_library_path;
-            PATH umfpack_name(UMFPACK_LIB);
+            fs::path umfpack_path = ObjectFactory<CreationPolicy>::_library_path;
+            fs::path umfpack_name(UMFPACK_LIB);
             umfpack_path/=umfpack_name;
             LOADERRESULT result = ObjectFactory<CreationPolicy>::_factory->LoadLibrary(umfpack_path.string(),*_linsolver_type_map);
             if (result != LOADER_SUCCESS)
@@ -39,6 +39,18 @@ public:
                 throw ModelicaSimulationError(MODEL_FACTORY,"Failed loading umfpack solver library!");
             }
             lin_solver_key.assign("extension_export_umfpack");
+        }
+		else if(lin_solver.compare("linearSolver") == 0)
+        {
+            fs::path linearSolver_path = ObjectFactory<CreationPolicy>::_library_path;
+            fs::path linearSolver_name(LINEARSOLVER_LIB);
+            linearSolver_path/=linearSolver_name;
+            LOADERRESULT result = ObjectFactory<CreationPolicy>::_factory->LoadLibrary(linearSolver_path.string(),*_linsolver_type_map);
+            if (result != LOADER_SUCCESS)
+            {
+                throw ModelicaSimulationError(MODEL_FACTORY,"Failed loading linear solver library!");
+            }
+            lin_solver_key.assign("extension_export_linearSolver");
         }
         else
             throw ModelicaSimulationError(MODEL_FACTORY,"Selected linear solver is not available");
@@ -52,22 +64,22 @@ public:
         {
             throw ModelicaSimulationError(MODEL_FACTORY,"No such linear solver Settings");
         }
-        boost::shared_ptr<ILinSolverSettings> linsolversetting = boost::shared_ptr<ILinSolverSettings>(iter->second.create());
+        shared_ptr<ILinSolverSettings> linsolversetting = shared_ptr<ILinSolverSettings>(iter->second.create());
         return linsolversetting;
   }
 
-  virtual boost::shared_ptr<IAlgLoopSolver> createLinSolver(IAlgLoop* algLoop, string solver_name, boost::shared_ptr<ILinSolverSettings> solver_settings)
+  virtual shared_ptr<IAlgLoopSolver> createLinSolver(ILinearAlgLoop* algLoop, string solver_name, shared_ptr<ILinSolverSettings> solver_settings)
   {
     if(_last_selected_solver.compare(solver_name) == 0)
     {
-            std::map<std::string, factory<IAlgLoopSolver,IAlgLoop*, ILinSolverSettings*> >::iterator iter;
-            std::map<std::string, factory<IAlgLoopSolver,IAlgLoop*, ILinSolverSettings*> >& linSolverFactory(_linsolver_type_map->get());
+            std::map<std::string, factory<IAlgLoopSolver,ILinearAlgLoop*, ILinSolverSettings*> >::iterator iter;
+            std::map<std::string, factory<IAlgLoopSolver,ILinearAlgLoop*, ILinSolverSettings*> >& linSolverFactory(_linsolver_type_map->get());
             iter = linSolverFactory.find(solver_name);
             if (iter == linSolverFactory.end())
             {
                 throw ModelicaSimulationError(MODEL_FACTORY,"No such linear Solver");
             }
-            boost::shared_ptr<IAlgLoopSolver> solver = boost::shared_ptr<IAlgLoopSolver>(iter->second.create(algLoop,solver_settings.get()));
+            shared_ptr<IAlgLoopSolver> solver = shared_ptr<IAlgLoopSolver>(iter->second.create(algLoop,solver_settings.get()));
 
             return solver;
     }

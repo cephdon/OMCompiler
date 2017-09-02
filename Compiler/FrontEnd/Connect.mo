@@ -34,7 +34,6 @@ encapsulated package Connect
   package:     Connect
   description: Connection set management
 
-  RCS: $Id$
 
   Connections generate connection sets which are stored in the Sets type, which
   is then used to generate equations and evaluate stream operators during
@@ -116,12 +115,6 @@ public uniontype SetTrieNode
       variable, if the leaf represents a stream variable.";
     Integer connectCount "How many times this connector has been connected.";
   end SET_TRIE_LEAF;
-
-  record SET_TRIE_DELETED
-    "Represents a connector which has been deleted, i.e. a conditional component
-     with condition = false."
-    String name;
-  end SET_TRIE_DELETED;
 end SetTrieNode;
 
 public type SetTrie = SetTrieNode "A trie, a.k.a. prefix tree, that maps crefs to sets.";

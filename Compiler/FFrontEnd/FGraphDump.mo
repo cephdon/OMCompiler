@@ -34,7 +34,6 @@ encapsulated package FGraphDump
   package:     FGraphDump
   description: A graph for instantiation
 
-  RCS: $Id: FGraphDump.mo 14085 2012-11-27 12:12:40Z adrpo $
 
   This module builds a graph out of SCode
 "
@@ -57,6 +56,7 @@ type Data = FCore.Data;
 type Kind = FCore.Kind;
 type Ref = FCore.Ref;
 type Refs = FCore.Refs;
+type RefTree = FCore.RefTree;
 type Children = FCore.Children;
 type Parents = FCore.Parents;
 type ImportTable = FCore.ImportTable;
@@ -70,7 +70,6 @@ type Types = list<DAE.Type>;
 
 protected
 import Flags;
-import List;
 import Dump;
 import Absyn;
 import Util;
@@ -111,7 +110,7 @@ protected function addNodes
   input list<Ref> inRefs;
   output tuple<GraphML.GraphInfo,Integer> gout;
 algorithm
-  gout := matchcontinue(gin, inRefs)
+  gout := match(gin, inRefs)
     local
       tuple<GraphML.GraphInfo,Integer> g;
       list<Ref> rest;
@@ -120,23 +119,18 @@ algorithm
     case (_, {}) then gin;
 
     case (g, n::rest)
-      equation
         // if not userdefined or top, skip it
-        true = not FNode.isRefTop(n) and
-               not FNode.isRefUserDefined(n);
-        g = addNodes(g, rest);
-      then
-        g;
+        guard not FNode.isRefTop(n) and
+               not FNode.isRefUserDefined(n)
+        then addNodes(g, rest);
 
 
     case (g, n::rest)
       equation
         g = addNode(g, FNode.fromRef(n));
-        g = addNodes(g, rest);
-      then
-        g;
+        then addNodes(g, rest);
 
-  end matchcontinue;
+  end match;
 end addNodes;
 
 protected function addNode
@@ -167,9 +161,9 @@ algorithm
 
         (gi, _) = GraphML.addNode(
               "n" + intString(FNode.id(node)),
-              color, {label}, shape, NONE(), {}, i, gi);
+              color,GraphML.BORDERWIDTH_STANDARD, {label}, shape, NONE(), {}, i, gi);
 
-        nrefs = List.map(FNode.getAvlTreeValues({SOME(kids)}, {}), FNode.getAvlValue);
+        nrefs = RefTree.listValues(kids);
         ((gi,i)) = addNodes((gi,i), nrefs);
       then
         ((gi,i));
@@ -185,7 +179,7 @@ algorithm
 
         (gi, _) = GraphML.addNode(
               "n" + intString(FNode.id(node)),
-              color, {label}, shape, NONE(), {}, i, gi);
+              color,GraphML.BORDERWIDTH_STANDARD, {label}, shape, NONE(), {}, i, gi);
 
         (gi, _) = GraphML.addEdge(
                    "r" + intString(FNode.id(node)),
@@ -214,7 +208,7 @@ algorithm
                    {},
                    gi);*/
 
-        nrefs = List.map(FNode.getAvlTreeValues({SOME(kids)}, {}), FNode.getAvlValue);
+        nrefs = RefTree.listValues(kids);
         ((gi,i)) = addNodes((gi,i), nrefs);
       then
         ((gi,i));
@@ -230,7 +224,7 @@ algorithm
 
         (gi, _) = GraphML.addNode(
               "n" + intString(FNode.id(node)),
-              color, {label}, shape, NONE(), {}, i, gi);
+              color,GraphML.BORDERWIDTH_STANDARD, {label}, shape, NONE(), {}, i, gi);
 
         (gi, _) = GraphML.addEdge(
                    "r" + intString(FNode.id(node)),
@@ -259,7 +253,7 @@ algorithm
                    {},
                    gi);*/
 
-        nrefs = List.map(FNode.getAvlTreeValues({SOME(kids)}, {}), FNode.getAvlValue);
+        nrefs = RefTree.listValues(kids);
         ((gi,i)) = addNodes((gi,i), nrefs);
       then
         ((gi,i));
@@ -279,7 +273,7 @@ algorithm
 
         (gi, _) = GraphML.addNode(
               "n" + intString(FNode.id(node)),
-              color, {label}, shape, NONE(), {}, i, gi);
+              color,GraphML.BORDERWIDTH_STANDARD, {label}, shape, NONE(), {}, i, gi);
 
         (gi, _) = GraphML.addEdge(
                    "e" + intString(FNode.id(node)),
@@ -294,7 +288,7 @@ algorithm
                    {},
                    gi);
 
-        nrefs = List.map(FNode.getAvlTreeValues({SOME(kids)}, {}), FNode.getAvlValue);
+        nrefs = RefTree.listValues(kids);
         ((gi,i)) = addNodes((gi,i), nrefs);
       then
         ((gi,i));

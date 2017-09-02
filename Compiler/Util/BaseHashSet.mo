@@ -37,7 +37,6 @@ encapsulated package BaseHashSet
   description: BaseHashSet is a generic implementation of hashsets.
                See HashSet*.mo to see how to use it.
 
-  RCS: $Id: BaseHashSet.mo 12193 2012-06-23 08:33:08Z Frenkel TUD $
 
   This file is an extension to OpenModelica.
 
@@ -293,6 +292,20 @@ algorithm
       false;
   end matchcontinue;
 end has;
+
+public function hasAll "Returns true if all keys are in the HashSet."
+  input list<Key> keys;
+  input HashSet hashSet;
+  output Boolean b = true;
+algorithm
+  for key in keys loop
+    b := has(key, hashSet);
+
+    if not b then
+      return;
+    end if;
+  end for;
+end hasAll;
 
 public function get
 "Returns Key from the HashSet. Fails if not present"

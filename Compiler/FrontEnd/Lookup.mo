@@ -34,7 +34,6 @@ encapsulated package Lookup
   package:     Lookup
   description: Scoping rules
 
-  RCS: $Id$
 
   This module is responsible for the lookup mechanism in Modelica.
   It is responsible for looking up classes, variables, etc. in the
@@ -74,7 +73,9 @@ protected import InstUtil;
 protected import InnerOuter;
 protected import List;
 protected import Mod;
+protected import Mutable;
 protected import Prefix;
+protected import PrefixUtil;
 protected import Static;
 protected import UnitAbsyn;
 protected import SCodeDump;
@@ -92,6 +93,33 @@ protected import Values;
  */
 
 public function lookupType
+" This function finds a specified type in the environment.
+  If it finds a function instead, this will be implicitly instantiated
+  and lookup will start over.
+"
+  input FCore.Cache inCache;
+  input FCore.Graph inEnv "environment to search in";
+  input Absyn.Path inPath "type to look for";
+  input Option<SourceInfo> msg "Messaage flag, SOME() outputs lookup error messages";
+  output FCore.Cache cache;
+  output DAE.Type t "the found type";
+  output FCore.Graph env "The environment the type was found in";
+algorithm
+  (cache,t,env) := match inPath
+
+    case Absyn.IDENT()
+      equation
+        (cache, t, env) = lookupTypeIdent(inCache,inEnv,inPath.name,msg);
+      then (cache, t, env);
+
+    else
+      equation
+        (cache, t, env) = lookupTypeQual(inCache,inEnv,inPath,msg);
+      then (cache, t, env);
+  end match;
+end lookupType;
+
+protected function lookupTypeQual
 " This function finds a specified type in the environment.
   If it finds a function instead, this will be implicitly instantiated
   and lookup will start over.
@@ -118,14 +146,7 @@ algorithm
     // Special handling for Connections.isRoot
     case (cache,env,Absyn.QUALIFIED("Connections", Absyn.IDENT("isRoot")),_)
       equation
-        t = DAE.T_FUNCTION({DAE.FUNCARG("x", DAE.T_ANYTYPE_DEFAULT, DAE.C_VAR(), DAE.NON_PARALLEL(), NONE())}, DAE.T_BOOL_DEFAULT, DAE.FUNCTION_ATTRIBUTES_DEFAULT, DAE.emptyTypeSource);
-      then
-        (cache, t, env);
-
-    // Special handling for MultiBody 3.x rooted() operator
-    case (cache,env,Absyn.IDENT("rooted"),_)
-      equation
-        t = DAE.T_FUNCTION({DAE.FUNCARG("x", DAE.T_ANYTYPE_DEFAULT, DAE.C_VAR(), DAE.NON_PARALLEL(), NONE())}, DAE.T_BOOL_DEFAULT, DAE.FUNCTION_ATTRIBUTES_DEFAULT, DAE.emptyTypeSource);
+        t = DAE.T_FUNCTION({DAE.FUNCARG("x", DAE.T_ANYTYPE_DEFAULT, DAE.C_VAR(), DAE.NON_PARALLEL(), NONE())}, DAE.T_BOOL_DEFAULT, DAE.FUNCTION_ATTRIBUTES_DEFAULT, inPath);
       then
         (cache, t, env);
 
@@ -133,26 +154,19 @@ algorithm
     case (cache,env,Absyn.QUALIFIED("Connections", Absyn.IDENT("uniqueRootIndices")),_)
       equation
         t = DAE.T_FUNCTION({
-              DAE.FUNCARG("roots", DAE.T_ARRAY(DAE.T_ANYTYPE_DEFAULT, {DAE.DIM_UNKNOWN()}, DAE.emptyTypeSource), DAE.C_VAR(), DAE.NON_PARALLEL(), NONE()),
-              DAE.FUNCARG("nodes", DAE.T_ARRAY(DAE.T_ANYTYPE_DEFAULT, {DAE.DIM_UNKNOWN()}, DAE.emptyTypeSource), DAE.C_VAR(), DAE.NON_PARALLEL(), NONE()),
+              DAE.FUNCARG("roots", DAE.T_ARRAY(DAE.T_ANYTYPE_DEFAULT, {DAE.DIM_UNKNOWN()}), DAE.C_VAR(), DAE.NON_PARALLEL(), NONE()),
+              DAE.FUNCARG("nodes", DAE.T_ARRAY(DAE.T_ANYTYPE_DEFAULT, {DAE.DIM_UNKNOWN()}), DAE.C_VAR(), DAE.NON_PARALLEL(), NONE()),
               DAE.FUNCARG("message", DAE.T_STRING_DEFAULT, DAE.C_VAR(), DAE.NON_PARALLEL(), NONE())},
-              DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT, {DAE.DIM_UNKNOWN()}, DAE.emptyTypeSource),
-              DAE.FUNCTION_ATTRIBUTES_DEFAULT, DAE.emptyTypeSource);
+              DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT, {DAE.DIM_UNKNOWN()}),
+              DAE.FUNCTION_ATTRIBUTES_DEFAULT, inPath);
       then
         (cache, t, env);
-
-    // For simple names
-    case (cache,env,(path as Absyn.IDENT()),_)
-      equation
-        (cache,t,env_1) = lookupTypeInEnv(cache,env,path);
-      then
-        (cache,t,env_1);
 
     // Special classes (function, record, metarecord, external object)
     case (cache,env,path,_)
       equation
-        (cache,c,env_1) = lookupClass(cache,env,path,false);
-        (cache,t,env_2) = lookupType2(cache,env_1,path,c);
+        (cache,c,env_1) = lookupClass(cache,env,path);
+        (cache,t,env_2) = lookupType2(cache,env_1,c);
       then
         (cache,t,env_2);
 
@@ -166,7 +180,64 @@ algorithm
       then
         fail();
   end matchcontinue;
-end lookupType;
+end lookupTypeQual;
+
+public function lookupTypeIdent
+" This function finds a specified type in the environment.
+  If it finds a function instead, this will be implicitly instantiated
+  and lookup will start over.
+"
+  input FCore.Cache inCache;
+  input FCore.Graph inEnv "environment to search in";
+  input String ident "type to look for";
+  input Option<SourceInfo> msg "Messaage flag, SOME() outputs lookup error messages";
+  output FCore.Cache outCache;
+  output DAE.Type outType "the found type";
+  output FCore.Graph outEnv "The environment the type was found in";
+algorithm
+  (outCache,outType,outEnv):=
+  matchcontinue (inCache,inEnv,ident,msg)
+    local
+      DAE.Type t;
+      FCore.Graph env_1,env,env_2;
+      Absyn.Path path;
+      SCode.Element c;
+      String classname,scope;
+      FCore.Cache cache;
+      SourceInfo info;
+
+    // Special handling for MultiBody 3.x rooted() operator
+    case (cache,env,"rooted",_)
+      equation
+        t = DAE.T_FUNCTION({DAE.FUNCARG("x", DAE.T_ANYTYPE_DEFAULT, DAE.C_VAR(), DAE.NON_PARALLEL(), NONE())}, DAE.T_BOOL_DEFAULT, DAE.FUNCTION_ATTRIBUTES_DEFAULT, Absyn.IDENT("rooted"));
+      then
+        (cache, t, env);
+
+    // For simple names
+    case (cache,env,_,_)
+      equation
+        (cache,t,env_1) = lookupTypeInEnv(cache,env,ident);
+      then
+        (cache,t,env_1);
+
+    // Special classes (function, record, metarecord, external object)
+    case (cache,env,_,_)
+      equation
+        (cache,c,env_1) = lookupClassIdent(cache,env,ident);
+        (cache,t,env_2) = lookupType2(cache,env_1,c);
+      then
+        (cache,t,env_2);
+
+    // Error for type not found
+    case (_,env,_,SOME(info))
+      equation
+        classname = stringAppend(ident," (its type) ");
+        scope = FGraph.printGraphPathStr(env);
+        Error.addSourceMessage(Error.LOOKUP_ERROR, {classname,scope}, info);
+      then
+        fail();
+  end matchcontinue;
+end lookupTypeIdent;
 
 protected function lookupType2
 " This function handles the case when we looked up a class, but need to
@@ -174,13 +245,12 @@ check if it is function, record, metarecord, etc.
 "
   input FCore.Cache inCache;
   input FCore.Graph inEnv "environment to search in";
-  input Absyn.Path inPath "type to look for";
   input SCode.Element inClass "the class lookupType found";
   output FCore.Cache outCache;
   output DAE.Type outType "the found type";
   output FCore.Graph outEnv "The environment the type was found in";
 algorithm
-  (outCache,outType,outEnv) := matchcontinue (inCache,inEnv,inPath,inClass)
+  (outCache,outType,outEnv) := matchcontinue (inCache,inEnv,inClass)
     local
       DAE.Type t;
       FCore.Graph env_1,env_2,env_3;
@@ -193,20 +263,19 @@ algorithm
       list<String> names;
       ClassInf.State ci_state;
       SCode.Encapsulated encflag;
-      DAE.TypeSource ts;
       DAE.Mod mod;
 
     // Record constructors
-    case (cache,env_1,_,c as SCode.CLASS(restriction=SCode.R_RECORD(_)))
+    case (cache,env_1,c as SCode.CLASS(restriction=SCode.R_RECORD(_)))
       equation
         (cache,env_1,t) = buildRecordType(cache,env_1,c);
       then
         (cache,t,env_1);
 
     // lookup of an enumeration type
-    case (cache,env_1,path,c as SCode.CLASS(name=id,encapsulatedPrefix=encflag,restriction=r as SCode.R_ENUMERATION()))
+    case (cache,env_1,c as SCode.CLASS(name=id,encapsulatedPrefix=encflag,restriction=r as SCode.R_ENUMERATION()))
       equation
-        env_2 = FGraph.openScope(env_1, encflag, SOME(id), SOME(FCore.CLASS_SCOPE()));
+        env_2 = FGraph.openScope(env_1, encflag, id, SOME(FCore.CLASS_SCOPE()));
         ci_state = ClassInf.start(r, FGraph.getGraphName(env_2));
         // fprintln(Flags.INST_TRACE, "LOOKUP TYPE ICD: " + FGraph.printGraphPathStr(env_1) + " path:" + Absyn.pathString(path));
         mod = Mod.getClassModifier(env_1, id);
@@ -221,49 +290,48 @@ algorithm
         Types.checkEnumDuplicateLiterals(names, c.info);
         // generate the enumeration type
         path = FGraph.getGraphName(env_3);
-        ts = Types.mkTypeSource(SOME(path));
-        t = DAE.T_ENUMERATION(NONE(), path, names, types, {}, ts);
+        t = DAE.T_ENUMERATION(NONE(), path, names, types, {});
         env_3 = FGraph.mkTypeNode(env_3, id, t);
       then
         (cache,t,env_3);
 
     // Real Type
-    case (cache,env_1,_,SCode.CLASS(restriction=SCode.R_TYPE(),classDef=SCode.DERIVED(typeSpec=Absyn.TPATH(path=Absyn.IDENT(name="Real")))))
+    case (cache,env_1,SCode.CLASS(restriction=SCode.R_TYPE(),classDef=SCode.DERIVED(typeSpec=Absyn.TPATH(path=Absyn.IDENT(name="Real")))))
       equation
-        t = DAE.T_REAL({}, DAE.emptyTypeSource);
+        t = DAE.T_REAL_DEFAULT;
       then
         (cache,t,env_1);
 
     // Integer Type
-    case (cache,env_1,_,SCode.CLASS(restriction=SCode.R_TYPE(),classDef=SCode.DERIVED(typeSpec=Absyn.TPATH(path=Absyn.IDENT(name="Integer")))))
+    case (cache,env_1,SCode.CLASS(restriction=SCode.R_TYPE(),classDef=SCode.DERIVED(typeSpec=Absyn.TPATH(path=Absyn.IDENT(name="Integer")))))
       equation
-        t = DAE.T_INTEGER({}, DAE.emptyTypeSource);
+        t = DAE.T_INTEGER_DEFAULT;
       then
         (cache,t,env_1);
 
     // Boolean Type
-    case (cache,env_1,_,SCode.CLASS(restriction=SCode.R_TYPE(),classDef=SCode.DERIVED(typeSpec=Absyn.TPATH(path=Absyn.IDENT(name="Boolean")))))
+    case (cache,env_1,SCode.CLASS(restriction=SCode.R_TYPE(),classDef=SCode.DERIVED(typeSpec=Absyn.TPATH(path=Absyn.IDENT(name="Boolean")))))
       equation
-        t = DAE.T_BOOL({}, DAE.emptyTypeSource);
+        t = DAE.T_BOOL_DEFAULT;
       then
         (cache,t,env_1);
 
     // String Type
-    case (cache,env_1,_,SCode.CLASS(restriction=SCode.R_TYPE(),classDef=SCode.DERIVED(typeSpec=Absyn.TPATH(path=Absyn.IDENT(name="String")))))
+    case (cache,env_1,SCode.CLASS(restriction=SCode.R_TYPE(),classDef=SCode.DERIVED(typeSpec=Absyn.TPATH(path=Absyn.IDENT(name="String")))))
       equation
-        t = DAE.T_STRING({}, DAE.emptyTypeSource);
+        t = DAE.T_STRING_DEFAULT;
       then
         (cache,t,env_1);
 
     // Metamodelica extension, Uniontypes
-    case (cache,env_1,_,c as SCode.CLASS(restriction=SCode.R_METARECORD()))
+    case (cache,env_1,c as SCode.CLASS(restriction=SCode.R_METARECORD()))
       equation
         (cache,env_2,t) = buildMetaRecordType(cache,env_1,c);
       then
         (cache,t,env_2);
 
     // Classes that are external objects. Implicitly instantiate to get type
-    case (cache,env_1,_,c)
+    case (cache,env_1,c)
       equation
         // fprintln(Flags.INST_TRACE, "LOOKUP TYPE ICD: " + FGraph.printGraphPathStr(env_1) + " path:" + Absyn.pathString(path));
         true = SCode.classIsExternalObject(c);
@@ -273,19 +341,19 @@ algorithm
           {}, false, InstTypes.TOP_CALL(), ConnectionGraph.EMPTY, Connect.emptySet);
         SCode.CLASS(name=id) = c;
         (env_1, _) = FGraph.stripLastScopeRef(env_1);
-        (cache,t,env_2) = lookupTypeInEnv(cache,env_1,Absyn.IDENT(id));
+        (cache,t,env_2) = lookupTypeInEnv(cache,env_1,id);
       then
         (cache,t,env_2);
 
     // If we find a class definition that is a function or external function
     // with the same name then we implicitly instantiate that function, look
     // up the type.
-    case (cache,env_1,_,c as SCode.CLASS(name = id,restriction=SCode.R_FUNCTION(_)))
+    case (cache,env_1,c as SCode.CLASS(name = id,restriction=SCode.R_FUNCTION(_)))
       equation
         // fprintln(Flags.INST_TRACE, "LOOKUP TYPE ICD: " + FGraph.printGraphPathStr(env_1) + " path:" + Absyn.pathString(path));
         (cache,env_2,_) =
         InstFunction.implicitFunctionTypeInstantiation(cache,env_1,InnerOuter.emptyInstHierarchy,c);
-        (cache,t,env_3) = lookupTypeInEnv(cache,env_2,Absyn.IDENT(id));
+        (cache,t,env_3) = lookupTypeInEnv(cache,env_2,id);
       then
         (cache,t,env_3);
   end matchcontinue;
@@ -379,12 +447,12 @@ public function lookupClass "Tries to find a specified class in an environment"
   input FCore.Cache inCache;
   input FCore.Graph inEnv "Where to look";
   input Absyn.Path inPath "Path of the class to look for";
-  input Boolean msg "Controls error messages";
+  input Option<SourceInfo> inInfo = NONE();
   output FCore.Cache outCache;
   output SCode.Element outClass;
   output FCore.Graph outEnv;
 algorithm
-  (outCache,outClass,outEnv) := matchcontinue(inCache, inEnv, inPath, msg)
+  (outCache,outClass,outEnv) := matchcontinue(inCache, inEnv, inPath)
     local
       Absyn.Path p, id;
       String name, className;
@@ -399,25 +467,25 @@ algorithm
 
     // see if the first path ident is a component
     // we might have a component reference, i.e. world.gravityAcceleration
-    case (_,_,Absyn.QUALIFIED(name, id),_)
+    case (_,_,Absyn.QUALIFIED(name, id))
       equation
         ErrorExt.setCheckpoint("functionViaComponentRef2");
-        (outCache,_,_,_,_,_,_,cenv,_) = lookupVar(inCache, inEnv, ComponentReference.makeCrefIdent(name, DAE.T_UNKNOWN_DEFAULT, {}));
-        (outCache, outClass, outEnv) = lookupClass(outCache, cenv, id, false);
+        (outCache,_,_,_,_,_,_,cenv,_) = lookupVarIdent(inCache, inEnv, name, {});
+        (outCache, outClass, outEnv) = lookupClass(outCache, cenv, id);
         ErrorExt.rollBack("functionViaComponentRef2");
       then
         (outCache,outClass,outEnv);
 
-   case (_,_,Absyn.QUALIFIED(_, _),_)
+   case (_,_,Absyn.QUALIFIED(_, _))
      equation
        ErrorExt.rollBack("functionViaComponentRef2");
      then
        fail();
 
     // normal case
-    case (_, _, _, _)
+    case (_, _, _)
       equation
-         (outCache,outClass,outEnv,_) = lookupClass1(inCache, inEnv, inPath, {}, Util.makeStatefulBoolean(false), msg);
+         (outCache,outClass,outEnv,_) = lookupClass1(inCache, inEnv, inPath, {}, Mutable.create(false), inInfo);
          // print("CLRET: " + SCode.elementName(outClass) + " outenv: " + FGraph.printGraphPathStr(outEnv) + "\n");
       then
         (outCache,outClass,outEnv);
@@ -425,41 +493,44 @@ algorithm
   // print("Lookup C2: " + " outenv: " + FGraph.printGraphPathStr(outEnv) + "\n");
 end lookupClass;
 
+public function lookupClassIdent "Like lookupClass, but takes a String as ident for input (avoids Absyn.IDENT() creation)"
+  input FCore.Cache inCache;
+  input FCore.Graph inEnv "Where to look";
+  input String ident;
+  input Option<SourceInfo> inInfo = NONE();
+  output FCore.Cache outCache;
+  output SCode.Element outClass;
+  output FCore.Graph outEnv;
+algorithm
+  (outCache,outClass,outEnv) := lookupClassInEnv(inCache, inEnv, ident, {}, Mutable.create(false), inInfo);
+end lookupClassIdent;
+
 protected function lookupClass1 "help function to lookupClass, does all the work."
   input FCore.Cache inCache;
   input FCore.Graph inEnv;
   input Absyn.Path inPath "The path of the class to lookup";
   input FCore.Scope inPrevFrames "Environment in reverse order. Contains frames we previously had in the scope. Will be looked up instead of the environment in order to avoid infinite recursion.";
-  input Util.StatefulBoolean inState "If true, we have found a class. If the path was qualified, we should no longer look in previous frames of the environment";
-  input Boolean msg "Print error messages";
+  input Mutable<Boolean> inState "If true, we have found a class. If the path was qualified, we should no longer look in previous frames of the environment";
+  input Option<SourceInfo> inInfo;
   output FCore.Cache outCache;
   output SCode.Element outClass;
   output FCore.Graph outEnv "The environment in which the class was found (not the environment inside the class)";
   output FCore.Scope outPrevFrames;
+protected
+  Integer errors = Error.getNumErrorMessages();
+  SourceInfo info;
 algorithm
-  (outCache,outClass,outEnv,outPrevFrames) := matchcontinue (inCache,inEnv,inPath,inPrevFrames,inState,msg)
-    local
-      String id,scope;
-    case (_,_,_,_,_,_)
-      equation
-        (outCache,outClass,outEnv,outPrevFrames) = lookupClass2(inCache,inEnv,inPath,inPrevFrames,inState,false);
-      then (outCache,outClass,outEnv,outPrevFrames);
-    case (_,_,_,_,_,true)
-      equation
-        id = Absyn.pathString(inPath);
-        scope = FGraph.printGraphPathStr(inEnv);
-        Error.addMessage(Error.LOOKUP_ERROR, {id,scope});
-      then fail();
-    /*case (_,_,_,_,_,_)
-      equation
-        true = Flags.isSet(Flags.FAILTRACE);
-        id = Absyn.pathString(inPath);
-        scope = FGraph.printGraphPathStr(inEnv);
-        fprintln(Flags.FAILTRACE,  "- Lookup.lookupClass failed:\n" +
-          id + " in:\n" +
-          scope);
-      then fail();*/
-  end matchcontinue;
+  try
+    (outCache, outClass, outEnv, outPrevFrames) := lookupClass2(inCache, inEnv,
+      inPath, inPrevFrames, inState, inInfo);
+  else
+    if isSome(inInfo) and errors == Error.getNumErrorMessages() then
+      Error.addSourceMessage(Error.LOOKUP_ERROR,
+        {Absyn.pathString(inPath), FGraph.printGraphPathStr(inEnv)},
+        Util.getOption(inInfo));
+    end if;
+    fail();
+  end try;
 end lookupClass1;
 
 protected function lookupClass2 "help function to lookupClass, does all the work."
@@ -467,14 +538,14 @@ protected function lookupClass2 "help function to lookupClass, does all the work
   input FCore.Graph inEnv;
   input Absyn.Path inPath "The path of the class to lookup";
   input FCore.Scope inPrevFrames "Environment in reverse order. Contains frames we previously had in the scope. Will be looked up instead of the environment in order to avoid infinite recursion.";
-  input Util.StatefulBoolean inState "If true, we have found a class. If the path was qualified, we should no longer look in previous frames of the environment";
-  input Boolean msg "Print error messages";
+  input Mutable<Boolean> inState "If true, we have found a class. If the path was qualified, we should no longer look in previous frames of the environment";
+  input Option<SourceInfo> inInfo;
   output FCore.Cache outCache;
   output SCode.Element outClass;
   output FCore.Graph outEnv "The environment in which the class was found (not the environment inside the class)";
   output FCore.Scope outPrevFrames;
 algorithm
-  (outCache,outClass,outEnv,outPrevFrames) := match (inCache,inEnv,inPath,inPrevFrames,inState,msg)
+  (outCache,outClass,outEnv,outPrevFrames) := match (inCache,inEnv,inPath,inPrevFrames)
     local
       FCore.Node f;
       FCore.Ref r;
@@ -487,27 +558,27 @@ algorithm
       Option<FCore.Ref> optFrame;
 
     // Fully qualified names are looked up in top scope. With previous frames remembered.
-    case (cache,env,Absyn.FULLYQUALIFIED(path),{},_,_)
+    case (cache,env,Absyn.FULLYQUALIFIED(path),{})
       equation
         r::prevFrames = listReverse(FGraph.currentScope(env));
-        Util.setStatefulBoolean(inState,true);
+        Mutable.update(inState,true);
         env = FGraph.setScope(env, {r});
-        (cache,c,env_1,prevFrames) = lookupClass2(cache,env,path,prevFrames,inState,msg);
+        (cache,c,env_1,prevFrames) = lookupClass2(cache,env,path,prevFrames,inState,inInfo);
       then
         (cache,c,env_1,prevFrames);
 
     // Qualified names are handled in a special function in order to avoid infinite recursion.
-    case (cache,env,(Absyn.QUALIFIED(name = pack,path = path)),prevFrames,_,_)
+    case (cache,env,(Absyn.QUALIFIED(name = pack,path = path)),prevFrames)
       equation
         (optFrame,prevFrames) = lookupPrevFrames(pack,prevFrames);
-        (cache,c,env_2,prevFrames) = lookupClassQualified(cache,env,pack,path,optFrame,prevFrames,inState,msg);
+        (cache,c,env_2,prevFrames) = lookupClassQualified(cache,env,pack,path,optFrame,prevFrames,inState,inInfo);
       then
         (cache,c,env_2,prevFrames);
 
     // Simple names
-    case (cache,env,Absyn.IDENT(name = id),prevFrames,_,_)
+    case (cache,env,Absyn.IDENT(name = id),prevFrames)
       equation
-        (cache,c,env_1,prevFrames) = lookupClassInEnv(cache, env, id, prevFrames, inState, msg);
+        (cache,c,env_1,prevFrames) = lookupClassInEnv(cache, env, id, prevFrames, inState, inInfo);
       then
         (cache,c,env_1,prevFrames);
 
@@ -527,14 +598,14 @@ protected function lookupClassQualified
   input Absyn.Path path;
   input Option<FCore.Ref> inOptFrame;
   input FCore.Scope inPrevFrames "Environment in reverse order. Contains frames we previously had in the scope. Will be looked up instead of the environment in order to avoid infinite recursion.";
-  input Util.StatefulBoolean inState "If true, we have found a class. If the path was qualified, we should no longer look in previous frames of the environment";
-  input Boolean msg "Print error messages";
+  input Mutable<Boolean> inState "If true, we have found a class. If the path was qualified, we should no longer look in previous frames of the environment";
+  input Option<SourceInfo> inInfo;
   output FCore.Cache outCache;
   output SCode.Element outClass;
   output FCore.Graph outEnv "The environment in which the class was found (not the environment inside the class)";
   output FCore.Scope outPrevFrames;
 algorithm
-  (outCache,outClass,outEnv,outPrevFrames) := match (inCache,inEnv,id,path,inOptFrame,inPrevFrames,inState,msg)
+  (outCache,outClass,outEnv,outPrevFrames) := match (inCache,inEnv,id,path,inOptFrame,inPrevFrames)
     local
       SCode.Element c;
       Absyn.Path scope;
@@ -545,20 +616,20 @@ algorithm
       Option<FCore.Ref> optFrame;
 
     // Qualified names first identifier cached in previous frames
-    case (cache,env,_,_,SOME(frame),prevFrames,_,_)
+    case (cache,env,_,_,SOME(frame),prevFrames)
       equation
-        Util.setStatefulBoolean(inState,true);
+        Mutable.update(inState,true);
         env = FGraph.pushScopeRef(env, frame);
-        (cache,c,env,prevFrames) = lookupClass2(cache,env,path,prevFrames,inState,msg);
+        (cache,c,env,prevFrames) = lookupClass2(cache,env,path,prevFrames,inState,inInfo);
       then
         (cache,c,env,prevFrames);
 
     // Qualified names in package and non-package
-    case (cache,env,_,_,NONE(),_,_,_)
+    case (cache,env,_,_,NONE(),_)
       equation
-        (cache,c,env,prevFrames) = lookupClass2(cache,env,Absyn.IDENT(id),{},inState,msg);
+        (cache,c,env,prevFrames) = lookupClassInEnv(cache,env,id,{},inState,inInfo);
         (optFrame,prevFrames) = lookupPrevFrames(id,prevFrames);
-        (cache,c,env,prevFrames) = lookupClassQualified2(cache,env,path,c,optFrame,prevFrames,inState,msg);
+        (cache,c,env,prevFrames) = lookupClassQualified2(cache,env,path,c,optFrame,prevFrames,inState,inInfo);
       then
         (cache,c,env,prevFrames);
 
@@ -572,14 +643,14 @@ protected function lookupClassQualified2
   input SCode.Element inC;
   input Option<FCore.Ref> optFrame;
   input FCore.Scope inPrevFrames "Environment in reverse order. Contains frames we previously had in the scope. Will be looked up instead of the environment in order to avoid infinite recursion.";
-  input Util.StatefulBoolean inState "If true, we have found a class. If the path was qualified, we should no longer look in previous frames of the environment";
-  input Boolean msg "Print error messages";
+  input Mutable<Boolean> inState "If true, we have found a class. If the path was qualified, we should no longer look in previous frames of the environment";
+  input Option<SourceInfo> inInfo;
   output FCore.Cache outCache;
   output SCode.Element outClass;
   output FCore.Graph outEnv "The environment in which the class was found (not the environment inside the class)";
   output FCore.Scope outPrevFrames;
 algorithm
-  (outCache,outClass,outEnv,outPrevFrames) := matchcontinue (inCache,inEnv,path,inC,optFrame,inPrevFrames,inState,msg)
+  (outCache,outClass,outEnv,outPrevFrames) := matchcontinue (inCache,inEnv,path,inC,optFrame,inPrevFrames)
     local
       FCore.Cache cache;
       FCore.Graph env;
@@ -593,26 +664,26 @@ algorithm
       FCore.Ref r;
       DAE.Mod mod;
 
-    case (cache,env,_,_,SOME(frame),prevFrames,_,_)
+    case (cache,env,_,_,SOME(frame),prevFrames)
       equation
         env = FGraph.pushScopeRef(env, frame);
-        (cache,c,env,prevFrames) = lookupClass2(cache,env,path,prevFrames,inState,msg);
+        (cache,c,env,prevFrames) = lookupClass2(cache,env,path,prevFrames,inState,inInfo);
         // fprintln(Flags.INST_TRACE, "LOOKUP CLASS QUALIFIED FRAME: " + FGraph.printGraphPathStr(env) + " path: " + Absyn.pathString(path) + " class: " + SCodeDump.shortElementStr(c));
       then (cache,c,env,prevFrames);
 
     // class is an instance of a component
-    case (cache,env,_,SCode.CLASS(name=id),NONE(),_,_,_)
+    case (cache,env,_,SCode.CLASS(name=id),NONE(),_)
       equation
         r = FNode.child(FGraph.lastScopeRef(env), id);
         FCore.CL(status = FCore.CLS_INSTANCE(_)) = FNode.refData(r);
         // fetch the env
         (cache, env) = Inst.getCachedInstance(cache, env, id, r);
-        (cache,c,env,prevFrames) = lookupClass2(cache,env,path,{},inState,msg);
+        (cache,c,env,prevFrames) = lookupClass2(cache,env,path,{},inState,inInfo);
       then (cache,c,env,prevFrames);
 
-    case (cache,env,_,SCode.CLASS(name=id,encapsulatedPrefix=encflag,restriction=restr),NONE(),_,_,_)
+    case (cache,env,_,SCode.CLASS(name=id,encapsulatedPrefix=encflag,restriction=restr),NONE(),_)
       equation
-        env = FGraph.openScope(env, encflag, SOME(id), FGraph.restrictionToScopeType(restr));
+        env = FGraph.openScope(env, encflag, id, FGraph.restrictionToScopeType(restr));
         ci_state = ClassInf.start(restr, FGraph.getGraphName(env));
         // fprintln(Flags.INST_TRACE, "LOOKUP CLASS QUALIFIED PARTIALICD: " + FGraph.printGraphPathStr(env) + " path: " + Absyn.pathString(path) + " class: " + SCodeDump.shortElementStr(c));
         mod = Mod.getClassModifier(inEnv, id);
@@ -621,14 +692,77 @@ algorithm
           cache,env,InnerOuter.emptyInstHierarchy,
           mod, Prefix.NOPRE(),
           ci_state, inC, SCode.PUBLIC(), {}, 0);
-        // Was 2 cases for package/non-package - all they did was fail or succeed on this
-        // If we comment it out, we get faster code, and less of it to maintain
-        // ClassInf.valid(cistate1, SCode.R_PACKAGE());
-        (cache,c,env,prevFrames) = lookupClass2(cache,env,path,{},inState,msg);
+
+        checkPartialScope(env, inEnv, cache, inInfo);
+        (cache,c,env,prevFrames) = lookupClass2(cache,env,path,{},inState,inInfo);
       then (cache,c,env,prevFrames);
 
   end matchcontinue;
 end lookupClassQualified2;
+
+protected function checkPartialScope
+  input FCore.Graph inEnv;
+  input FCore.Graph inParentEnv;
+  input FCore.Cache inCache;
+  input Option<SourceInfo> inInfo;
+protected
+  SCode.Element el;
+  Prefix.Prefix pre;
+  String name, pre_str, cc_str;
+  SourceInfo cls_info, pre_info, info;
+algorithm
+  if isSome(inInfo) and FGraph.isPartialScope(inEnv) and
+     Config.languageStandardAtLeast(Config.LanguageStandard.'3.2') then
+    FCore.N(data = FCore.CL(e = el, pre = pre)) :=
+      FNode.fromRef(FGraph.lastScopeRef(inEnv));
+    name := SCode.elementName(el);
+
+    if FGraph.graphPrefixOf(inParentEnv, inEnv) and not
+       PrefixUtil.isNoPrefix(pre) then
+      pre_str := PrefixUtil.printPrefixStr(pre);
+      cls_info := SCode.elementInfo(el);
+      pre_info := PrefixUtil.getPrefixInfo(pre);
+      cc_str := getConstrainingClass(el, FGraph.stripLastScopeRef(inEnv), inCache);
+      Error.addMultiSourceMessage(Error.USE_OF_PARTIAL_CLASS,
+        {pre_str, name, cc_str}, {cls_info, pre_info});
+      fail();
+    else
+      SOME(info) := inInfo;
+      if not Config.getGraphicsExpMode() then
+        Error.addSourceMessage(Error.LOOKUP_IN_PARTIAL_CLASS, {name}, info);
+      end if;
+      // We should fail here, but the MSL 3.2.1 contains such errors. So just
+      // print an error and continue anyway for now.
+    end if;
+  end if;
+end checkPartialScope;
+
+protected function getConstrainingClass
+  input SCode.Element inClass;
+  input FCore.Graph inEnv;
+  input FCore.Cache inCache;
+  output String outPath;
+algorithm
+  outPath := matchcontinue inClass
+    local
+      Absyn.Path cc_path;
+      Absyn.TypeSpec ts;
+      SCode.Element el;
+      FCore.Graph env;
+
+    case SCode.CLASS(prefixes = SCode.PREFIXES(replaceablePrefix =
+        SCode.REPLACEABLE(cc = SOME(SCode.CONSTRAINCLASS(constrainingClass = cc_path)))))
+      then Absyn.pathString(cc_path);
+
+    case SCode.CLASS(classDef = SCode.DERIVED(typeSpec = ts))
+      algorithm
+        (_, el, env) := lookupClass(inCache, inEnv, Absyn.typeSpecPath(ts));
+      then
+        getConstrainingClass(el, env, inCache);
+
+    else FGraph.printGraphPathStr(inEnv) + "." + SCode.elementName(inClass);
+  end matchcontinue;
+end getConstrainingClass;
 
 protected function lookupPrevFrames
   input String id;
@@ -715,7 +849,7 @@ algorithm
         cref = ComponentReference.pathToCref(path);
         cref = ComponentReference.crefPrependIdent(cref,ident,{},DAE.T_UNKNOWN_DEFAULT);
         env = FGraph.setScope(env, {f});
-        (cache,_,_,_,_,_,_,_,_) = lookupVarInPackages(cache,env,cref,prevFrames,Util.makeStatefulBoolean(false));
+        (cache,_,_,_,_,_,_,_,_) = lookupVarInPackages(cache,env,cref,prevFrames,Mutable.create(false));
       then
         (cache,true);
 
@@ -772,7 +906,7 @@ algorithm
         cref = ComponentReference.pathToCref(path);
         cref = ComponentReference.crefPrependIdent(cref,ident,{},DAE.T_UNKNOWN_DEFAULT);
         env2 = FGraph.setScope(env, {f});
-        (cache,classEnv,attr,ty,bind,cnstForRange,splicedExpData,componentEnv,name) = lookupVarInPackages(cache,env2,cref,prevFrames,Util.makeStatefulBoolean(false));
+        (cache,classEnv,attr,ty,bind,cnstForRange,splicedExpData,componentEnv,name) = lookupVarInPackages(cache,env2,cref,prevFrames,Mutable.create(false));
         (cache,more) = moreLookupUnqualifiedImportedVarInFrame(cache, rest, env, ident);
         unique = boolNot(more);
       then
@@ -793,7 +927,8 @@ protected function lookupQualifiedImportedClassInFrame
   input list<Absyn.Import> inImport;
   input FCore.Graph inEnv;
   input SCode.Ident inIdent;
-  input Util.StatefulBoolean inState;
+  input Mutable<Boolean> inState;
+  input Option<SourceInfo> inInfo;
   output FCore.Cache outCache;
   output SCode.Element outClass;
   output FCore.Graph outEnv;
@@ -814,10 +949,10 @@ algorithm
     case (cache,Absyn.QUAL_IMPORT(path = Absyn.IDENT(name = id)) :: _,env,ident,_)
       equation
         true = id == ident "For imported paths A, not possible to assert sub-path package";
-        Util.setStatefulBoolean(inState,true);
+        Mutable.update(inState,true);
         r::prevFrames = listReverse(FGraph.currentScope(env));
         env = FGraph.setScope(env, {r});
-        (cache,c,env_1,prevFrames) = lookupClass2(cache,env,Absyn.IDENT(id),prevFrames,Util.makeStatefulBoolean(false),true);
+        (cache,c,env_1,prevFrames) = lookupClassInEnv(cache,env,id,prevFrames,Mutable.create(false),inInfo);
       then
         (cache,c,env_1,prevFrames);
 
@@ -825,33 +960,33 @@ algorithm
       equation
         id = Absyn.pathLastIdent(path) "For imported path A.B.C, assert A.B is package" ;
         true = id == ident;
-        Util.setStatefulBoolean(inState,true);
+        Mutable.update(inState,true);
 
         r::prevFrames = listReverse(FGraph.currentScope(env));
         env = FGraph.setScope(env, {r});
         // strippath = Absyn.stripLast(path);
-        // (cache,c2,env_1,_) = lookupClass2(cache,{fr},strippath,prevFrames,Util.makeStatefulBoolean(false),true);
-        (cache,c,env_1,prevFrames) = lookupClass2(cache,env,path,prevFrames,Util.makeStatefulBoolean(false),true);
+        // (cache,c2,env_1,_) = lookupClass2(cache,{fr},strippath,prevFrames,Mutable.create(false),true);
+        (cache,c,env_1,prevFrames) = lookupClass2(cache,env,path,prevFrames,Mutable.create(false),inInfo);
       then
         (cache,c,env_1,prevFrames);
 
     case (cache,Absyn.NAMED_IMPORT(name = id,path = path) :: _,env,ident,_)
       equation
         true = id == ident "Named imports";
-        Util.setStatefulBoolean(inState,true);
+        Mutable.update(inState,true);
 
         r::prevFrames = listReverse(FGraph.currentScope(env));
         env = FGraph.setScope(env, {r});
         // strippath = Absyn.stripLast(path);
         // Debug.traceln("named import " + id + " is " + Absyn.pathString(path));
-        // (cache,c2,env_1,prevFrames) = lookupClass2(cache,{fr},strippath,prevFrames,Util.makeStatefulBoolean(false),true);
-        (cache,c,env_1,prevFrames) = lookupClass2(cache,env,path,prevFrames,Util.makeStatefulBoolean(false),true);
+        // (cache,c2,env_1,prevFrames) = lookupClass2(cache,{fr},strippath,prevFrames,Mutable.create(false),true);
+        (cache,c,env_1,prevFrames) = lookupClass2(cache,env,path,prevFrames,Mutable.create(false),inInfo);
       then
         (cache,c,env_1,prevFrames);
 
     case (cache,_ :: rest,env,ident,_)
       equation
-        (cache,c,env_1,prevFrames) = lookupQualifiedImportedClassInFrame(cache,rest,env,ident,inState);
+        (cache,c,env_1,prevFrames) = lookupQualifiedImportedClassInFrame(cache,rest,env,ident,inState,inInfo);
       then
         (cache,c,env_1,prevFrames);
 
@@ -888,15 +1023,15 @@ algorithm
     case (cache,Absyn.UNQUAL_IMPORT(path = path) :: _,env,ident)
       equation
         env = FGraph.topScope(env);
-        (cache,(c as SCode.CLASS(name=id,encapsulatedPrefix=encflag,restriction=restr)),env_1) = lookupClass(cache, env, path, false);
-        env2 = FGraph.openScope(env_1, encflag, SOME(id), FGraph.restrictionToScopeType(restr));
+        (cache,(c as SCode.CLASS(name=id,encapsulatedPrefix=encflag,restriction=restr)),env_1) = lookupClass(cache, env, path);
+        env2 = FGraph.openScope(env_1, encflag, id, FGraph.restrictionToScopeType(restr));
         ci_state = ClassInf.start(restr, FGraph.getGraphName(env2));
         // fprintln(Flags.INST_TRACE, "LOOKUP MORE UNQUALIFIED IMPORTED ICD: " + FGraph.printGraphPathStr(env) + "." + ident);
         mod = Mod.getClassModifier(env_1, id);
         (cache, env, _,_,_) = Inst.partialInstClassIn(cache, env2, InnerOuter.emptyInstHierarchy, mod, Prefix.NOPRE(), ci_state, c, SCode.PUBLIC(), {}, 0);
         r = FGraph.lastScopeRef(env);
         env = FGraph.setScope(env, {r});
-        (cache,_,_) = lookupClass(cache, env, Absyn.IDENT(ident), false);
+        (cache,_,_) = lookupClass(cache, env, Absyn.IDENT(ident));
       then
         (cache, true);
 
@@ -918,6 +1053,7 @@ protected function lookupUnqualifiedImportedClassInFrame
   input list<Absyn.Import> inImports;
   input FCore.Graph inEnv;
   input SCode.Ident inIdent;
+  input Option<SourceInfo> inInfo;
   output FCore.Cache outCache;
   output SCode.Element outClass;
   output FCore.Graph outEnv;
@@ -947,8 +1083,10 @@ algorithm
       equation
         r::prevFrames = listReverse(FGraph.currentScope(env));
         env3 = FGraph.setScope(env, {r});
-        (cache,(c as SCode.CLASS(name=id,encapsulatedPrefix=encflag,restriction=restr)),env_1,prevFrames) = lookupClass2(cache,env3,path,prevFrames,Util.makeStatefulBoolean(false),false);
-        env2 = FGraph.openScope(env_1, encflag, SOME(id), FGraph.restrictionToScopeType(restr));
+        (cache,(c as
+                SCode.CLASS(name=id,encapsulatedPrefix=encflag,restriction=restr)),env_1,prevFrames)
+        = lookupClass2(cache,env3,path,prevFrames,Mutable.create(false),inInfo);
+        env2 = FGraph.openScope(env_1, encflag, id, FGraph.restrictionToScopeType(restr));
         ci_state = ClassInf.start(restr, FGraph.getGraphName(env2));
         // fprintln(Flags.INST_TRACE, "LOOKUP UNQUALIFIED IMPORTED ICD: " + FGraph.printGraphPathStr(env) + "." + ident);
         mod = Mod.getClassModifier(env_1, id);
@@ -956,7 +1094,7 @@ algorithm
         Inst.partialInstClassIn(cache, env2, InnerOuter.emptyInstHierarchy,
           mod, Prefix.NOPRE(), ci_state, c, SCode.PUBLIC(), {}, 0);
         // Restrict import to the imported scope only, not its parents, thus {f} below
-        (cache,c_1,env2,prevFrames) = lookupClass2(cache,env2,Absyn.IDENT(ident),prevFrames,Util.makeStatefulBoolean(true),false) "Restrict import to the imported scope only, not its parents..." ;
+        (cache,c_1,env2,prevFrames) = lookupClassInEnv(cache,env2,ident,prevFrames,Mutable.create(true),inInfo) "Restrict import to the imported scope only, not its parents..." ;
         (cache,more) = moreLookupUnqualifiedImportedClassInFrame(cache, rest, env, ident);
         unique = boolNot(more);
       then
@@ -965,7 +1103,7 @@ algorithm
     // Look in the parent scope
     case (cache,_ :: rest,env,ident)
       equation
-        (cache,c,env_1,prevFrames,unique) = lookupUnqualifiedImportedClassInFrame(cache, rest, env, ident);
+        (cache,c,env_1,prevFrames,unique) = lookupUnqualifiedImportedClassInFrame(cache, rest, env, ident,inInfo);
       then
         (cache,c,env_1,prevFrames,unique);
 
@@ -991,7 +1129,7 @@ algorithm
 
     case (cache,env,path)
       equation
-        (cache,c,env_1) = lookupClass(cache,env, path, false);
+        (cache,c,env_1) = lookupClass(cache,env, path);
         SCode.CLASS( restriction=SCode.R_RECORD(_)) = c;
         (cache,_,c) = buildRecordConstructorClass(cache,env_1,c);
       then
@@ -1000,48 +1138,95 @@ algorithm
 end lookupRecordConstructorClass;
 
 public function lookupConnectorVar
-"looks up a connector variable, but takes InnerOuter attribute from component if
- inside connector, i.e. for connector reference a.b the innerOuter attribute is
- fetched from a."
-  input FCore.Cache inCache;
-  input FCore.Graph inEnv;
+  "Simplified lookup of connector references. The lookup will stop if it finds a
+   deleted component, so if status is VAR_DELETED() then attr and ty will belong
+   to the deleted component instead of the looked for component."
+  input FCore.Graph env;
   input DAE.ComponentRef cr;
-  output FCore.Cache outCache;
+  input Boolean firstId = true;
   output DAE.Attributes attr;
-  output DAE.Type tp;
+  output DAE.Type ty;
+  output FCore.Status status;
+  output Boolean isExpandable = false;
+protected
+  FCore.Graph comp_env;
+  DAE.Attributes parent_attr;
 algorithm
-  (outCache,attr,tp) := match(inCache,inEnv,cr)
-    local
-      DAE.ComponentRef cr1;
-      SCode.ConnectorType ct;
-      SCode.Parallelism prl;
-      SCode.Variability var;
-      Absyn.Direction dir;
-      Absyn.InnerOuter io;
-      DAE.Type ty1;
-      DAE.Attributes attr1;
-      FCore.Cache cache;
-      FCore.Graph env;
-      SCode.Visibility vis;
-
-    // unqualified component reference
-    case(cache,env,DAE.CREF_IDENT())
-      equation
-        (cache,attr1,ty1,_,_,_,_,_,_) = lookupVarLocal(cache,env,cr);
+  (attr, ty, status) := match cr
+    case DAE.CREF_IDENT()
+      algorithm
+        (DAE.TYPES_VAR(attributes = attr, ty = ty), status, _) :=
+          lookupConnectorVar2(env, cr.ident);
+        ty := checkSubscripts(ty, cr.subscriptLst);
       then
-        (cache,attr1,ty1);
+        (attr, ty, status);
 
-    // qualified component reference
-    case(cache,env,DAE.CREF_QUAL())
-      equation
-        (cache,DAE.ATTR(ct,prl,var,dir,_,vis),ty1,_,_,_,_,_,_) = lookupVarLocal(cache,env,cr);
-        cr1 = ComponentReference.crefStripLastIdent(cr);
-        // Find innerOuter attribute from "parent"
-        (cache,DAE.ATTR(innerOuter=io),_,_,_,_,_,_,_) = lookupVarLocal(cache,env,cr1);
+    case DAE.CREF_QUAL()
+      algorithm
+        (DAE.TYPES_VAR(attributes = parent_attr, ty = ty), status, comp_env) :=
+          lookupConnectorVar2(env, cr.ident);
+
+        if FCore.isDeletedComp(status) then
+          // Stop if we find a deleted component.
+          attr := parent_attr;
+        else
+          try
+            (attr, ty, status, isExpandable) :=
+              lookupConnectorVar(comp_env, cr.componentRef, false);
+          else
+            if Types.isExpandableConnector(ty) then
+              attr := parent_attr;
+              isExpandable := true;
+            else
+              fail();
+            end if;
+          end try;
+
+          // Propagate variability.
+          attr := DAEUtil.setAttrVariability(attr, SCode.variabilityOr(
+            DAEUtil.getAttrVariability(attr), DAEUtil.getAttrVariability(parent_attr)));
+
+          // Use the inner/outer from the first identifier.
+          if firstId then
+            attr := DAEUtil.setAttrInnerOuter(attr, DAEUtil.getAttrInnerOuter(parent_attr));
+          end if;
+        end if;
       then
-        (cache,DAE.ATTR(ct,prl,var,dir,io,vis),ty1);
+        (attr, ty, status);
+
   end match;
 end lookupConnectorVar;
+
+protected function lookupConnectorVar2
+  "Helper function to lookupConnectorVar."
+  input FCore.Graph env;
+  input String name;
+  output DAE.Var var;
+  output FCore.Status status;
+  output FCore.Graph compEnv;
+protected
+  FCore.Scope scope;
+  FCore.Children ht;
+algorithm
+  FCore.G(scope = scope) := env;
+
+  // Connectors are not allowed to be constant, so we don't need to look outside
+  // the local scope. But we do need to check outside implicit scopes, e.g.
+  // for-scopes.
+  for r in scope loop
+    ht := FNode.children(FNode.fromRef(r));
+
+    try
+      (var, _, _, status, compEnv) := lookupVar2(ht, name, env);
+      return;
+    else
+      // Continue to the next scope only if the current scope is implicit.
+      true := FNode.isImplicitRefName(r);
+    end try;
+  end for;
+
+  fail();
+end lookupConnectorVar2;
 
 public function lookupVar
   "LS: when looking up qualified component reference, lookupVar only
@@ -1109,11 +1294,13 @@ algorithm
     // then look in classes (implicitly instantiated packages)
     case (cache,env,cref)
       equation
-        (cache,classEnv,attr,ty,binding,cnstForRange,splicedExpData,componentEnv,name) = lookupVarInPackages(cache,env,cref,{},Util.makeStatefulBoolean(false));
+        (cache,classEnv,attr,ty,binding,cnstForRange,splicedExpData,componentEnv,name) = lookupVarInPackages(cache,env,cref,{},Mutable.create(false));
         checkPackageVariableConstant(env,classEnv,componentEnv,attr,ty,cref);
         // optional Expression.exp to return
       then
         (cache,attr,ty,binding,cnstForRange,splicedExpData,classEnv,componentEnv,name);
+
+    case (cache,env,cref) guard Config.getGraphicsExpMode() then (cache,DAE.dummyAttrConst,DAE.T_UNKNOWN_DEFAULT,DAE.UNBOUND(),NONE(),InstTypes.SPLICEDEXPDATA(NONE(),DAE.T_UNKNOWN_DEFAULT),env,env,"#varNotFound#");
 
     /*/ fail if we couldn't find it
     case (_,env,cref)
@@ -1124,6 +1311,54 @@ algorithm
       then fail();*/
   end matchcontinue;
 end lookupVar;
+
+public function lookupVarIdent "Like lookupVar, but takes only an ident+subscript."
+  input FCore.Cache inCache;
+  input FCore.Graph inEnv;
+  input String ident;
+  input list<DAE.Subscript> ss={};
+  output FCore.Cache outCache;
+  output DAE.Attributes outAttributes;
+  output DAE.Type outType;
+  output DAE.Binding outBinding;
+  output Option<DAE.Const> constOfForIteratorRange "SOME(constant-ness) of the range if this is a for iterator, NONE() if this is not a for iterator";
+  output InstTypes.SplicedExpData outSplicedExpData;
+  output FCore.Graph outClassEnv "only used for package constants";
+  output FCore.Graph outComponentEnv "only used for package constants";
+  output String name "so the FQ path can be constructed";
+algorithm
+  (outCache,outAttributes,outType,outBinding,constOfForIteratorRange,outSplicedExpData,outClassEnv,outComponentEnv,name) :=
+  matchcontinue (inCache,inEnv)
+    local
+      DAE.Attributes attr;
+      DAE.Type ty;
+      DAE.Binding binding;
+      FCore.Graph env, componentEnv, classEnv;
+      DAE.ComponentRef cref;
+      FCore.Cache cache;
+      InstTypes.SplicedExpData splicedExpData;
+      Option<DAE.Const> cnstForRange;
+
+    // try the old lookupVarInternal
+    case (cache,env)
+      equation
+        (cache,attr,ty,binding,cnstForRange,splicedExpData,classEnv,componentEnv,name) = lookupVarInternalIdent(cache, env, ident, ss, InstTypes.SEARCH_ALSO_BUILTIN());
+      then
+        (cache,attr,ty,binding,cnstForRange,splicedExpData,classEnv,componentEnv,name);
+
+    // then look in classes (implicitly instantiated packages)
+    case (cache,env)
+      equation
+        // TODO: Skip makeCrefIdent by rewriting lookupVarInPackages
+        cref = ComponentReference.makeCrefIdent(ident, DAE.T_UNKNOWN_DEFAULT, ss);
+        (cache,classEnv,attr,ty,binding,cnstForRange,splicedExpData,componentEnv,name) = lookupVarInPackages(cache,env,cref,{},Mutable.create(false));
+        checkPackageVariableConstant(env,classEnv,componentEnv,attr,ty,cref);
+        // optional Expression.exp to return
+      then
+        (cache,attr,ty,binding,cnstForRange,splicedExpData,classEnv,componentEnv,name);
+
+  end matchcontinue;
+end lookupVarIdent;
 
 protected function checkPackageVariableConstant "
 Variables in packages must be constant. This function produces an error message and fails
@@ -1214,7 +1449,7 @@ algorithm
     // If not in top scope, look in top scope for builtin variables, e.g. time.
     case (cache, FCore.G(scope = _::_::_), ref, InstTypes.SEARCH_ALSO_BUILTIN())
       equation
-        true = Builtin.variableIsBuiltin(ref, Config.acceptOptimicaGrammar());
+        true = Builtin.variableIsBuiltin(ref);
         env = FGraph.topScope(inEnv);
         ht = FNode.children(FNode.fromRef(FGraph.lastScopeRef(env)));
         (cache,attr,ty,binding,cnstForRange,splicedExpData,componentEnv,name) = lookupVarF(cache, ht, ref, env);
@@ -1223,6 +1458,67 @@ algorithm
 
   end matchcontinue;
 end lookupVarInternal;
+
+public function lookupVarInternalIdent "Helper function to lookupVar. Searches the frames for variables."
+  input FCore.Cache inCache;
+  input FCore.Graph inEnv;
+  input String ident;
+  input list<DAE.Subscript> ss={};
+  input InstTypes.SearchStrategy searchStrategy = InstTypes.SEARCH_LOCAL_ONLY() "if SEARCH_LOCAL_ONLY it won't search in the builtin scope";
+  output FCore.Cache outCache;
+  output DAE.Attributes outAttributes;
+  output DAE.Type outType;
+  output DAE.Binding outBinding;
+  output Option<DAE.Const> constOfForIteratorRange "SOME(constant-ness) of the range if this is a for iterator, NONE() if this is not a for iterator";
+  output InstTypes.SplicedExpData splicedExpData;
+  output FCore.Graph outClassEnv "the environment of the variable, typically the same as input, but e.g. for loop scopes can be 'stripped'";
+  output FCore.Graph outComponentEnv "the component environment of the variable";
+  output String name;
+algorithm
+  (outCache,outAttributes,outType,outBinding,constOfForIteratorRange,splicedExpData,outClassEnv,outComponentEnv,name) :=
+  matchcontinue (inCache,inEnv,searchStrategy)
+    local
+      DAE.Attributes attr;
+      DAE.Type ty;
+      DAE.Binding binding;
+      Option<String> sid;
+      FCore.Children ht;
+      DAE.ComponentRef ref;
+      FCore.Cache cache;
+      Option<DAE.Const> cnstForRange;
+      FCore.Graph env,componentEnv;
+      FCore.Ref r;
+      FCore.Scope rs;
+
+    // look into the current frame
+    case (cache, FCore.G(scope = r :: _), _)
+      equation
+        ht = FNode.children(FNode.fromRef(r));
+        (cache,attr,ty,binding,cnstForRange,splicedExpData,componentEnv,name) = lookupVarFIdent(cache, ht, ident, ss, inEnv);
+      then
+        (cache,attr,ty,binding,cnstForRange,splicedExpData,inEnv,componentEnv,name);
+
+    // look in the next frame, only if current frame is a for loop scope.
+    case (cache, FCore.G(scope = r :: _), _)
+      equation
+        true = FNode.isImplicitRefName(r);
+        (env, _) = FGraph.stripLastScopeRef(inEnv);
+        (cache,attr,ty,binding,cnstForRange,splicedExpData,env,componentEnv,name) = lookupVarInternalIdent(cache, env, ident, ss, searchStrategy);
+      then
+        (cache,attr,ty,binding,cnstForRange,splicedExpData,env,componentEnv,name);
+
+    // If not in top scope, look in top scope for builtin variables, e.g. time.
+    case (cache, FCore.G(scope = _::_::_), InstTypes.SEARCH_ALSO_BUILTIN())
+      equation
+        true = Builtin.variableNameIsBuiltin(ident);
+        env = FGraph.topScope(inEnv);
+        ht = FNode.children(FNode.fromRef(FGraph.lastScopeRef(env)));
+        (cache,attr,ty,binding,cnstForRange,splicedExpData,componentEnv,name) = lookupVarFIdent(cache, ht, ident, ss, env);
+      then
+        (cache,attr,ty,binding,cnstForRange,splicedExpData,env,componentEnv,name);
+
+  end matchcontinue;
+end lookupVarInternalIdent;
 
 protected function frameIsImplAddedScope
 "returns true if the frame is a for-loop scope or a valueblock scope.
@@ -1252,7 +1548,7 @@ public function lookupVarInPackages "This function is called when a lookup of a 
   input FCore.Graph inEnv;
   input DAE.ComponentRef inComponentRef;
   input FCore.Scope inPrevFrames "Environment in reverse order. Contains frames we previously had in the scope. Will be looked up instead of the environment in order to avoid infinite recursion.";
-  input Util.StatefulBoolean inState "If true, we have found a class. If the path was qualified, we should no longer look in a lower scope.";
+  input Mutable<Boolean> inState "If true, we have found a class. If the path was qualified, we should no longer look in a lower scope.";
   output FCore.Cache outCache;
   output FCore.Graph outClassEnv;
   output DAE.Attributes outAttributes;
@@ -1299,7 +1595,7 @@ algorithm
           // first part of name is a previous frame
           case (SOME(f))
             equation
-              Util.setStatefulBoolean(inState,true);
+              Mutable.update(inState,true);
               env5 = FGraph.pushScopeRef(env, f);
             then
               ();
@@ -1307,20 +1603,20 @@ algorithm
           case (NONE())
             equation
               (cache,(c as SCode.CLASS(name=n,encapsulatedPrefix=encflag,restriction=r)),env2,prevFrames) =
-                lookupClass2(cache,
+                lookupClassInEnv(cache,
                              env,
-                             Absyn.IDENT(id),
+                             id,
                              prevFrames,
-                             Util.makeStatefulBoolean(true), // In order to use the prevFrames, we need to make sure we can't instantiate one of the classes too soon!
-                             false);
-              Util.setStatefulBoolean(inState,true);
+                             Mutable.create(true), // In order to use the prevFrames, we need to make sure we can't instantiate one of the classes too soon!
+                             NONE());
+              Mutable.update(inState,true);
               // see if we have an instance of a component!
               rr = FNode.child(FGraph.lastScopeRef(env2), id);
               if FNode.isRefInstance(rr) // is an instance, use it
               then
                 (cache, env5) = Inst.getCachedInstance(cache, env2, id, rr);
               else // not an instance, instantiate it - lookup of constants on form A.B in packages. instantiate package and look inside.
-                env3 = FGraph.openScope(env2, encflag, SOME(n), FGraph.restrictionToScopeType(r));
+                env3 = FGraph.openScope(env2, encflag, n, FGraph.restrictionToScopeType(r));
                 ci_state = ClassInf.start(r, FGraph.getGraphName(env3));
                 // fprintln(Flags.INST_TRACE, "LOOKUP VAR IN PACKAGES ICD: " + FGraph.printGraphPathStr(env3) + " var: " + ComponentReference.printComponentRefStr(cref));
                 mod = Mod.getClassModifier(env2, n);
@@ -1333,6 +1629,8 @@ algorithm
             then ();
         end match;
         (cache,p_env,attr,ty,bind,cnstForRange,splicedExpData,componentEnv,name) = lookupVarInPackages(cache,env5,cref,prevFrames,inState);
+         // Add the class name to the spliced exp so that the name is correct.
+         splicedExpData = prefixSplicedExp(ComponentReference.crefFirstCref(inComponentRef), splicedExpData);
       then
         (cache,p_env,attr,ty,bind,cnstForRange,splicedExpData,componentEnv,name);
 
@@ -1340,49 +1638,22 @@ algorithm
     // BZ: This is due to recursive call when it might become DAE.CREF_IDENT calls.
     case (cache,env,(cr as DAE.CREF_IDENT()),_,_)
       equation
-        (cache,attr,ty,bind,cnstForRange,splicedExpData,_,componentEnv,name) = lookupVarLocal(cache, env, cr);
-        Util.setStatefulBoolean(inState,true);
+        (cache,env,attr,ty,bind,cnstForRange,splicedExpData,componentEnv,name) = lookupVarInPackagesIdent(cache, env, cr.ident, cr.subscriptLst, inPrevFrames, inState);
       then
         (cache,env,attr,ty,bind,cnstForRange,splicedExpData,componentEnv,name);
 
     // Lookup where the first identifier is a component.
-    case (cache, env, cr, _, _)
+    case (cache, env, cr as DAE.CREF_QUAL(), _, _)
       equation
         ht = FNode.children(FNode.fromRef(FGraph.lastScopeRef(env)));
         (cache, attr, ty, bind, cnstForRange, splicedExpData, componentEnv, name) = lookupVarF(cache, ht, cr, env);
       then
         (cache, env, attr, ty, bind, cnstForRange, splicedExpData, componentEnv, name);
 
-    // Search among imports
-    case (cache,env,DAE.CREF_IDENT(ident = id),prevFrames,_)
-      equation
-        node = FNode.fromRef(FGraph.lastScopeRef(env));
-        (qimports, uqimports) = FNode.imports(node);
-        _ = matchcontinue(qimports, uqimports)
-          // Search among qualified imports, e.g. import A.B; or import D=A.B;
-          case (_::_, _)
-            equation
-              cr = lookupQualifiedImportedVarInFrame(qimports, id);
-              Util.setStatefulBoolean(inState,true);
-              f::prevFrames = listReverse(FGraph.currentScope(env));
-              env = FGraph.setScope(env, {f});
-              (cache,p_env,attr,ty,bind,cnstForRange,splicedExpData,componentEnv,name) = lookupVarInPackages(cache,env,cr,prevFrames,inState);
-            then ();
-          // Search among unqualified imports, e.g. import A.B.*
-          case (_, _::_)
-            equation
-              (cache,p_env,attr,ty,bind,cnstForRange,unique,splicedExpData,componentEnv,name) = lookupUnqualifiedImportedVarInFrame(cache, uqimports, env, id);
-              reportSeveralNamesError(unique,id);
-              Util.setStatefulBoolean(inState,true);
-            then ();
-        end matchcontinue;
-      then
-        (cache,p_env,attr,ty,bind,cnstForRange,splicedExpData,componentEnv,name);
-
      // Search parent scopes
-    case (cache,FCore.G(scope = f::fs),cr,prevFrames,_)
+    case (cache,FCore.G(scope = f::fs),cr as DAE.CREF_QUAL(),prevFrames,_)
       equation
-        false = Util.getStatefulBoolean(inState);
+        false = Mutable.access(inState);
         env = FGraph.setScope(inEnv, fs);
         (cache,p_env,attr,ty,bind,cnstForRange,splicedExpData,componentEnv,name) = lookupVarInPackages(cache,env,cr,f::prevFrames,inState);
       then
@@ -1396,6 +1667,124 @@ algorithm
         fail();
   end matchcontinue;
 end lookupVarInPackages;
+
+public function lookupVarInPackagesIdent "This function is called when a lookup of a variable with qualified names
+  does not have the first element as a component, e.g. A.B.C is looked up
+  where A is not a component. This implies that A is a class, and this
+  class should be temporary instantiated, and the lookup should
+  be performed within that class. I.e. the function performs lookup of
+  variables in the class hierarchy.
+
+  Note: the splicedExpData is currently not relevant, since constants are always evaluated to a value.
+        However, this might change in the future since it makes more sense to calculate the constants
+        during setup in runtime (to gain precision and postpone choice of precision to runtime)."
+  input FCore.Cache inCache;
+  input FCore.Graph inEnv;
+  input String id;
+  input list<DAE.Subscript> ss;
+  input FCore.Scope inPrevFrames "Environment in reverse order. Contains frames we previously had in the scope. Will be looked up instead of the environment in order to avoid infinite recursion.";
+  input Mutable<Boolean> inState "If true, we have found a class. If the path was qualified, we should no longer look in a lower scope.";
+  output FCore.Cache outCache;
+  output FCore.Graph outClassEnv;
+  output DAE.Attributes outAttributes;
+  output DAE.Type outType;
+  output DAE.Binding outBinding;
+  output Option<DAE.Const> constOfForIteratorRange "SOME(constant-ness) of the range if this is a for iterator, NONE() if this is not a for iterator";
+  output InstTypes.SplicedExpData splicedExpData "currently not relevant for constants, but might be used in the future";
+  output FCore.Graph outComponentEnv;
+  output String name "We only return the environment the component was found in; not its FQ name.";
+algorithm
+  (outCache,outClassEnv,outAttributes,outType,outBinding,constOfForIteratorRange,splicedExpData,outComponentEnv,name) :=
+  matchcontinue (inCache,inEnv,inPrevFrames,inState)
+    local
+      SCode.Element c;
+      String n;
+      SCode.Encapsulated encflag;
+      SCode.Restriction r;
+      FCore.Graph env2,env3,env5,env,p_env,classEnv, componentEnv;
+      FCore.Scope prevFrames, fs;
+      FCore.Node node;
+      ClassInf.State ci_state;
+      DAE.Attributes attr;
+      DAE.Type ty;
+      DAE.Binding bind;
+      DAE.ComponentRef cref,cr;
+      list<DAE.Subscript> sb;
+      Option<String> sid;
+      FCore.Ref f, rr;
+      Option<FCore.Ref> of;
+      FCore.Cache cache;
+      Option<DAE.Const> cnstForRange;
+      Absyn.Path path,scope;
+      Boolean unique;
+      FCore.Children ht;
+      list<Absyn.Import> qimports, uqimports;
+      DAE.Mod mod;
+
+    // Why is this done? It is already done done in lookupVar!
+    // BZ: This is due to recursive call when it might become DAE.CREF_IDENT calls.
+    case (cache,env,_,_)
+      equation
+        (cache,attr,ty,bind,cnstForRange,splicedExpData,_,componentEnv,name) = lookupVarInternalIdent(cache, env, id, ss);
+        Mutable.update(inState,true);
+      then
+        (cache,env,attr,ty,bind,cnstForRange,splicedExpData,componentEnv,name);
+
+    // Lookup where the first identifier is a component.
+    case (cache, env, _, _)
+      equation
+        ht = FNode.children(FNode.fromRef(FGraph.lastScopeRef(env)));
+        (cache, attr, ty, bind, cnstForRange, splicedExpData, componentEnv, name) = lookupVarFIdent(cache, ht, id, ss, env);
+      then
+        (cache, env, attr, ty, bind, cnstForRange, splicedExpData, componentEnv, name);
+
+    // Search among imports
+    case (cache,env,prevFrames,_)
+      equation
+        node = FNode.fromRef(FGraph.lastScopeRef(env));
+        (qimports, uqimports) = FNode.imports(node);
+        _ = matchcontinue(qimports, uqimports)
+          // Search among qualified imports, e.g. import A.B; or import D=A.B;
+          case (_::_, _)
+            equation
+              cr = lookupQualifiedImportedVarInFrame(qimports, id);
+              Mutable.update(inState,true);
+        // if the first name of the import A.B is equal with the scope we are in, skip it!
+        cr = if FNode.name(FNode.fromRef(FGraph.lastScopeRef(env))) == ComponentReference.crefFirstIdent(cr)
+             then ComponentReference.crefStripFirstIdent(cr)
+           else cr;
+              f::prevFrames = listReverse(FGraph.currentScope(env));
+              env = FGraph.setScope(env, {f});
+              (cache,p_env,attr,ty,bind,cnstForRange,splicedExpData,componentEnv,name) = lookupVarInPackages(cache,env,cr,prevFrames,inState);
+            then ();
+          // Search among unqualified imports, e.g. import A.B.*
+          case (_, _::_)
+            equation
+              (cache,p_env,attr,ty,bind,cnstForRange,unique,splicedExpData,componentEnv,name) = lookupUnqualifiedImportedVarInFrame(cache, uqimports, env, id);
+              reportSeveralNamesError(unique,id);
+              Mutable.update(inState,true);
+            then ();
+        end matchcontinue;
+      then
+        (cache,p_env,attr,ty,bind,cnstForRange,splicedExpData,componentEnv,name);
+
+     // Search parent scopes
+    case (cache,FCore.G(scope = f::fs),prevFrames,_)
+      equation
+        false = Mutable.access(inState);
+        env = FGraph.setScope(inEnv, fs);
+        (cache,p_env,attr,ty,bind,cnstForRange,splicedExpData,componentEnv,name) = lookupVarInPackagesIdent(cache,env,id,ss,f::prevFrames,inState);
+      then
+        (cache,p_env,attr,ty,bind,cnstForRange,splicedExpData,componentEnv,name);
+
+    else
+      equation
+        //true = Flags.isSet(Flags.FAILTRACE);
+        //Debug.traceln("- Lookup.lookupVarInPackages failed on exp:" + ComponentReference.printComponentRefStr(cr) + " in scope: " + FGraph.printGraphPathStr(env));
+      then
+        fail();
+  end matchcontinue;
+end lookupVarInPackagesIdent;
 
 public function lookupVarLocal
 "This function is very similar to `lookup_var\', but it only looks
@@ -1488,7 +1877,7 @@ algorithm
     case (env as FCore.G(scope = r::_),id)
       equation
         ht = FNode.children(FNode.fromRef(r));
-        r = FNode.avlTreeGet(ht, id);
+        r = FCore.RefTree.get(ht, id);
         FCore.N(data = FCore.CL(e = cl)) = FNode.fromRef(r);
       then
         (cl,env);
@@ -1581,7 +1970,7 @@ algorithm
     case (cache,env,Absyn.QUALIFIED(name, id),info)
       equation
         ErrorExt.setCheckpoint("functionViaComponentRef");
-        (cache,_,_,_,_,_,_,cenv,_) = lookupVar(cache, env, ComponentReference.makeCrefIdent(name, DAE.T_UNKNOWN_DEFAULT, {}));
+        (cache,_,_,_,_,_,_,cenv,_) = lookupVarIdent(cache, env, name, {});
         (cache, res) = lookupFunctionsInEnv(cache, cenv, id, info);
         ErrorExt.rollBack("functionViaComponentRef");
       then
@@ -1640,7 +2029,11 @@ algorithm
 
     case (cache,env,id,_)
       equation
-        (cache,SCode.CLASS(classDef=SCode.OVERLOAD(pathLst=names),info=info),env_1) = lookupClass(cache,env,id,false);
+        id = match id
+          case Absyn.IDENT("Clock") then Absyn.QUALIFIED("OpenModelica",Absyn.QUALIFIED("Internal",Absyn.IDENT("ClockConstructor")));
+          else id;
+        end match;
+        (cache,SCode.CLASS(classDef=SCode.OVERLOAD(pathLst=names),info=info),env_1) = lookupClass(cache,env,id);
         (cache,res) = lookupFunctionsListInEnv(cache,env_1,names,info,{});
         // print(stringDelimitList(List.map(res,Types.unparseType),"\n###\n"));
       then (cache,res);
@@ -1735,7 +2128,7 @@ algorithm
         //        just search in {f} not f::fs as otherwise we might get us in an infinite loop
         // Bjozac: Readded the f::fs search frame, otherwise we might get caught in a inifinite loop!
         //           Did not investigate this further then that it can crasch the kernel.
-        (cache,(c as SCode.CLASS(name=str,restriction=restr)),env_1) = lookupClass(cache, inEnv, id, false);
+        (cache,(c as SCode.CLASS(name=str,restriction=restr)),env_1) = lookupClass(cache, inEnv, id);
         true = SCode.isFunctionRestriction(restr);
         // get function dae from instantiation
         // fprintln(Flags.INST_TRACE, "LOOKUP FUNCTIONS IN ENV ID ICD: " + FGraph.printGraphPathStr(env_1) + "." + str);
@@ -1750,14 +2143,14 @@ algorithm
     // For qualified function names, e.g. Modelica.Math.sin
     case (cache, FCore.G(scope = r::_),Absyn.QUALIFIED(name = pack,path = path),_,_)
       equation
-        (cache,(c as SCode.CLASS(name=str,encapsulatedPrefix=encflag,restriction=restr)),env_1) = lookupClass(cache, inEnv, Absyn.IDENT(pack), false);
+        (cache,(c as SCode.CLASS(name=str,encapsulatedPrefix=encflag,restriction=restr)),env_1) = lookupClass(cache, inEnv, Absyn.IDENT(pack));
 
         r = FNode.child(FGraph.lastScopeRef(env_1), str);
         if FNode.isRefInstance(r) // we have an instance of a component
         then
           (cache, env2) = Inst.getCachedInstance(cache, env_1, str, r);
         else
-          env2 = FGraph.openScope(env_1, encflag, SOME(str), FGraph.restrictionToScopeType(restr));
+          env2 = FGraph.openScope(env_1, encflag, str, FGraph.restrictionToScopeType(restr));
           ci_state = ClassInf.start(restr, FGraph.getGraphName(env2));
           // fprintln(Flags.INST_TRACE, "LOOKUP FUNCTIONS IN ENV QUAL ICD: " + FGraph.printGraphPathStr(env2) + "." + str);
           mod = Mod.getClassModifier(env_1, str);
@@ -1806,15 +2199,15 @@ algorithm
     // function_name cardinality
     case (_,"cardinality")
       then {DAE.T_FUNCTION(
-              {DAE.FUNCARG("x",DAE.T_COMPLEX(ClassInf.CONNECTOR(Absyn.IDENT("$$"),false),{},NONE(),DAE.emptyTypeSource),DAE.C_VAR(),DAE.NON_PARALLEL(),NONE())},
+              {DAE.FUNCARG("x",DAE.T_COMPLEX(ClassInf.CONNECTOR(Absyn.IDENT("$$"),false),{},NONE()),DAE.C_VAR(),DAE.NON_PARALLEL(),NONE())},
               DAE.T_INTEGER_DEFAULT,
               DAE.FUNCTION_ATTRIBUTES_DEFAULT,
-              DAE.emptyTypeSource),
+              Absyn.IDENT("cardinality")),
             DAE.T_FUNCTION(
-              {DAE.FUNCARG("x",DAE.T_COMPLEX(ClassInf.CONNECTOR(Absyn.IDENT("$$"),true),{},NONE(),DAE.emptyTypeSource),DAE.C_VAR(),DAE.NON_PARALLEL(),NONE())},
+              {DAE.FUNCARG("x",DAE.T_COMPLEX(ClassInf.CONNECTOR(Absyn.IDENT("$$"),true),{},NONE()),DAE.C_VAR(),DAE.NON_PARALLEL(),NONE())},
               DAE.T_INTEGER_DEFAULT,
               DAE.FUNCTION_ATTRIBUTES_DEFAULT,
-              DAE.emptyTypeSource)};
+              Absyn.IDENT("cardinality"))};
 
   end match;
 end createGenericBuiltinFunctions;
@@ -1826,25 +2219,24 @@ protected function lookupTypeInEnv
 "function: lookupTypeInEnv"
   input FCore.Cache inCache;
   input FCore.Graph inEnv;
-  input Absyn.Path inPath;
+  input String id;
   output FCore.Cache outCache;
   output DAE.Type outType;
   output FCore.Graph outEnv;
 algorithm
   (outCache,outType,outEnv):=
-  matchcontinue (inCache,inEnv,inPath)
+  matchcontinue (inCache,inEnv)
     local
       DAE.Type c;
       FCore.Graph env_1,env,fs;
       Option<String> sid;
       FCore.Children httypes;
       FCore.Children ht;
-      String id;
       FCore.Cache cache;
       Absyn.Path path;
       FCore.Ref r;
 
-    case (cache, env as FCore.G(scope = r::_), Absyn.IDENT(name = id))
+    case (cache, env as FCore.G(scope = r::_))
       equation
         ht = FNode.children(FNode.fromRef(r));
         httypes = getHtTypes(r);
@@ -1852,10 +2244,10 @@ algorithm
       then
         (cache,c,env_1);
 
-    case (cache,env as FCore.G(scope = r::_),path)
+    case (cache,env as FCore.G(scope = r::_))
       equation
         (env, _) = FGraph.stripLastScopeRef(env);
-        (cache,c,env_1) = lookupTypeInEnv(cache,env,path);
+        (cache,c,env_1) = lookupTypeInEnv(cache,env,id);
         env_1 = FGraph.pushScopeRef(env_1, r);
       then
         (cache,c,env_1);
@@ -1878,7 +2270,7 @@ algorithm
         ht;
 
     // no ty node
-    else FCore.emptyCAvlTree;
+    else FCore.RefTree.new();
   end matchcontinue;
 end getHtTypes;
 
@@ -1906,7 +2298,7 @@ algorithm
 
     case (cache,_,httypes,env,id)
       equation
-        item = FNode.fromRef(FNode.avlTreeGet(httypes, id));
+        item = FNode.fromRef(FCore.RefTree.get(httypes, id));
         (cache,t,env) = lookupTypeInFrame2(cache,item,env,id);
       then
         (cache,t,env);
@@ -1967,7 +2359,7 @@ algorithm
           cache,cenv,InnerOuter.emptyInstHierarchy,
           DAE.NOMOD(), Prefix.NOPRE(), cdef, {});
 
-        (cache,ty,env_3) = lookupTypeInEnv(cache, env_1, Absyn.IDENT(id));
+        (cache,ty,env_3) = lookupTypeInEnv(cache, env_1, id);
       then
         (cache,ty,env_3);
 
@@ -1991,11 +2383,11 @@ protected
   DAE.Type ty;
 algorithm
   try // Try to look up the function among the function types first.
-    r := FNode.avlTreeGet(inFuncTypes, inFuncName);
+    r := FCore.RefTree.get(inFuncTypes, inFuncName);
     FCore.N(data = FCore.FT(outFuncTypes)) := FNode.fromRef(r);
     outCache := inCache;
   else // If not found, try to look the function up in the environment instead.
-    r := FNode.avlTreeGet(inClasses, inFuncName);
+    r := FCore.RefTree.get(inClasses, inFuncName);
     FCore.N(data = data) := FNode.fromRef(r);
 
     (outCache, outFuncTypes) := matchcontinue(data)
@@ -2008,8 +2400,13 @@ algorithm
       // MetaModelica partial functions.
       case _
         algorithm
-          DAE.TYPES_VAR(ty = ty as DAE.T_FUNCTION(__)) := FNode.refInstVar(r);
-          ty := Types.setTypeSource(ty, Types.mkTypeSource(SOME(Absyn.IDENT(inFuncName))));
+          DAE.TYPES_VAR(ty = ty) := FNode.refInstVar(r);
+          ty := match ty
+            case DAE.T_FUNCTION()
+              algorithm
+                ty.path := Absyn.IDENT(inFuncName);
+              then ty;
+          end match;
         then
           (inCache, {ty});
 
@@ -2044,7 +2441,7 @@ algorithm
             InnerOuter.emptyInstHierarchy, UnitAbsyn.noStore, DAE.NOMOD(),
             Prefix.NOPRE(), cl, {}, false, InstTypes.TOP_CALL(),
             ConnectionGraph.EMPTY, Connect.emptySet);
-          (cache, ty) := lookupTypeInEnv(cache, env, Absyn.IDENT(inFuncName));
+          (cache, ty) := lookupTypeInEnv(cache, env, inFuncName);
         then
           (cache, {ty});
 
@@ -2093,7 +2490,7 @@ algorithm
   // fprintln(Flags.INST_TRACE", "LOOKUP BUILD RECORD TY ICD: " + FGraph.printGraphPathStr(env) + "." + name);
   (outCache,outEnv,_) := InstFunction.implicitFunctionTypeInstantiation(
      outCache,env,InnerOuter.emptyInstHierarchy, cdef);
-  (outCache,ftype,_) := lookupTypeInEnv(outCache,outEnv,Absyn.IDENT(name));
+  (outCache,ftype,_) := lookupTypeInEnv(outCache,outEnv,name);
 end buildRecordType;
 
 protected function buildRecordConstructorClass
@@ -2157,7 +2554,7 @@ algorithm
     case (cache,env,SCode.CLASS(name = name,info = info),_)
       equation
         (cache,env,_,elts,_,_,_,_,_) = InstExtends.instDerivedClasses(cache,env,InnerOuter.emptyInstHierarchy,DAE.NOMOD(),Prefix.NOPRE(),cl,true,info);
-        env = FGraph.openScope(env, SCode.NOT_ENCAPSULATED(), SOME(name), SOME(FCore.CLASS_SCOPE()));
+        env = FGraph.openScope(env, SCode.NOT_ENCAPSULATED(), name, SOME(FCore.CLASS_SCOPE()));
         fpath = FGraph.getGraphName(env);
         (cdefelts,classExtendsElts,extendsElts,compElts) = InstUtil.splitElts(elts);
         (cache,env,_,_,eltsMods,_,_,_,_) = InstExtends.instExtendsAndClassExtendsList(cache, env, InnerOuter.emptyInstHierarchy, DAE.NOMOD(), Prefix.NOPRE(), extendsElts, classExtendsElts, elts, ClassInf.RECORD(fpath), name, true, false);
@@ -2170,7 +2567,7 @@ algorithm
         //         Util.tuple21),
         //       SCodeDump.printElementStr), "\n"));
         (cache, env1, _) = InstUtil.addClassdefsToEnv(cache, env, InnerOuter.emptyInstHierarchy, Prefix.NOPRE(), cdefelts, false, NONE());
-        (cache, env1, _) = InstUtil.addComponentsToEnv(cache, env1, InnerOuter.emptyInstHierarchy, mods, Prefix.NOPRE(), ClassInf.RECORD(fpath), eltsMods, eltsMods, {}, {}, true);
+        (cache, env1, _) = InstUtil.addComponentsToEnv(cache, env1, InnerOuter.emptyInstHierarchy, mods, Prefix.NOPRE(), ClassInf.RECORD(fpath), eltsMods, true);
         (cache, env1, funcelts) = buildRecordConstructorElts(cache,env1,eltsMods,mods);
       then (cache,env1,funcelts,elts);
 
@@ -2227,6 +2624,7 @@ algorithm
       list<Absyn.Subscript> d;
       SCode.Parallelism prl;
       SCode.Variability var;
+      Absyn.IsField isf;
       Absyn.Direction dir;
       Absyn.TypeSpec tp;
       SCode.Comment comment;
@@ -2241,18 +2639,18 @@ algorithm
     case (cache, env, (((      SCode.COMPONENT(
         id,
         SCode.PREFIXES(_, redecl, f as SCode.FINAL(), io, repl),
-        SCode.ATTR(d,ct,prl,var,_),tp,mod,comment,cond,info)),cmod) :: rest), _)
+        SCode.ATTR(d,ct,prl,var,_,isf),tp,mod,comment,cond,info)),cmod) :: rest), _)
       equation
         (cache,mod_1) = Mod.elabMod(cache, env, InnerOuter.emptyInstHierarchy, Prefix.NOPRE(), mod, true, Mod.COMPONENT(id), info);
-        mod_1 = Mod.merge(mods,mod_1,env,Prefix.NOPRE());
+        mod_1 = Mod.merge(mods,mod_1);
         // adrpo: this was wrong, you won't find any id modification there!!!
         // bjozac: This was right, you will find id modification unless modifers does not belong to component!
         // adrpo 2009-11-23 -> solved by selecting the full modifier if the component modifier is empty!
-        compMod = Mod.lookupModificationP(mod_1,Absyn.IDENT(id));
+        compMod = Mod.lookupCompModification(mod_1,id);
         fullMod = mod_1;
         selectedMod = selectModifier(compMod, fullMod); // if the first one is empty use the other one.
         (cache,cmod) = Mod.updateMod(cache,env,InnerOuter.emptyInstHierarchy,Prefix.NOPRE(),cmod,true,info);
-        selectedMod = Mod.merge(cmod,selectedMod,env,Prefix.NOPRE());
+        selectedMod = Mod.merge(cmod,selectedMod);
         umod = Mod.unelabMod(selectedMod);
         (cache, env, res) = buildRecordConstructorElts(cache, env, rest, mods);
         // - Prefixes (constant, parameter, final, discrete, input, output, ...) of the remaining record components are removed.
@@ -2262,25 +2660,25 @@ algorithm
         dir = Absyn.BIDIR();
         vis = SCode.PROTECTED();
       then
-        (cache, env, SCode.COMPONENT(id,SCode.PREFIXES(vis,redecl, f,io,repl),SCode.ATTR(d,ct,prl,var,dir),tp,umod,comment,cond,info) :: res);
+        (cache, env, SCode.COMPONENT(id,SCode.PREFIXES(vis,redecl, f,io,repl),SCode.ATTR(d,ct,prl,var,dir,isf),tp,umod,comment,cond,info) :: res);
 
     // constants become protected, Modelica Spec 3.2, Section 12.6, Record Constructor Functions, page 140
     // mahge: 2013-01-15 : only if they have bindings. otherwise they are still modifiable.
     case (cache, env, (((      SCode.COMPONENT(
         id,
         SCode.PREFIXES(vis, redecl, _, io, repl),
-        SCode.ATTR(d,ct,prl,SCode.CONST(),_),tp,mod as SCode.NOMOD(),comment,cond,info)), cmod) :: rest),_)
+        SCode.ATTR(d,ct,prl,SCode.CONST(),_,isf),tp,mod as SCode.NOMOD(),comment,cond,info)), cmod) :: rest),_)
       equation
         (cache,mod_1) = Mod.elabMod(cache, env, InnerOuter.emptyInstHierarchy, Prefix.NOPRE(), mod, true, Mod.COMPONENT(id), info);
-        mod_1 = Mod.merge(mods,mod_1,env,Prefix.NOPRE());
+        mod_1 = Mod.merge(mods,mod_1);
         // adrpo: this was wrong, you won't find any id modification there!!!
         // bjozac: This was right, you will find id modification unless modifers does not belong to component!
         // adrpo 2009-11-23 -> solved by selecting the full modifier if the component modifier is empty!
-        compMod = Mod.lookupModificationP(mod_1,Absyn.IDENT(id));
+        compMod = Mod.lookupCompModification(mod_1,id);
         fullMod = mod_1;
         selectedMod = selectModifier(compMod, fullMod); // if the first one is empty use the other one.
         (cache,cmod) = Mod.updateMod(cache,env,InnerOuter.emptyInstHierarchy,Prefix.NOPRE(),cmod,true,info);
-        selectedMod = Mod.merge(cmod,selectedMod,env,Prefix.NOPRE());
+        selectedMod = Mod.merge(cmod,selectedMod);
         umod = Mod.unelabMod(selectedMod);
         (cache, env, res) = buildRecordConstructorElts(cache, env, rest, mods);
         // - Prefixes (constant, parameter, final, discrete, input, output, ...) of the remaining record components are removed.
@@ -2290,24 +2688,24 @@ algorithm
         vis = SCode.PUBLIC();
         f = SCode.NOT_FINAL();
       then
-        (cache, env, SCode.COMPONENT(id,SCode.PREFIXES(vis,redecl,f,io,repl),SCode.ATTR(d,ct,prl,var,dir),tp,umod,comment,cond,info) :: res);
+        (cache, env, SCode.COMPONENT(id,SCode.PREFIXES(vis,redecl,f,io,repl),SCode.ATTR(d,ct,prl,var,dir,isf),tp,umod,comment,cond,info) :: res);
 
 
     case (cache, env, (((      SCode.COMPONENT(
         id,
         SCode.PREFIXES(_, redecl, f, io, repl),
-        SCode.ATTR(d,ct,prl,var as SCode.CONST(),_),tp,mod,comment,cond,info)),cmod) :: rest), _)
+        SCode.ATTR(d,ct,prl,var as SCode.CONST(),_,isf),tp,mod,comment,cond,info)),cmod) :: rest), _)
       equation
         (cache,mod_1) = Mod.elabMod(cache, env, InnerOuter.emptyInstHierarchy, Prefix.NOPRE(), mod, true, Mod.COMPONENT(id), info);
-        mod_1 = Mod.merge(mods,mod_1,env,Prefix.NOPRE());
+        mod_1 = Mod.merge(mods,mod_1);
         // adrpo: this was wrong, you won't find any id modification there!!!
         // bjozac: This was right, you will find id modification unless modifers does not belong to component!
         // adrpo 2009-11-23 -> solved by selecting the full modifier if the component modifier is empty!
-        compMod = Mod.lookupModificationP(mod_1,Absyn.IDENT(id));
+        compMod = Mod.lookupCompModification(mod_1,id);
         fullMod = mod_1;
         selectedMod = selectModifier(compMod, fullMod); // if the first one is empty use the other one.
         (cache,cmod) = Mod.updateMod(cache,env,InnerOuter.emptyInstHierarchy,Prefix.NOPRE(),cmod,true,info);
-        selectedMod = Mod.merge(cmod,selectedMod,env,Prefix.NOPRE());
+        selectedMod = Mod.merge(cmod,selectedMod);
         umod = Mod.unelabMod(selectedMod);
         (cache, env, res) = buildRecordConstructorElts(cache, env, rest, mods);
         // - Prefixes (constant, parameter, final, discrete, input, output, ...) of the remaining record components are removed.
@@ -2317,24 +2715,24 @@ algorithm
         dir = Absyn.BIDIR();
         vis = SCode.PROTECTED();
       then
-        (cache, env, SCode.COMPONENT(id,SCode.PREFIXES(vis,redecl,f,io,repl),SCode.ATTR(d,ct,prl,var,dir),tp,umod,comment,cond,info) :: res);
+        (cache, env, SCode.COMPONENT(id,SCode.PREFIXES(vis,redecl,f,io,repl),SCode.ATTR(d,ct,prl,var,dir,isf),tp,umod,comment,cond,info) :: res);
 
     // all others, add input see Modelica Spec 3.2, Section 12.6, Record Constructor Functions, page 140
     case (cache, env, (((      SCode.COMPONENT(
         id,
         SCode.PREFIXES(_, redecl, _, io, repl),
-        SCode.ATTR(d,ct,prl,_,_),tp,mod,comment,cond,info)),cmod) :: rest), _)
+        SCode.ATTR(d,ct,prl,_,_,isf),tp,mod,comment,cond,info)),cmod) :: rest), _)
       equation
         (cache,mod_1) = Mod.elabMod(cache, env, InnerOuter.emptyInstHierarchy, Prefix.NOPRE(), mod, true, Mod.COMPONENT(id), info);
-        mod_1 = Mod.merge(mods,mod_1,env,Prefix.NOPRE());
+        mod_1 = Mod.merge(mods,mod_1);
         // adrpo: this was wrong, you won't find any id modification there!!!
         // bjozac: This was right, you will find id modification unless modifers does not belong to component!
         // adrpo 2009-11-23 -> solved by selecting the full modifier if the component modifier is empty!
-        compMod = Mod.lookupModificationP(mod_1,Absyn.IDENT(id));
+        compMod = Mod.lookupCompModification(mod_1,id);
         fullMod = mod_1;
         selectedMod = selectModifier(compMod, fullMod); // if the first one is empty use the other one.
         (cache,cmod) = Mod.updateMod(cache,env,InnerOuter.emptyInstHierarchy,Prefix.NOPRE(),cmod,true,info);
-        selectedMod = Mod.merge(cmod,selectedMod,env,Prefix.NOPRE());
+        selectedMod = Mod.merge(cmod,selectedMod);
         umod = Mod.unelabMod(selectedMod);
         (cache, env, res) = buildRecordConstructorElts(cache, env, rest, mods);
         // - Prefixes (constant, parameter, final, discrete, input, output, ...) of the remaining record components are removed.
@@ -2344,7 +2742,7 @@ algorithm
         f = SCode.NOT_FINAL();
         dir = Absyn.INPUT();
       then
-        (cache, env, SCode.COMPONENT(id,SCode.PREFIXES(vis, redecl, f, io, repl),SCode.ATTR(d,ct,prl,var,dir),tp,umod,comment,cond,info) :: res);
+        (cache, env, SCode.COMPONENT(id,SCode.PREFIXES(vis, redecl, f, io, repl),SCode.ATTR(d,ct,prl,var,dir,isf),tp,umod,comment,cond,info) :: res);
 
     case (_, _, (comp,cmod)::_, _)
       equation
@@ -2368,7 +2766,7 @@ algorithm
   //print(" creating element of type: " + id + "\n");
   //print(" with generated mods:" + SCode.printSubs1Str(submodlst) + "\n");
   outElement := SCode.COMPONENT("result",SCode.defaultPrefixes,
-          SCode.ATTR({},SCode.POTENTIAL(),SCode.NON_PARALLEL(),SCode.VAR(),Absyn.OUTPUT()),
+          SCode.ATTR({},SCode.POTENTIAL(),SCode.NON_PARALLEL(),SCode.VAR(),Absyn.OUTPUT(),Absyn.NONFIELD()),
           Absyn.TPATH(Absyn.IDENT(id),NONE()),
           SCode.NOMOD(),SCode.noComment,NONE(),info);
   annotation(__OpenModelica_EarlyInline = true);
@@ -2383,14 +2781,14 @@ protected function lookupClassInEnv
   input FCore.Graph inEnv;
   input String id;
   input FCore.Scope inPrevFrames;
-  input Util.StatefulBoolean inState;
-  input Boolean inMsg;
+  input Mutable<Boolean> inState;
+  input Option<SourceInfo> inInfo;
   output FCore.Cache outCache;
   output SCode.Element outClass;
   output FCore.Graph outEnv;
   output FCore.Scope outPrevFrames;
 algorithm
-  (outCache,outClass,outEnv,outPrevFrames) := matchcontinue (inCache,inEnv,id,inPrevFrames,inState,inMsg)
+  (outCache,outClass,outEnv,outPrevFrames) := matchcontinue (inCache,inEnv,id,inPrevFrames,inState,inInfo)
     local
       SCode.Element c;
       FCore.Graph env_1,env,fs,i_env;
@@ -2399,14 +2797,14 @@ algorithm
       FCore.Ref r;
       FCore.Scope rs;
       String sid,scope;
-      Boolean msg,msgflag;
       FCore.Cache cache;
+      SourceInfo info;
 
-    case (cache,env as FCore.G(scope = r::_),_,prevFrames,_,msg)
+    case (cache,env as FCore.G(scope = r::_),_,prevFrames,_,_)
       equation
         frame = FNode.fromRef(r);
-        (cache,c,env_1,prevFrames) = lookupClassInFrame(cache, frame, env, id, prevFrames, inState, msg);
-        Util.setStatefulBoolean(inState,true);
+        (cache,c,env_1,prevFrames) = lookupClassInFrame(cache, frame, env, id, prevFrames, inState, inInfo);
+        Mutable.update(inState,true);
       then
         (cache,c,env_1,prevFrames);
 
@@ -2418,46 +2816,46 @@ algorithm
         true = FNode.isEncapsulated(frame);
         true = stringEq(id, sid) "Special case if looking up the class that -is- encapsulated. That must be allowed." ;
         (env, _) = FGraph.stripLastScopeRef(env);
-        (cache,c,env,prevFrames) = lookupClassInEnv(cache, env, id, r::prevFrames, inState, true);
-        Util.setStatefulBoolean(inState,true);
+        (cache,c,env,prevFrames) = lookupClassInEnv(cache, env, id, r::prevFrames, inState, inInfo);
+        Mutable.update(inState,true);
       then
         (cache,c,env,prevFrames);
 
     // lookup stops at encapsulated classes except for builtin
     // scope, if not found in builtin scope, error
-    case (cache,env as FCore.G(scope = r :: _),_,_,_,true)
+    case (cache,env as FCore.G(scope = r :: _),_,_,_,SOME(info))
       equation
         false = FNode.isRefTop(r);
         frame = FNode.fromRef(r);
         true = FNode.isEncapsulated(frame);
         i_env = FGraph.topScope(env);
-        failure((_,_,_,_) = lookupClassInEnv(cache, i_env, id, {}, inState, false));
+        failure((_,_,_,_) = lookupClassInEnv(cache, i_env, id, {}, inState, NONE()));
         scope = FGraph.printGraphPathStr(env);
-        Error.addMessage(Error.LOOKUP_ERROR, {id,scope});
+        Error.addSourceMessage(Error.LOOKUP_ERROR, {id,scope}, info);
       then
         fail();
 
     // lookup stops at encapsulated classes, except for builtin scope
-    case (cache, env as FCore.G(scope = r::_),_,prevFrames,_,msgflag)
+    case (cache, env as FCore.G(scope = r::_),_,prevFrames,_,_)
       equation
         frame = FNode.fromRef(r);
         true = FNode.isEncapsulated(frame);
         i_env = FGraph.topScope(env);
-        (cache,c,env_1,prevFrames) = lookupClassInEnv(cache, i_env, id, {}, inState, msgflag);
-        Util.setStatefulBoolean(inState,true);
+        (cache,c,env_1,prevFrames) = lookupClassInEnv(cache, i_env, id, {}, inState, inInfo);
+        Mutable.update(inState,true);
       then
         (cache,c,env_1,prevFrames);
 
     // if not found and not encapsulated, and no ident has been previously found, look in next enclosing scope
-    case (cache,env as FCore.G(scope = r::_),_,prevFrames,_,msgflag)
+    case (cache,env as FCore.G(scope = r::_),_,prevFrames,_,_)
       equation
         false = FNode.isRefTop(r);
         frame = FNode.fromRef(r);
         false = FNode.isEncapsulated(frame);
-        false = Util.getStatefulBoolean(inState);
+        false = Mutable.access(inState);
         (env, _) = FGraph.stripLastScopeRef(env);
-        (cache,c,env_1,prevFrames) = lookupClassInEnv(cache, env, id, r::prevFrames, inState, msgflag);
-        Util.setStatefulBoolean(inState, true);
+        (cache,c,env_1,prevFrames) = lookupClassInEnv(cache, env, id, r::prevFrames, inState, inInfo);
+        Mutable.update(inState, true);
       then
         (cache,c,env_1,prevFrames);
 
@@ -2470,14 +2868,14 @@ protected function lookupClassInFrame "Search for a class within one frame."
   input FCore.Graph inEnv;
   input SCode.Ident inIdent;
   input FCore.Scope inPrevFrames;
-  input Util.StatefulBoolean inState;
-  input Boolean inBoolean;
+  input Mutable<Boolean> inState;
+  input Option<SourceInfo> inInfo;
   output FCore.Cache outCache;
   output SCode.Element outClass;
   output FCore.Graph outEnv;
   output FCore.Scope outPrevFrames;
 algorithm
-  (outCache,outClass,outEnv,outPrevFrames) := matchcontinue (inCache,inFrame,inEnv,inIdent,inPrevFrames,inState,inBoolean)
+  (outCache,outClass,outEnv,outPrevFrames) := matchcontinue (inCache,inFrame,inEnv,inIdent,inPrevFrames,inState)
     local
       SCode.Element c;
       FCore.Graph totenv,env_1;
@@ -2491,28 +2889,28 @@ algorithm
       Boolean unique;
 
     // Check this scope for class
-    case (cache,FCore.N(children = ht),totenv,name,prevFrames,_,_)
+    case (cache,FCore.N(children = ht),totenv,name,prevFrames,_)
       equation
-        r = FNode.avlTreeGet(ht, name);
+        r = FCore.RefTree.get(ht, name);
         FCore.N(data = FCore.CL(e = c)) = FNode.fromRef(r);
       then
         (cache,c,totenv,prevFrames);
 
     // Search in imports
-    case (cache,_,totenv,name,_,_,_)
+    case (cache,_,totenv,name,_,_)
       equation
         (qimports, uqimports) = FNode.imports(inFrame);
         _ = matchcontinue (qimports, uqimports)
           // Search among the qualified imports, e.g. import A.B; or import D=A.B;
           case (_::_, _)
             equation
-              (cache,c,env_1,prevFrames) = lookupQualifiedImportedClassInFrame(cache,qimports,totenv,name,inState);
+              (cache,c,env_1,prevFrames) = lookupQualifiedImportedClassInFrame(cache,qimports,totenv,name,inState,inInfo);
             then ();
           // Search among the unqualified imports, e.g. import A.B.*;
           case (_, _::_)
             equation
-              (cache,c,env_1,prevFrames,unique) = lookupUnqualifiedImportedClassInFrame(cache,uqimports,totenv,name);
-              Util.setStatefulBoolean(inState,true);
+              (cache,c,env_1,prevFrames,unique) = lookupUnqualifiedImportedClassInFrame(cache,uqimports,totenv,name,inInfo);
+              Mutable.update(inState,true);
               reportSeveralNamesError(unique,name);
             then ();
         end matchcontinue;
@@ -2556,7 +2954,7 @@ protected
   FCore.Node n;
   String name;
 algorithm
-  r := FNode.avlTreeGet(inBinTree, inIdent);
+  r := FCore.RefTree.get(inBinTree, inIdent);
   outVar := FNode.refInstVar(r);
   s := FNode.refRefTargetScope(r);
   n := FNode.fromRef(r);
@@ -2584,37 +2982,45 @@ algorithm
     local
       DAE.Type t,t_1;
       DAE.Dimension dim;
-      DAE.TypeSource ts;
+      DAE.Subscript sub;
       list<DAE.Subscript> ys,s;
-      Integer sz,ind,dim_int;
+      Integer sz,ind,dim_int,step;
       list<DAE.Exp> se;
       DAE.Exp e;
 
     // empty case
     case (t,{}) then t;
 
-    case (DAE.T_ARRAY(dims = {dim},ty = t,source = ts),(DAE.WHOLEDIM() :: ys))
+    case (DAE.T_ARRAY(dims = {dim},ty = t),(DAE.WHOLEDIM() :: ys))
       equation
         t_1 = checkSubscripts(t, ys);
       then
-        DAE.T_ARRAY(t_1,{dim},ts);
+        DAE.T_ARRAY(t_1,{dim});
 
-    case (DAE.T_ARRAY(dims = {dim}, ty = t, source = ts),
+    case (DAE.T_ARRAY(dims = {_}, ty = t),
+          DAE.SLICE(exp = e as DAE.RANGE()) :: ys)
+      algorithm
+        t_1 := checkSubscripts(t, ys);
+        dim_int := Expression.rangeSize(e);
+      then
+        DAE.T_ARRAY(t_1, {DAE.DIM_INTEGER(dim_int)});
+
+    case (DAE.T_ARRAY(dims = {dim}, ty = t),
           (DAE.SLICE(exp = DAE.ARRAY(array = se)) :: ys))
       equation
         _ = Expression.dimensionSize(dim);
         t_1 = checkSubscripts(t, ys);
         dim_int = listLength(se) "FIXME: Check range IMPLEMENTED 2007-05-18 BZ" ;
       then
-        DAE.T_ARRAY(t_1,{DAE.DIM_INTEGER(dim_int)},ts);
+        DAE.T_ARRAY(t_1,{DAE.DIM_INTEGER(dim_int)});
 
-    case (DAE.T_ARRAY(dims = {_}, ty = t, source = ts),
+    case (DAE.T_ARRAY(dims = {_}, ty = t),
           (DAE.SLICE(exp = e) :: ys))
       equation
         DAE.T_ARRAY(dims={dim}) = Expression.typeof(e);
         t_1 = checkSubscripts(t, ys);
       then
-        DAE.T_ARRAY(t_1, {dim}, ts);
+        DAE.T_ARRAY(t_1, {dim});
 
     case (DAE.T_ARRAY(dims = {dim}, ty = t),
           (DAE.INDEX(exp = DAE.ICONST(integer = ind)) :: ys))
@@ -2659,7 +3065,7 @@ algorithm
     case (DAE.T_SUBTYPE_BASIC(complexType = t),ys)
       then checkSubscripts(t,ys);
 
-    case(t as DAE.T_UNKNOWN(_), _) then t;
+    case(t as DAE.T_UNKNOWN(), _) then t;
 
     case (DAE.T_METAARRAY(), {DAE.INDEX()}) then inType.ty;
     case (DAE.T_METAARRAY(), {_}) then inType;
@@ -2701,7 +3107,7 @@ algorithm
   match (inCache,inBinTree,inComponentRef,inEnv)
     local
       String id,id2;
-      SCode.ConnectorType ct;
+      DAE.ConnectorType ct;
       SCode.Parallelism prl;
       SCode.Variability vt,vt2;
       Absyn.Direction di;
@@ -2726,17 +3132,10 @@ algorithm
       Absyn.Path p;
 
     // Simple identifier
-    case (cache,ht,DAE.CREF_IDENT(ident = id,subscriptLst = ss),_)
-      equation
-        (DAE.TYPES_VAR(name,attr,ty,bind,cnstForRange),_,_,_,componentEnv) = lookupVar2(ht, id, inEnv);
-        ty_1 = checkSubscripts(ty, ss);
-        tty = Types.simplifyType(ty);
-        ss = addArrayDimensions(tty,ss);
-        cref_ = ComponentReference.makeCrefIdent(id,tty, ss);
-        splicedExp = Expression.makeCrefExp(cref_,tty);
-        //print("splicedExp ="+ExpressionDump.dumpExpStr(splicedExp,0)+"\n");
-      then
-        (cache,attr,ty_1,bind,cnstForRange,InstTypes.SPLICEDEXPDATA(SOME(splicedExp),ty),componentEnv,name);
+    case (_,_,DAE.CREF_IDENT(ident = id,subscriptLst = ss),_)
+      algorithm
+        (outCache,outAttributes,outType,outBinding,constOfForIteratorRange,splicedExpData,outComponentEnv,name) := lookupVarFIdent(inCache,inBinTree,id,ss,inEnv);
+      then (outCache,outAttributes,outType,outBinding,constOfForIteratorRange,splicedExpData,outComponentEnv,name);
 
     // Qualified variables looked up through component environment with or without spliced exp
     case (cache,ht,DAE.CREF_QUAL(ident = id,subscriptLst = ss,componentRef = ids), _)
@@ -2747,28 +3146,24 @@ algorithm
         // componentEnv = FGraph.setScope(componentEnv, List.create(FGraph.lastScopeRef(componentEnv)));
 
         (attr,ty,binding,cnstForRange,componentEnv,name) := match tyParent
-          case DAE.T_METARECORD(fields=fields)
+          case DAE.T_METAARRAY()
             algorithm
-              {} := ss;
-              DAE.CREF_IDENT(ident=id2,subscriptLst={}) := ids;
-              DAE.TYPES_VAR(name,attr,ty,binding,cnstForRange) := listGet(fields,Types.findVarIndex(id2,fields)+1);
+              true := listLength(Types.getDimensions(tyParent)) == listLength(ss);
+              (cache,attr,ty,binding,cnstForRange,name) := lookupVarFMetaModelica(cache, componentEnv, ids, Types.metaArrayElementType(tyParent));
               splicedExpData := InstTypes.SPLICEDEXPDATA(NONE(),ty);
             then (attr,ty,binding,cnstForRange,componentEnv,name);
-          case DAE.T_METAUNIONTYPE(knownSingleton=true, paths={p})
+          case _ guard Types.isBoxedType(tyParent) and not Types.isUnknownType(tyParent)
             algorithm
               {} := ss;
-              DAE.CREF_IDENT(ident=id2,subscriptLst={}) := ids;
-              (cache, DAE.T_METARECORD(fields=fields), _) := lookupType(cache, componentEnv, p, NONE());
-              DAE.TYPES_VAR(name,attr,ty,binding,cnstForRange) := listGet(fields,Types.findVarIndex(id2,fields)+1);
+              (cache,attr,ty,binding,cnstForRange,name) := lookupVarFMetaModelica(cache, componentEnv, ids, tyParent);
               splicedExpData := InstTypes.SPLICEDEXPDATA(NONE(),ty);
             then (attr,ty,binding,cnstForRange,componentEnv,name);
-          case DAE.T_METAUNIONTYPE()
-            then fail();
           else
             algorithm
               (cache,DAE.ATTR(ct,prl,vt,di,io,vis),tyChild,binding,cnstForRange,InstTypes.SPLICEDEXPDATA(texp,idTp),_,componentEnv,name) := lookupVar(cache, componentEnv, ids);
 
               ltCref := elabComponentRecursive((texp));
+              ty := tyChild; // In case it's an unspliced expression
               oSplicedExp := match ltCref
                 case (tCref::_) // with a spliced exp
                   algorithm
@@ -2793,6 +3188,80 @@ algorithm
 
   end match;
 end lookupVarF;
+
+protected function lookupVarFIdent
+"This function looks in a frame to find a declared variable.  If
+  the name being looked up is qualified, the first part of the name
+  is looked up, and lookupVar2 is used to for further lookup in
+  the result of that lookup.
+  2007-05-29 If we can construct a expression, we do after expanding the
+  subscript with dimensions to fill the Cref."
+  input output FCore.Cache cache;
+  input FCore.Children ht;
+  input String ident;
+  input list<DAE.Subscript> ss;
+  input FCore.Graph inEnv;
+  output DAE.Attributes attr;
+  output DAE.Type ty_1;
+  output DAE.Binding bind;
+  output Option<DAE.Const> cnstForRange "SOME(constant-ness) of the range if this is a for iterator, NONE() if this is not a for iterator";
+  output InstTypes.SplicedExpData splicedExpData;
+  output FCore.Graph componentEnv;
+  output String name;
+protected
+  DAE.Type tty, ty;
+  list<DAE.Subscript> ss_1;
+algorithm
+  (DAE.TYPES_VAR(name,attr,ty,bind,cnstForRange),_,_,_,componentEnv) := lookupVar2(ht, ident, inEnv);
+  ty_1 := checkSubscripts(ty, ss);
+  tty := Types.simplifyType(ty);
+  ss_1 := addArrayDimensions(tty,ss);
+  splicedExpData := InstTypes.SPLICEDEXPDATA(SOME(Expression.makeCrefExp(ComponentReference.makeCrefIdent(ident,tty,ss_1),tty)),ty);
+end lookupVarFIdent;
+
+
+protected function lookupVarFMetaModelica
+  input FCore.Cache inCache;
+  input FCore.Graph inEnv;
+  input DAE.ComponentRef cr;
+  input DAE.Type inType;
+  output FCore.Cache cache = inCache;
+  output DAE.Attributes attr;
+  output DAE.Type ty;
+  output DAE.Binding binding;
+  output Option<DAE.Const> cnstForRange;
+  output String name;
+algorithm
+  (attr,ty,binding,cnstForRange,name) := match cr
+    local
+      list<DAE.Var> fields;
+      Absyn.Path p;
+      DAE.Type tt;
+    case DAE.CREF_IDENT()
+      algorithm
+        fields := Types.getMetaRecordFields(inType);
+        DAE.TYPES_VAR(name,attr,ty,binding,cnstForRange) := listGet(fields,Types.findVarIndex(cr.ident,fields)+1);
+        for s in cr.subscriptLst loop
+          ty := match ty
+            case DAE.T_METAARRAY() then ty.ty;
+          end match;
+        end for;
+        ty := Types.getMetaRecordIfSingleton(ty);
+      then (attr,ty,binding,cnstForRange,name);
+    case DAE.CREF_QUAL()
+      algorithm
+        fields := Types.getMetaRecordFields(inType);
+        DAE.TYPES_VAR(name,attr,ty,binding,cnstForRange) := listGet(fields,Types.findVarIndex(cr.ident,fields)+1);
+        for s in cr.subscriptLst loop
+          ty := match ty
+            case DAE.T_METAARRAY() then ty.ty;
+          end match;
+        end for;
+        ty := Types.getMetaRecordIfSingleton(ty);
+        (cache,attr,ty,binding,cnstForRange,name) := lookupVarFMetaModelica(cache, inEnv, cr.componentRef, ty);
+      then (attr,ty,binding,cnstForRange,name);
+  end match;
+end lookupVarFMetaModelica;
 
 protected function lookupBinding
 "@author: adrpo
@@ -2935,15 +3404,13 @@ algorithm
 
     // Special case when addressing array[0].
     case DAE.DIM_INTEGER(integer = 0)
-      then
-        DAE.SLICE(DAE.ARRAY(DAE.T_INTEGER_DEFAULT, true, {DAE.ICONST(0)}));
+      then DAE.SLICE(DAE.ARRAY(DAE.T_INTEGER_DEFAULT, true, {DAE.ICONST(0)}));
 
     // Array with integer dimension.
-    case DAE.DIM_INTEGER(integer = sz)
-      equation
-        expl = List.map(List.intRange(sz), Expression.makeIntegerExp);
-      then
-        DAE.SLICE(DAE.ARRAY(DAE.T_INTEGER_DEFAULT, true, expl));
+    case DAE.DIM_INTEGER()
+      then DAE.SLICE(DAE.RANGE(
+        DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT, {DAE.DIM_INTEGER(inDim.integer)}),
+        DAE.ICONST(1), NONE(), DAE.ICONST(inDim.integer)));
 
     // Array with boolean dimension.
     case DAE.DIM_BOOLEAN()
@@ -2956,8 +3423,7 @@ algorithm
     case DAE.DIM_ENUM(enumTypeName = enum_name, literals = l)
       equation
         expl = makeEnumLiteralIndices(enum_name, l, 1);
-      then
-        DAE.SLICE(DAE.ARRAY(DAE.T_ENUMERATION(NONE(), enum_name, l, {}, {}, DAE.emptyTypeSource), true, expl));
+      then DAE.SLICE(DAE.ARRAY(DAE.T_ENUMERATION(NONE(), enum_name, l, {}, {}), true, expl));
   end match;
 end makeDimensionSubscript;
 
@@ -3048,7 +3514,7 @@ algorithm
 end sliceDimensionType;
 
 
-protected function buildMetaRecordType "common function when looking up the type of a metarecord"
+public function buildMetaRecordType "common function when looking up the type of a metarecord"
   input FCore.Cache inCache;
   input FCore.Graph inEnv;
   input SCode.Element cdef;
@@ -3063,22 +3529,24 @@ protected
   list<DAE.Var> varlst;
   list<SCode.Element> els;
   Boolean singleton;
-  DAE.TypeSource ts;
   FCore.Cache cache;
+  list<DAE.Type> typeVarsType;
+  list<String> typeVars;
 algorithm
-  SCode.CLASS(name=id,restriction=SCode.R_METARECORD(utPath,index,singleton),classDef=SCode.PARTS(elementLst = els)) := cdef;
-  env := FGraph.openScope(inEnv, SCode.NOT_ENCAPSULATED(), SOME(id), SOME(FCore.CLASS_SCOPE()));
+  SCode.CLASS(name=id,restriction=SCode.R_METARECORD(name=utPath,index=index,singleton=singleton,typeVars=typeVars),classDef=SCode.PARTS(elementLst = els)) := cdef;
+  env := FGraph.openScope(inEnv, SCode.NOT_ENCAPSULATED(), id, SOME(FCore.CLASS_SCOPE()));
   // print("buildMetaRecordType " + id + " in scope " + FGraph.printGraphPathStr(env) + "\n");
   (cache,utPath) := Inst.makeFullyQualified(inCache,env,utPath);
   path := Absyn.joinPaths(utPath, Absyn.IDENT(id));
-  (outCache,outEnv,_,_,_,_,_,varlst,_) := Inst.instElementList(
+  (outCache,outEnv,_,_,_,_,_,varlst,_,_) := Inst.instElementList(
     cache,env,InnerOuter.emptyInstHierarchy, UnitAbsyn.noStore,
     DAE.NOMOD(),Prefix.NOPRE(),
     ClassInf.META_RECORD(Absyn.IDENT("")), List.map1(els,Util.makeTuple,DAE.NOMOD()),
     {}, false, InstTypes.INNER_CALL(), ConnectionGraph.EMPTY, Connect.emptySet, true);
   varlst := Types.boxVarLst(varlst);
-  ts := Types.mkTypeSource(SOME(path));
-  ftype := DAE.T_METARECORD(utPath,index,varlst,singleton,ts);
+  // for v in varlst loop print(Types.unparseType(v.ty)+"\n"); end for;
+  typeVarsType := list(DAE.T_METAPOLYMORPHIC(tv) for tv in typeVars);
+  ftype := DAE.T_METARECORD(path,utPath,typeVarsType,index,varlst,singleton);
   // print("buildMetaRecordType " + id + " in scope " + FGraph.printGraphPathStr(env) + " OK " + Types.unparseType(ftype) +"\n");
 end buildMetaRecordType;
 
@@ -3143,7 +3611,7 @@ algorithm
     case (_, _, Absyn.QUALIFIED(name, _))
       equation
         ErrorExt.setCheckpoint("functionViaComponentRef10");
-        (_,_,_,_,_,_,_,_,_) = lookupVar(inCache, inEnv, ComponentReference.makeCrefIdent(name, DAE.T_UNKNOWN_DEFAULT, {}));
+        (_,_,_,_,_,_,_,_,_) = lookupVarIdent(inCache, inEnv, name, {});
         ErrorExt.rollBack("functionViaComponentRef10");
       then
         true;
@@ -3158,6 +3626,61 @@ algorithm
 
   end matchcontinue;
 end isFunctionCallViaComponent;
+
+protected function prefixSplicedExp
+  "Prefixes a spliced exp that contains a cref with another cref."
+  input DAE.ComponentRef inCref;
+  input InstTypes.SplicedExpData inSplicedExp;
+  output InstTypes.SplicedExpData outSplicedExp;
+algorithm
+  outSplicedExp := match inSplicedExp
+    local
+      DAE.Type ety, ty;
+      DAE.ComponentRef cref;
+
+    case InstTypes.SPLICEDEXPDATA(SOME(DAE.CREF(cref, ety)), ty)
+      algorithm
+        cref := ComponentReference.joinCrefs(inCref, cref);
+      then
+        InstTypes.SPLICEDEXPDATA(SOME(DAE.CREF(cref, ety)), ty);
+
+    else inSplicedExp;
+  end match;
+end prefixSplicedExp;
+
+public function isArrayType
+  input FCore.Cache inCache;
+  input FCore.Graph inEnv;
+  input Absyn.Path inPath;
+  output FCore.Cache outCache;
+  output Boolean outIsArray;
+protected
+  SCode.Element el;
+  Absyn.Path p;
+  FCore.Graph env;
+algorithm
+  try
+    (outCache, el, env) := lookupClass(inCache, inEnv, inPath);
+
+    outIsArray := match el
+      case SCode.CLASS(classDef = SCode.DERIVED(typeSpec = Absyn.TPATH(arrayDim = SOME(_))))
+        then true;
+
+      case SCode.CLASS(classDef = SCode.DERIVED(attributes = SCode.ATTR(arrayDims = _ :: _)))
+        then true;
+
+      case SCode.CLASS(classDef = SCode.DERIVED(typeSpec = Absyn.TPATH(path = p)))
+        algorithm
+          (outCache, outIsArray) := isArrayType(outCache, env, p);
+        then
+          outIsArray;
+
+      else false;
+    end match;
+  else
+    outIsArray := false;
+  end try;
+end isArrayType;
 
 annotation(__OpenModelica_Interface="frontend");
 end Lookup;

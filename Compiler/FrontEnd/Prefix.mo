@@ -34,7 +34,6 @@ encapsulated package Prefix
   package:     Prefix
   description: Prefix management
 
-  RCS: $Id$
 
   When instantiating an expression, there is a prefix that
   has to be added to each variable name to be able to use it in the
@@ -74,6 +73,7 @@ uniontype ComponentPrefix
     list<DAE.Subscript> subscripts "subscripts" ;
     ComponentPrefix next "next prefix" ;
     ClassInf.State ci_state "to be able to at least partially fill in type information properly for DAE.VAR";
+    SourceInfo info;
   end PRE;
 
   record NOCOMPPRE end NOCOMPPRE;

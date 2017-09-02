@@ -43,15 +43,19 @@ void cat_array(int k, const vector<const BaseArray<T>*>& x, BaseArray<T>& a)
     new_k_dim_size = x[0]->getDims()[k-1];
     for(int i = 1; i < n; i++)
     {
-        if(x[0]->getDims().size() != x[i]->getDims().size())
+        //arrays must have same number of dimensions
+		if(x[0]->getDims().size() != x[i]->getDims().size())
            throw ModelicaSimulationError(MODEL_ARRAY_FUNCTION,"Wrong dimension for input array");
-        for(int j = 0; j < (k - 1); j++)
+        //Size matching: Arrays must have identical array sizes with the exception of the size of dimension k
+		for(int j = 0; j < (k - 1); j++)
         {
             if (x[0]->getDims()[j] != x[i]->getDims()[j])
                 throw ModelicaSimulationError(MODEL_ARRAY_FUNCTION,"Wrong size for input array");
         }
+		//calculate new size of dimension k
         new_k_dim_size += x[i]->getDims()[k-1];
-        for(int j = k; j < x[0]->getDims().size(); j++)
+         //Size matching: Arrays must have identical array sizes with the exception of the size of dimension k
+		for(int j = k; j < x[0]->getDims().size(); j++)
         {
           if (x[0]->getDims()[j] != x[i]->getDims()[j])
             throw ModelicaSimulationError(MODEL_ARRAY_FUNCTION,"Wrong size for input array");
@@ -111,7 +115,7 @@ void create_array_from_shape(const spec_type& sp,BaseArray<T>& s,BaseArray<T>& d
                shape.push_back(*iter);
 
      }
-     d.setDims(shape);
+    d.setDims(shape);
 
      //Check if the dimension of passed indices match the dimension of target array
    if(sp.second.size()!=s.getNumDims())
@@ -156,6 +160,65 @@ void create_array_from_shape(const spec_type& sp,BaseArray<T>& s,BaseArray<T>& d
 }
 
 
+
+
+/*
+fills an array (d) with passed multi array  shape (sp) and initialized it with elements from passed source array (s)
+s source array
+d destination array
+sp (shape,indices) of source array
+*/
+template < typename T >
+void fill_array_from_shape(const spec_type& sp,BaseArray<T>& s,BaseArray<T>& d)
+{
+
+
+   T* data = new T[d.getNumElems()];
+
+   idx_type::const_iterator spec_iter;
+   //calc number of indeces
+   size_t n =1;
+   for(spec_iter = sp.second.begin();spec_iter!=sp.second.end();++spec_iter)
+     {
+
+        n*=spec_iter->size();
+   }
+   size_t k =0;
+     size_t index=0;
+   vector<size_t>::const_iterator indeces_iter;
+
+   //initialize target array with elements of source array using passed indices
+   vector<size_t> idx;
+   for(int i=0;i<n;i++)
+   {
+    spec_iter = sp.second.begin();
+        for(int dim=0;dim<s.getNumDims();dim++)
+    {
+      size_t idx1 = getNextIndex(*spec_iter,i);
+      idx.push_back(idx1);
+      spec_iter++;
+    }
+    if(index>(d.getNumElems()-1))
+    {
+      throw ModelicaSimulationError(MODEL_ARRAY_FUNCTION,"Erro in create array from shape, number of dimensions does not match");
+    }
+    data[index] = s(idx);
+    idx.clear();
+    index++;
+   }
+   //assign elemets to target array
+   d.assign( data );
+     delete [] data;
+}
+
+void identity_alloc(size_t n, DynArrayDim2<int>& I)
+{
+  I.setDims(n, n);
+  fill_array(I, 0);
+  for (size_t i = 1; i <= n; i++)
+    I(i, i) = 1;
+}
+
  //template < typename T , size_t NumDims, size_t NumDims2 >
 template <typename T>
 void promote_array(size_t n, const BaseArray<T>& s, BaseArray<T>& d)
@@ -192,11 +255,15 @@ void transpose_array(const BaseArray<T>& x, BaseArray<T>& a)
 template <typename T>
 void multiply_array(const BaseArray<T>& inputArray, const T &b, BaseArray<T>& outputArray)
 {
-  outputArray.setDims(inputArray.getDims());
-  const T* data = inputArray.getData();
-  T* aim = outputArray.getData();
-  std::transform (data, data + inputArray.getNumElems(),
+  size_t dim = inputArray.getNumElems();
+  if(dim > 0)
+  {
+	outputArray.setDims(inputArray.getDims());
+	const T* data = inputArray.getData();
+	T* aim = outputArray.getData();
+	std::transform (data, data + inputArray.getNumElems(),
                   aim, std::bind2nd(std::multiplies<T>(), b));
+  }
 };
 
 template <typename T>
@@ -205,6 +272,7 @@ void multiply_array(const BaseArray<T> &leftArray, const BaseArray<T> &rightArra
   size_t leftNumDims = leftArray.getNumDims();
   size_t rightNumDims = rightArray.getNumDims();
   size_t matchDim = rightArray.getDim(1);
+  resultArray.setDims(leftArray.getDims());
   if (leftArray.getDim(leftNumDims) != matchDim)
     throw ModelicaSimulationError(MODEL_ARRAY_FUNCTION,
                                   "Wrong sizes in multiply_array");
@@ -244,6 +312,24 @@ void multiply_array(const BaseArray<T> &leftArray, const BaseArray<T> &rightArra
 }
 
 template <typename T>
+void multiply_array_elem_wise(const BaseArray<T> &leftArray, const BaseArray<T> &rightArray, BaseArray<T> &resultArray)
+{
+  size_t dimLeft = leftArray.getNumElems();
+  size_t dimRight = rightArray.getNumElems();
+
+  if(dimLeft != dimRight)
+      throw ModelicaSimulationError(MODEL_ARRAY_FUNCTION,
+                                      "Right and left array must have the same size for element wise multiplication");
+
+  resultArray.setDims(leftArray.getDims());
+  const T* leftData = leftArray.getData();
+  const T* rightData = rightArray.getData();
+  T* aim = resultArray.getData();
+
+  std::transform (leftData, leftData + leftArray.getNumElems(), rightData, aim, std::multiplies<T>());
+}
+
+template <typename T>
 void divide_array(const BaseArray<T>& inputArray, const T &b, BaseArray<T>& outputArray)
 {
   size_t nelems = inputArray.getNumElems();
@@ -254,6 +340,24 @@ void divide_array(const BaseArray<T>& inputArray, const T &b, BaseArray<T>& outp
   const T* data = inputArray.getData();
   T* aim = outputArray.getData();
   std::transform(data, data + nelems, aim, std::bind2nd(std::divides<T>(), b));
+}
+
+template <typename T>
+void divide_array_elem_wise(const BaseArray<T> &leftArray, const BaseArray<T> &rightArray, BaseArray<T> &resultArray)
+{
+  size_t dimLeft = leftArray.getNumElems();
+  size_t dimRight = rightArray.getNumElems();
+
+  if(dimLeft != dimRight)
+    throw ModelicaSimulationError(MODEL_ARRAY_FUNCTION,
+      "Right and left array must have the same size for element wise division");
+
+  resultArray.setDims(leftArray.getDims());
+  const T* leftData = leftArray.getData();
+  const T* rightData = rightArray.getData();
+  T* result = resultArray.getData();
+
+  std::transform (leftData, leftData + leftArray.getNumElems(), rightData, result, std::divides<T>());
 }
 
 template <typename T>
@@ -280,23 +384,64 @@ void pow_array_scalar(const BaseArray<double> &inputArray, T exponent,
 template <typename T>
 void subtract_array(const BaseArray<T>& leftArray, const BaseArray<T>& rightArray, BaseArray<T>& resultArray)
 {
+  size_t dimLeft = leftArray.getNumElems();
+  size_t dimRight = rightArray.getNumElems();
+
+  if(dimLeft != dimRight)
+    throw ModelicaSimulationError(MODEL_ARRAY_FUNCTION,
+                                      "Right and left array must have the same size for element wise substraction");
+
   resultArray.setDims(leftArray.getDims());
   const T* data1 = leftArray.getData();
   const T* data2 = rightArray.getData();
   T* aim = resultArray.getData();
 
-  std::transform (data1, data1 + leftArray.getNumElems(), data2, aim, std::minus<T>());
+  std::transform (data1, data1 + dimLeft, data2, aim, std::minus<T>());
+}
+
+template <typename T>
+void subtract_array_scalar(const BaseArray<T>& inputArray, T b, BaseArray<T>& outputArray)
+{
+  size_t dim = inputArray.getNumElems();
+  if(dim > 0)
+  {
+    outputArray.setDims(inputArray.getDims());
+    const T* data = inputArray.getData();
+    T* aim = outputArray.getData();
+    std::transform (data, data + inputArray.getNumElems(),
+                  aim, std::bind2nd(std::minus<T>(), b));
+  }
 }
 
 template <typename T>
 void add_array(const BaseArray<T>& leftArray, const BaseArray<T>& rightArray, BaseArray<T>& resultArray)
 {
+  size_t dimLeft = leftArray.getNumElems();
+  size_t dimRight = rightArray.getNumElems();
+
+  if(dimLeft != dimRight)
+    throw ModelicaSimulationError(MODEL_ARRAY_FUNCTION,
+                                      "Right and left array must have the same size for element wise addition");
+
   resultArray.setDims(leftArray.getDims());
   const T* data1 = leftArray.getData();
   const T* data2 = rightArray.getData();
   T* aim = resultArray.getData();
 
   std::transform(data1, data1 + leftArray.getNumElems(), data2, aim, std::plus<T>());
+}
+
+template <typename T>
+void add_array_scalar(const BaseArray<T>& inputArray, T b, BaseArray<T>& outputArray)
+{
+  size_t dim = inputArray.getNumElems();
+  if (dim > 0) {
+    outputArray.setDims(inputArray.getDims());
+    const T* data = inputArray.getData();
+    T* result = outputArray.getData();
+    std::transform (data, data + inputArray.getNumElems(),
+                    result, std::bind2nd(std::plus<T>(), b));
+  }
 }
 
 template <typename T>
@@ -351,40 +496,19 @@ std::pair<T,T> min_max(const BaseArray<T>& x)
 {
   const T* data = x.getData();
   std::pair<const T*, const T*>
-    ret = boost::minmax_element(data, data + x.getNumElems());
+  ret = minmax_element(data, data + x.getNumElems());
   return std::make_pair(*(ret.first), *(ret.second));
 }
 
-void convertBoolToInt(const BaseArray<bool>& a, BaseArray<int>& b)
+template <typename S, typename T>
+void cast_array(const BaseArray<S>& a, BaseArray<T>& b)
 {
   b.setDims(a.getDims());
-  int numEle = a.getNumElems();
-  const bool* source_data = a.getData();
-  int* dest_data = b.getData();
-  for (int i = 0; (numEle > 0) && (i <= numEle); i++)
-  {
-    if(source_data[i])
-      dest_data[i]=1;
-    else
-      dest_data[i]=0;
-  }
-}
-
-void convertIntToBool(const BaseArray<int>& a, BaseArray<bool>& b)
-{
-  b.setDims(a.getDims());
-  int numEle = a.getNumElems();
-  for (int i = 0; i <= numEle; i++)
-  {
-    if (a(i))
-    {
-      b(i) = true;
-    }
-    else
-    {
-      b(i) = false;
-    }
-  }
+  int numElems = a.getNumElems();
+  const S* src_data = a.getData();
+  T* dst_data = b.getData();
+  for (int i = 0; i < numElems; i++)
+    *dst_data++ = (T)(*src_data++);
 }
 
 /**
@@ -430,6 +554,7 @@ static void convertArrayDim(size_t dim,
       d(didx) = s(sidx);
   }
 }
+
 
 /**
  * permutes dims between row and column major storage layout,
@@ -477,6 +602,11 @@ template void BOOST_EXTENSION_EXPORT_DECL create_array_from_shape(const spec_typ
 template void BOOST_EXTENSION_EXPORT_DECL create_array_from_shape(const spec_type& sp, BaseArray<int>& s, BaseArray<int>& d);
 template void BOOST_EXTENSION_EXPORT_DECL create_array_from_shape(const spec_type& sp, BaseArray<bool>& s, BaseArray<bool>& d);
 
+
+template void BOOST_EXTENSION_EXPORT_DECL fill_array_from_shape(const spec_type& sp, BaseArray<double>& s, BaseArray<double>& d);
+template void BOOST_EXTENSION_EXPORT_DECL fill_array_from_shape(const spec_type& sp, BaseArray<int>& s, BaseArray<int>& d);
+template void BOOST_EXTENSION_EXPORT_DECL fill_array_from_shape(const spec_type& sp, BaseArray<bool>& s, BaseArray<bool>& d);
+
 template void BOOST_EXTENSION_EXPORT_DECL
 multiply_array(const BaseArray<double>& inputArray, const double &b, BaseArray<double>& outputArray);
 template void BOOST_EXTENSION_EXPORT_DECL
@@ -492,11 +622,25 @@ template void BOOST_EXTENSION_EXPORT_DECL
 multiply_array(const BaseArray<bool> &leftArray, const BaseArray<bool> &rightArray, BaseArray<bool> &resultArray);
 
 template void BOOST_EXTENSION_EXPORT_DECL
+multiply_array_elem_wise(const BaseArray<double> &leftArray, const BaseArray<double> &rightArray, BaseArray<double> &resultArray);
+template void BOOST_EXTENSION_EXPORT_DECL
+multiply_array_elem_wise(const BaseArray<int> &leftArray, const BaseArray<int> &rightArray, BaseArray<int> &resultArray);
+template void BOOST_EXTENSION_EXPORT_DECL
+multiply_array_elem_wise(const BaseArray<bool> &leftArray, const BaseArray<bool> &rightArray, BaseArray<bool> &resultArray);
+
+template void BOOST_EXTENSION_EXPORT_DECL
 divide_array(const BaseArray<double>& inputArray, const double &b, BaseArray<double>& outputArray);
 template void BOOST_EXTENSION_EXPORT_DECL
 divide_array(const BaseArray<int>& inputArray, const int &b, BaseArray<int>& outputArray);
 template void BOOST_EXTENSION_EXPORT_DECL
 divide_array(const BaseArray<bool>& inputArray, const bool &b, BaseArray<bool>& outputArray);
+
+template void BOOST_EXTENSION_EXPORT_DECL
+divide_array_elem_wise(const BaseArray<double> &leftArray, const BaseArray<double> &rightArray, BaseArray<double> &resultArray);
+template void BOOST_EXTENSION_EXPORT_DECL
+divide_array_elem_wise(const BaseArray<int> &leftArray, const BaseArray<int> &rightArray, BaseArray<int> &resultArray);
+template void BOOST_EXTENSION_EXPORT_DECL
+divide_array_elem_wise(const BaseArray<bool> &leftArray, const BaseArray<bool> &rightArray, BaseArray<bool> &resultArray);
 
 template void BOOST_EXTENSION_EXPORT_DECL
 fill_array(BaseArray<double>& inputArray, double b);
@@ -518,11 +662,25 @@ template void BOOST_EXTENSION_EXPORT_DECL
 subtract_array(const BaseArray<bool>& leftArray, const BaseArray<bool>& rightArray, BaseArray<bool>& resultArray);
 
 template void BOOST_EXTENSION_EXPORT_DECL
+subtract_array_scalar(const BaseArray<double>& inputArray, double b, BaseArray<double>& outputArray);
+template void BOOST_EXTENSION_EXPORT_DECL
+subtract_array_scalar(const BaseArray<int>& inputArray, int b, BaseArray<int>& outputArray);
+template void BOOST_EXTENSION_EXPORT_DECL
+subtract_array_scalar(const BaseArray<bool>& inputArray, bool b, BaseArray<bool>& outputArray);
+
+template void BOOST_EXTENSION_EXPORT_DECL
 add_array(const BaseArray<double>& leftArray, const BaseArray<double>& rightArray, BaseArray<double>& resultArray);
 template void BOOST_EXTENSION_EXPORT_DECL
 add_array(const BaseArray<int>& leftArray, const BaseArray<int>& rightArray, BaseArray<int>& resultArray);
 template void BOOST_EXTENSION_EXPORT_DECL
 add_array(const BaseArray<bool>& leftArray, const BaseArray<bool>& rightArray, BaseArray<bool>& resultArray);
+
+template void BOOST_EXTENSION_EXPORT_DECL
+add_array_scalar(const BaseArray<double>& inputArray, double b, BaseArray<double>& outputArray);
+template void BOOST_EXTENSION_EXPORT_DECL
+add_array_scalar(const BaseArray<int>& inputArray, int b, BaseArray<int>& outputArray);
+template void BOOST_EXTENSION_EXPORT_DECL
+add_array_scalar(const BaseArray<bool>& inputArray, bool b, BaseArray<bool>& outputArray);
 
 template void BOOST_EXTENSION_EXPORT_DECL
 usub_array(const BaseArray<double>& a, BaseArray<double>& b);
@@ -559,10 +717,12 @@ min_max(const BaseArray<int>& x);
 template std::pair<bool,bool> BOOST_EXTENSION_EXPORT_DECL
 min_max(const BaseArray<bool>& x);
 
-void BOOST_EXTENSION_EXPORT_DECL
-convertBoolToInt(const BaseArray<bool>& a, BaseArray<int>& b);
-void BOOST_EXTENSION_EXPORT_DECL
-convertIntToBool(BaseArray<int>& a, BaseArray<bool>& b);
+template void BOOST_EXTENSION_EXPORT_DECL
+cast_array(const BaseArray<int> &a, BaseArray<double> &b);
+template void BOOST_EXTENSION_EXPORT_DECL
+cast_array(const BaseArray<int> &a, BaseArray<bool> &b);
+template void BOOST_EXTENSION_EXPORT_DECL
+cast_array(const BaseArray<bool> &a, BaseArray<int> &b);
 
 template void BOOST_EXTENSION_EXPORT_DECL
 convertArrayLayout(const BaseArray<double> &s, BaseArray<double> &d);
@@ -574,6 +734,7 @@ template void BOOST_EXTENSION_EXPORT_DECL
 convertArrayLayout(const BaseArray<int> &s, BaseArray<bool> &d);
 template void BOOST_EXTENSION_EXPORT_DECL
 convertArrayLayout(const BaseArray<string> &s, BaseArray<string> &d);
+
 
 template void BOOST_EXTENSION_EXPORT_DECL
 assignRowMajorData(const double *data, BaseArray<double> &d);

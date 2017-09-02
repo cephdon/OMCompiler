@@ -34,7 +34,6 @@ encapsulated package StringUtil
   package:     StringUtil
   description: String utility functions.
 
-  RCS: $Id$
 
   This package contains various utility functions for handling the builtin
   MetaModelica String type."
@@ -43,9 +42,12 @@ protected import System;
 
 protected import MetaModelica.Dangerous.{listReverseInPlace, stringGetNoBoundsChecking};
 
-public constant Integer NO_POS = 0;
-protected constant Integer CHAR_SPACE = 32;
-protected constant Integer CHAR_DASH = 45;
+public
+constant Integer NO_POS = 0;
+constant Integer CHAR_NEWLINE = 10;
+constant Integer CHAR_SPACE = 32;
+constant Integer CHAR_DASH = 45;
+constant Integer CHAR_DOT = 46;
 
 public function findChar
   "Searches for a given character in the given string, returning the index of
@@ -264,6 +266,125 @@ algorithm
 
   outStrings := listReverseInPlace(outStrings);
 end wordWrap;
+
+function repeat
+  "Repeat str n times"
+  input String str;
+  input Integer n;
+  output String res="";
+protected
+  Integer len = stringLength(str);
+  System.StringAllocator ext = System.StringAllocator(len*n);
+algorithm
+  for i in 0:n-1 loop
+    System.stringAllocatorStringCopy(ext, str, len*i);
+  end for;
+  res := System.stringAllocatorResult(ext, res);
+end repeat;
+
+function quote
+  "Adds quotation marks to the beginning and end of a string."
+  input String inString;
+  output String outString = stringAppendList({"\"", inString, "\""});
+  annotation(__OpenModelica_EarlyInline = true);
+end quote;
+
+function equalIgnoreSpace
+  input String s1;
+  input String s2;
+  output Boolean b;
+protected
+  Integer j=1;
+algorithm
+  b := true;
+  for i in 1:stringLength(s1) loop
+    if MetaModelica.Dangerous.stringGetNoBoundsChecking(s1, i) <> stringCharInt(" ") then
+      b := false;
+      for j2 in j:stringLength(s2) loop
+        if MetaModelica.Dangerous.stringGetNoBoundsChecking(s2, j2) <> stringCharInt(" ") then
+          j := j2+1;
+          b := true;
+          break;
+        end if;
+      end for;
+      if not b then
+        return;
+      end if;
+    end if;
+  end for;
+  for j2 in j:stringLength(s2) loop
+    if MetaModelica.Dangerous.stringGetNoBoundsChecking(s2, j2) <> stringCharInt(" ") then
+      b := false;
+      return;
+    end if;
+  end for;
+end equalIgnoreSpace;
+
+function bytesToReadableUnit
+  input Real bytes;
+  input Integer significantDigits=4;
+  input Real maxSizeInUnit=500 "If it is 1000, we print up to 1000GB before changing to X TB";
+  output String str;
+protected
+  constant Real TB = 1024^4, GB=1024^3, MB=1024^2, kB=1024;
+algorithm
+  if bytes > maxSizeInUnit*GB then
+    str := String(bytes/TB, significantDigits=significantDigits)+" TB";
+  elseif bytes > maxSizeInUnit*MB then
+    str := String(bytes/GB, significantDigits=significantDigits)+" GB";
+  elseif bytes > maxSizeInUnit*kB then
+    str := String(bytes/MB, significantDigits=significantDigits)+" MB";
+  elseif bytes > maxSizeInUnit then
+    str := String(bytes/kB, significantDigits=significantDigits)+" kB";
+  else
+    str := String(integer(bytes));
+  end if;
+end bytesToReadableUnit;
+
+function stringHashDjb2Work
+  input String str;
+  input Integer hash=5381;
+  output Integer ohash=hash;
+algorithm
+  for i in 1:stringLength(str) loop
+    ohash := ohash*31 + MetaModelica.Dangerous.stringGetNoBoundsChecking(str, i);
+  end for;
+end stringHashDjb2Work;
+
+function stringAppend9
+  input String str1,str2,str3,str4="",str5="",str6="",str7="",str8="",str9="";
+  output String str;
+protected
+  System.StringAllocator sb=System.StringAllocator(stringLength(str1)+stringLength(str2)+stringLength(str3)+stringLength(str4)+stringLength(str5)+stringLength(str6)+stringLength(str7)+stringLength(str8)+stringLength(str9));
+  Integer c=0;
+algorithm
+  System.stringAllocatorStringCopy(sb, str1, c);
+  c := c + stringLength(str1);
+  System.stringAllocatorStringCopy(sb, str2, c);
+  c := c + stringLength(str2);
+  System.stringAllocatorStringCopy(sb, str3, c);
+  c := c + stringLength(str3);
+  System.stringAllocatorStringCopy(sb, str4, c);
+  c := c + stringLength(str4);
+  System.stringAllocatorStringCopy(sb, str5, c);
+  c := c + stringLength(str5);
+  System.stringAllocatorStringCopy(sb, str6, c);
+  c := c + stringLength(str6);
+  System.stringAllocatorStringCopy(sb, str7, c);
+  c := c + stringLength(str7);
+  System.stringAllocatorStringCopy(sb, str8, c);
+  c := c + stringLength(str8);
+  System.stringAllocatorStringCopy(sb, str9, c);
+  c := c + stringLength(str9);
+  str := System.stringAllocatorResult(sb,str1);
+end stringAppend9;
+
+function endsWithNewline
+  input String str;
+  output Boolean b;
+algorithm
+  b := CHAR_NEWLINE == MetaModelica.Dangerous.stringGetNoBoundsChecking(str, stringLength(str));
+end endsWithNewline;
 
 annotation(__OpenModelica_Interface="util");
 end StringUtil;

@@ -34,7 +34,6 @@ encapsulated package ValuesUtil
   package:     ValuesUtil
   description: Evaluated expression values
 
-  RCS: $Id$
 
   The package Values contains utility functions for handling evaluated
   expression values."
@@ -118,16 +117,16 @@ algorithm
     case(Values.ENUM_LITERAL(name = path))
       equation
         path = Absyn.pathPrefix(path);
-      then DAE.T_ENUMERATION(NONE(),path,{},{},{},DAE.emptyTypeSource);
+      then DAE.T_ENUMERATION(NONE(),path,{},{},{});
     case(Values.ARRAY(valLst,int_dims)) equation
       eltTp=valueExpType(listHead(valLst));
       dims = List.map(int_dims, Expression.intDimension);
-    then DAE.T_ARRAY(eltTp,dims,DAE.emptyTypeSource);
+    then DAE.T_ARRAY(eltTp,dims);
 
     case(Values.RECORD(path,valLst,nameLst,_)) equation
       eltTps = List.map(valLst,valueExpType);
       varLst = List.threadMap(eltTps,nameLst,valueExpTypeExpVar);
-    then DAE.T_COMPLEX(ClassInf.RECORD(path),varLst,NONE(),DAE.emptyTypeSource);
+    then DAE.T_COMPLEX(ClassInf.RECORD(path),varLst,NONE());
 
     case _
       equation
@@ -501,10 +500,10 @@ algorithm
         str;
     case ((Values.STRING(string = sval) :: xs))
       equation
-        _ = unparseDescription(xs);
+        s1 = unparseDescription(xs);
         slen = stringLength(sval);
         slenstr = intString(slen);
-        str = stringAppendList({"# s! 1 ",slenstr,"\n"});
+        str = stringAppendList({"# s! 1 ",slenstr,"\n",s1});
       then
         str;
     case ((Values.ARRAY(valueLst = vallst) :: xs))
@@ -531,7 +530,7 @@ algorithm
   pt := unparsePrimType(lst);
   s1 := stringAppend("# ", pt);
   s2 := stringAppend(s1, "[");
-  i1 := unparseNumDims(lst);
+  i1 := unparseNumDims(lst,0);
   s3 := intString(i1);
   s4 := stringAppend(s2, s3);
   s5 := stringAppend(s4, " ");
@@ -546,7 +545,7 @@ protected function unparsePrimType "
   output String outString;
 algorithm
   outString:=
-  matchcontinue (inValueLst)
+  match (inValueLst)
     local
       String res;
       list<Values.Value> elts;
@@ -561,27 +560,26 @@ algorithm
     case ((Values.BOOL() :: _)) then "b";
     case ({}) then "{}";
     else "error";
-  end matchcontinue;
+  end match;
 end unparsePrimType;
 
 protected function unparseNumDims "
   Helper function to unparse_array_description.
 "
   input list<Values.Value> inValueLst;
+  input Integer inInteger;
   output Integer outInteger;
 algorithm
   outInteger:=
-  matchcontinue (inValueLst)
+  match (inValueLst)
     local
       Integer i1;
       list<Values.Value> vals;
     case ((Values.ARRAY(valueLst = vals) :: _))
-      equation
-        i1 = unparseNumDims(vals);
       then
-        i1 + 1;
-    else 1;
-  end matchcontinue;
+        unparseNumDims(vals, inInteger + 1);
+    else inInteger + 1;
+  end match;
 end unparseNumDims;
 
 protected function unparseDimSizes "
@@ -885,7 +883,7 @@ algorithm
         expl = List.map(vallist,valueExp);
         tpl = List.map(expl,Expression.typeof);
         varlst = List.threadMap(namelst,tpl,Expression.makeVar);
-        t = DAE.T_COMPLEX(ClassInf.RECORD(path),varlst,NONE(),DAE.emptyTypeSource);
+        t = DAE.T_COMPLEX(ClassInf.RECORD(path),varlst,NONE());
       then DAE.RECORD(path,expl,namelst,t);
 
     case(Values.ENUM_LITERAL(name = path, index = ix))
@@ -929,7 +927,7 @@ algorithm
         explist = List.map(vallist, valueExp);
         typelist = List.map(vallist, Types.typeOfValue);
         (explist,_) = Types.matchTypeTuple(explist, typelist, List.map(typelist, Types.boxIfUnboxedType), true);
-      then DAE.METARECORDCALL(path,explist,namelst,ix);
+      then DAE.METARECORDCALL(path,explist,namelst,ix,{});
 
     case (Values.META_FAIL())
       then DAE.CALL(Absyn.IDENT("fail"),{},DAE.callAttrBuiltinOther);
@@ -980,7 +978,7 @@ algorithm
     case ({},_)
       equation
         dims = List.map(inDims, Expression.intDimension);
-      then DAE.ARRAY(DAE.T_ARRAY(DAE.T_UNKNOWN_DEFAULT, dims, DAE.emptyTypeSource),false,{});
+      then DAE.ARRAY(DAE.T_ARRAY(DAE.T_UNKNOWN_DEFAULT, dims),false,{});
 
     // Matrix
     case(Values.ARRAY(valueLst=v::xs)::xs2,dim::int_dims)
@@ -1027,17 +1025,9 @@ public function valueReal "
   input Values.Value inValue;
   output Real outReal;
 algorithm
-  outReal:=
-  match (inValue)
-    local
-      Real r;
-      Integer i;
-    case (Values.REAL(real = r)) then r;
-    case (Values.INTEGER(integer = i))
-      equation
-        r = intReal(i);
-      then
-        r;
+  outReal:= match inValue
+    case Values.REAL() then inValue.real;
+    case Values.INTEGER() then intReal(inValue.integer);
   end match;
 end valueReal;
 
@@ -1047,9 +1037,7 @@ public function valueBool "Author: BZ, 2008-09
   input Values.Value inValue;
   output Boolean outBool;
 algorithm
-  outBool:= match (inValue)
-    case (Values.BOOL(outBool)) then outBool;
-  end match;
+  Values.BOOL(boolean = outBool) := inValue;
 end valueBool;
 
 public function valueReals "
@@ -1166,427 +1154,219 @@ algorithm
   end match;
 end valueNeg;
 
-public function sumArrayelt "
-  Calculate the sum of a list of Values.
-"
-  input list<Values.Value> inValueLst;
-  output Values.Value outValue;
+public function valueSum
+  "Calculates the sum of two scalar values."
+  input Values.Value value1;
+  input Values.Value value2;
+  output Values.Value result;
 algorithm
-  outValue:=
-  matchcontinue (inValueLst)
-    local
-      Integer i1,i2,i3;
-      Real r1,r2,r3;
-      list<Values.Value> v1,v2,v3;
-      list<Values.Value> xs,arr;
-      list<Integer> dims;
-    case ({Values.INTEGER(integer = i1)}) then Values.INTEGER(i1);
-    case ({Values.REAL(real = r1)}) then Values.REAL(r1);
-    case ({Values.ARRAY(valueLst = v1, dimLst = dims)}) then Values.ARRAY(v1,dims);
-    case ((Values.INTEGER(integer = i2) :: xs))
-      equation
-        Values.INTEGER(i1) = sumArrayelt(xs);
-        i3 = i1 + i2;
+  result := match (value1, value2)
+    case (Values.INTEGER(), Values.INTEGER())
+      then Values.INTEGER(value1.integer + value2.integer);
+    case (Values.STRING(), Values.STRING())
+      then Values.STRING(value1.string + value2.string);
+    else Values.REAL(valueReal(value1) + valueReal(value2));
+  end match;
+end valueSum;
+
+public function valueSubtract
+  "Calculates the difference of two scalar values."
+  input Values.Value value1;
+  input Values.Value value2;
+  output Values.Value result;
+algorithm
+  result := match (value1, value2)
+    case (Values.INTEGER(), Values.INTEGER())
+      then Values.INTEGER(value1.integer - value2.integer);
+    else Values.REAL(valueReal(value1) - valueReal(value2));
+  end match;
+end valueSubtract;
+
+public function valueMultiply
+  "Calculates the product of two scalar values."
+  input Values.Value value1;
+  input Values.Value value2;
+  output Values.Value result;
+algorithm
+  result := match (value1, value2)
+    case (Values.INTEGER(), Values.INTEGER())
+      then Values.INTEGER(value1.integer * value2.integer);
+    else Values.REAL(valueReal(value1) * valueReal(value2));
+  end match;
+end valueMultiply;
+
+public function valueDivide
+  "Calculates the quotient of two scalar values."
+  input Values.Value value1;
+  input Values.Value value2;
+  output Values.Value result;
+algorithm
+  result := match (value1, value2)
+    case (_, Values.INTEGER(integer = 0))
+      algorithm
+        Error.addMessage(Error.DIVISION_BY_ZERO, {"0", intString(value2.integer)});
       then
-        Values.INTEGER(i3);
-    case ((Values.REAL(real = r2) :: xs))
-      equation
-        Values.REAL(r1) = sumArrayelt(xs);
-        r3 = r1 + r2;
+        fail();
+
+    case (_, Values.REAL(real = 0.0))
+      algorithm
+        Error.addMessage(Error.DIVISION_BY_ZERO, {"0", realString(value2.real)});
       then
-        Values.REAL(r3);
-    case ((arr as (Values.ARRAY(valueLst = v2) :: _)))
-      equation
-        Values.ARRAY(v1,dims) = sumArrayelt(arr);
-        v3 = addElementwiseArrayelt(v1, v2);
-      then
-        Values.ARRAY(v3,dims);
-  end matchcontinue;
+        fail();
+
+    else Values.REAL(valueReal(value1) / valueReal(value2));
+  end match;
+end valueDivide;
+
+public function valuePow
+  "Calculates the power of two scalar values."
+  input Values.Value value1;
+  input Values.Value value2;
+  output Values.Value result;
+algorithm
+  result := Values.REAL(valueReal(value1) ^ valueReal(value2));
+end valuePow;
+
+public function sumArray
+  input Values.Value value;
+  output Values.Value result;
+algorithm
+  result := match value
+    case Values.ARRAY() then sumArrayelt(value.valueLst);
+    else value;
+  end match;
+end sumArray;
+
+public function sumArrayelt
+  "Calculate the sum of a list of Values."
+  input list<Values.Value> values;
+  output Values.Value result;
+algorithm
+  result := sumArray(listHead(values));
+
+  for v in listRest(values) loop
+    result := valueSum(sumArray(v), result);
+  end for;
 end sumArrayelt;
 
-public function multScalarArrayelt "
-  Multiply a scalar with an list of Values, i.e. array.
-"
-  input Values.Value inValue;
-  input list<Values.Value> inValueLst;
-  output list<Values.Value> outValueLst;
+public function multScalarArrayelt
+  "Multiply a scalar with an list of Values, i.e. array."
+  input Values.Value scalarValue;
+  input list<Values.Value> arrayValues;
+  output list<Values.Value> result;
 algorithm
-  outValueLst:=
-  match (inValue,inValueLst)
-    local
-      list<Values.Value> v1,v2,vals,rest;
-      Values.Value sval;
-      Integer i1,i2;
-      Real r1,r2;
-      list<Integer> dims;
-    case (sval,(Values.ARRAY(valueLst = vals, dimLst = dims) :: rest))
-      equation
-        v1 = multScalarArrayelt(sval, vals);
-        v2 = multScalarArrayelt(sval, rest);
-      then
-        (Values.ARRAY(v1,dims) :: v2);
-    case ((sval as Values.INTEGER(integer = i1)),(Values.INTEGER(integer = i2) :: rest))
-      equation
-        i1 = i1*i2;
-        v2 = multScalarArrayelt(sval, rest);
-      then
-        (Values.INTEGER(i1) :: v2);
-    case ((sval as Values.REAL(real = r1)),(Values.INTEGER(integer = i2) :: rest))
-      equation
-        r2 = intReal(i2);
-        r1 = r1 * r2;
-        v2 = multScalarArrayelt(sval, rest);
-      then
-        (Values.REAL(r1) :: v2);
-    case ((sval as Values.INTEGER(integer = i1)),(Values.REAL(real = r2) :: rest))
-      equation
-        r1 = intReal(i1);
-        r1 = r1 * r2;
-        v2 = multScalarArrayelt(sval, rest);
-      then
-        (Values.REAL(r1) :: v2);
-    case ((sval as Values.REAL(real = r1)),(Values.REAL(real = r2) :: rest))
-      equation
-        r1 = r1 * r2;
-        v2 = multScalarArrayelt(sval, rest);
-      then
-        (Values.REAL(r1) :: v2);
-    case (_,{}) then {};
-  end match;
+  result := list(
+    match v
+      case Values.ARRAY()
+        then Values.ARRAY(multScalarArrayelt(scalarValue, v.valueLst), v.dimLst);
+      else valueMultiply(scalarValue, v);
+    end match
+  for v in arrayValues);
 end multScalarArrayelt;
 
-public function addScalarArrayelt "
-  Adds a scalar to an list of Values, i.e. array.
-"
-  input Values.Value inValue;
-  input list<Values.Value> inValueLst;
-  output list<Values.Value> outValueLst;
+public function addScalarArrayelt
+  "Adds a scalar to an list of Values, i.e. array."
+  input Values.Value scalarValue;
+  input list<Values.Value> arrayValues;
+  output list<Values.Value> result;
 algorithm
-  outValueLst:=
-  match (inValue,inValueLst)
-    local
-      list<Values.Value> v1,v2,vals,rest;
-      Values.Value sval;
-      Integer i1,i2;
-      Real r1,r2;
-      String s1,s2;
-      list<Integer> dims;
-    case (sval,(Values.ARRAY(valueLst = vals, dimLst = dims) :: rest))
-      equation
-        v1 = addScalarArrayelt(sval, vals);
-        v2 = addScalarArrayelt(sval, rest);
-      then
-        (Values.ARRAY(v1,dims) :: v2);
-    case ((sval as Values.INTEGER(integer = i1)),(Values.INTEGER(integer = i2) :: rest))
-      equation
-        i1 = i1+i2;
-        v2 = addScalarArrayelt(sval, rest);
-      then
-        (Values.INTEGER(i1) :: v2);
-    case ((sval as Values.REAL(real = r1)),(Values.INTEGER(integer = i2) :: rest))
-      equation
-        r2 = intReal(i2);
-        r1 = r1 + r2;
-        v2 = addScalarArrayelt(sval, rest);
-      then
-        (Values.REAL(r1) :: v2);
-    case ((sval as Values.INTEGER(integer = i1)),(Values.REAL(real = r2) :: rest))
-      equation
-        r1 = intReal(i1);
-        r1 = r1 + r2;
-        v2 = addScalarArrayelt(sval, rest);
-      then
-        (Values.REAL(r1) :: v2);
-    case ((sval as Values.REAL(real = r1)),(Values.REAL(real = r2) :: rest))
-      equation
-        r1 = r1 + r2;
-        v2 = addScalarArrayelt(sval, rest);
-      then
-        (Values.REAL(r1) :: v2);
-    case ((sval as Values.STRING(string = s1)),(Values.STRING(string = s2) :: rest))
-      equation
-        s1 = s1+s2;
-        v2 = addScalarArrayelt(sval, rest);
-      then
-        (Values.STRING(s1) :: v2);
-    case (_,{}) then {};
-  end match;
+  result := list(
+    match v
+      case Values.ARRAY()
+        then Values.ARRAY(addScalarArrayelt(scalarValue, v.valueLst), v.dimLst);
+      else valueSum(scalarValue, v);
+    end match
+  for v in arrayValues);
 end addScalarArrayelt;
 
-public function divScalarArrayelt "
-  Divide a scalar with an list of Values, i.e. array.
-"
-  input Values.Value inValue;
-  input list<Values.Value> inValueLst;
-  output list<Values.Value> outValueLst;
+public function subScalarArrayelt
+  "Subtracts a list of Values, i.e. array, from a scalar."
+  input Values.Value scalarValue;
+  input list<Values.Value> arrayValues;
+  output list<Values.Value> result;
 algorithm
-  outValueLst:=
-  matchcontinue (inValue,inValueLst)
-    local
-      list<Values.Value> v1,v2,vals,rest;
-      Values.Value sval;
-      Integer i1,i2;
-      Real r1,r2;
-      String s2;
-      list<Integer> dims;
-    case (sval,(Values.ARRAY(valueLst = vals, dimLst = dims) :: rest))
-      equation
-        v1 = divScalarArrayelt(sval, vals);
-        v2 = divScalarArrayelt(sval, rest);
-      then
-        (Values.ARRAY(v1,dims) :: v2);
-    case (sval ,(Values.INTEGER(integer = i2) :: _))
-      equation
-        true = intEq(i2, 0);
-        s2 = valString(sval);
-        Error.addMessage(Error.DIVISION_BY_ZERO, {"0",s2});
-      then
-        fail();
-    case (sval ,(Values.REAL(real = r2) :: _))
-      equation
-        true = realEq(r2, 0.0);
-        s2 = valString(sval);
-        Error.addMessage(Error.DIVISION_BY_ZERO, {"0.0",s2});
-      then
-        fail();
-    case ((sval as Values.INTEGER(integer = i1)),(Values.INTEGER(integer = i2) :: rest))
-      equation
-        r1 = intReal(i1);
-        r2 = intReal(i2);
-        r1 = r1 / r2;
-        v2 = divScalarArrayelt(sval, rest);
-      then
-        (Values.REAL(r1) :: v2);
-    case ((sval as Values.REAL(real = r1)),(Values.INTEGER(integer = i2) :: rest))
-      equation
-        r2 = intReal(i2);
-        r1 = r1 / r2;
-        v2 = divScalarArrayelt(sval, rest);
-      then
-        (Values.REAL(r1) :: v2);
-    case ((sval as Values.INTEGER(integer = i1)),(Values.REAL(real = r2) :: rest))
-      equation
-        r1 = intReal(i1);
-        r1 = r1 / r2;
-        v2 = divScalarArrayelt(sval, rest);
-      then
-        (Values.REAL(r1) :: v2);
-    case ((sval as Values.REAL(real = r1)),(Values.REAL(real = r2) :: rest))
-      equation
-        r1 = r1 / r2;
-        v2 = divScalarArrayelt(sval, rest);
-      then
-        (Values.REAL(r1) :: v2);
-    case (_,{}) then {};
-  end matchcontinue;
-end divScalarArrayelt;
-
-public function subScalarArrayelt "
-  subtracts a list of Values, i.e. array, from a scalar.
-"
-  input Values.Value inValue;
-  input list<Values.Value> inValueLst;
-  output list<Values.Value> outValueLst;
-algorithm
-  outValueLst:=
-  match (inValue,inValueLst)
-    local
-      list<Values.Value> v1,v2,vals,rest;
-      Values.Value sval;
-      Integer i1,i2;
-      Real r1,r2;
-      list<Integer> dims;
-    case (sval,(Values.ARRAY(valueLst = vals, dimLst = dims) :: rest))
-      equation
-        v1 = subScalarArrayelt(sval, vals);
-        v2 = subScalarArrayelt(sval, rest);
-      then
-        (Values.ARRAY(v1,dims) :: v2);
-    case ((sval as Values.INTEGER(integer = i1)),(Values.INTEGER(integer = i2) :: rest))
-      equation
-        i1 = i1-i2;
-        v2 = subScalarArrayelt(sval, rest);
-      then
-        (Values.INTEGER(i1) :: v2);
-    case ((sval as Values.REAL(real = r1)),(Values.INTEGER(integer = i2) :: rest))
-      equation
-        r2 = intReal(i2);
-        r1 = r1 - r2;
-        v2 = subScalarArrayelt(sval, rest);
-      then
-        (Values.REAL(r1) :: v2);
-    case ((sval as Values.INTEGER(integer = i1)),(Values.REAL(real = r2) :: rest))
-      equation
-        r1 = intReal(i1);
-        r1 = r1 - r2;
-        v2 = subScalarArrayelt(sval, rest);
-      then
-        (Values.REAL(r1) :: v2);
-    case ((sval as Values.REAL(real = r1)),(Values.REAL(real = r2) :: rest))
-      equation
-        r1 = r1 - r2;
-        v2 = subScalarArrayelt(sval, rest);
-      then
-        (Values.REAL(r1) :: v2);
-    case (_,{}) then {};
-  end match;
+  result := list(
+    match v
+      case Values.ARRAY()
+        then Values.ARRAY(subScalarArrayelt(scalarValue, v.valueLst), v.dimLst);
+      else valueSubtract(scalarValue, v);
+    end match
+  for v in arrayValues);
 end subScalarArrayelt;
 
-public function powScalarArrayelt "
-  Takes a power of a scalar with an list of Values, i.e. array.
-"
-  input Values.Value inValue;
-  input list<Values.Value> inValueLst;
-  output list<Values.Value> outValueLst;
+public function subArrayeltScalar
+  "Subtracts a scalar from a list of Values, i.e. array."
+  input Values.Value scalarValue;
+  input list<Values.Value> arrayValues;
+  output list<Values.Value> result;
 algorithm
-  outValueLst:=
-  match (inValue,inValueLst)
-    local
-      list<Values.Value> v1,v2,vals,rest;
-      Values.Value sval;
-      Integer i1,i2;
-      Real r2,r1;
-      list<Integer> dims;
-    case (sval,(Values.ARRAY(valueLst = vals, dimLst = dims) :: rest))
-      equation
-        v1 = powScalarArrayelt(sval, vals);
-        v2 = powScalarArrayelt(sval, rest);
-      then
-        (Values.ARRAY(v1,dims) :: v2);
-    case ((sval as Values.INTEGER(integer = i1)),(Values.INTEGER(integer = i2) :: rest))
-      equation
-        r1=intReal(i1);
-        r2=intReal(i2);
-        r1 = r1 ^ r2;
-        v2 = powScalarArrayelt(sval, rest);
-      then
-        (Values.REAL(r1) :: v2);
-    case ((sval as Values.REAL(real = r1)),(Values.INTEGER(integer = i2) :: rest))
-      equation
-        r2 = intReal(i2);
-        r1 = r1 ^ r2;
-        v2 = powScalarArrayelt(sval, rest);
-      then
-        (Values.REAL(r1) :: v2);
-    case ((sval as Values.INTEGER(integer = i1)),(Values.REAL(real = r2) :: rest))
-      equation
-        r1 = intReal(i1);
-        r1 = r1 ^ r2;
-        v2 = powScalarArrayelt(sval, rest);
-      then
-        (Values.REAL(r1) :: v2);
-    case ((sval as Values.REAL(real = r1)),(Values.REAL(real = r2) :: rest))
-      equation
-        r1 = r1 ^ r2;
-        v2 = powScalarArrayelt(sval, rest);
-      then
-        (Values.REAL(r1) :: v2);
-    case (_,{}) then {};
-  end match;
-end powScalarArrayelt;
-
-public function subArrayeltScalar "
-  subtracts a scalar from a list of Values, i.e. array.
-"
-  input Values.Value inValue;
-  input list<Values.Value> inValueLst;
-  output list<Values.Value> outValueLst;
-algorithm
-  outValueLst:=
-  match (inValue,inValueLst)
-    local
-      list<Values.Value> v1,v2,vals,rest;
-      Values.Value sval;
-      Integer i1,i2;
-      Real r1,r2;
-      list<Integer> dims;
-    case (sval,(Values.ARRAY(valueLst = vals, dimLst = dims) :: rest))
-      equation
-        v1 = subArrayeltScalar(sval, vals);
-        v2 = subArrayeltScalar(sval, rest);
-      then
-        (Values.ARRAY(v1,dims) :: v2);
-    case ((sval as Values.INTEGER(integer = i1)),(Values.INTEGER(integer = i2) :: rest))
-      equation
-        i1 = i2-i1;
-        v2 = subArrayeltScalar(sval, rest);
-      then
-        (Values.INTEGER(i1) :: v2);
-    case ((sval as Values.REAL(real = r1)),(Values.INTEGER(integer = i2) :: rest))
-      equation
-        r2 = intReal(i2);
-        r1 = r2 - r1;
-        v2 = subArrayeltScalar(sval, rest);
-      then
-        (Values.REAL(r1) :: v2);
-    case ((sval as Values.INTEGER(integer = i1)),(Values.REAL(real = r2) :: rest))
-      equation
-        r1 = intReal(i1);
-        r1 = r2 - r1;
-        v2 = subArrayeltScalar(sval, rest);
-      then
-        (Values.REAL(r1) :: v2);
-    case ((sval as Values.REAL(real = r1)),(Values.REAL(real = r2) :: rest))
-      equation
-        r1 = r2 - r1;
-        v2 = subArrayeltScalar(sval, rest);
-      then
-        (Values.REAL(r1) :: v2);
-    case (_,{}) then {};
-  end match;
+  result := list(
+    match v
+      case Values.ARRAY()
+        then Values.ARRAY(subArrayeltScalar(scalarValue, v.valueLst), v.dimLst);
+      else valueSubtract(v, scalarValue);
+    end match
+  for v in arrayValues);
 end subArrayeltScalar;
 
-public function powArrayeltScalar "
-  Takes a power of a list of Values, i.e. array, with a scalar.
-"
-  input Values.Value inValue;
-  input list<Values.Value> inValueLst;
-  output list<Values.Value> outValueLst;
+public function divScalarArrayelt
+  "Divides a scalar with a list of Values, i.e. array."
+  input Values.Value scalarValue;
+  input list<Values.Value> arrayValues;
+  output list<Values.Value> result;
 algorithm
-  outValueLst:=
-  match (inValue,inValueLst)
-    local
-      list<Values.Value> v1,v2,vals,rest;
-      Values.Value sval;
-      Integer i1,i2;
-      Real r1,r2;
-      list<Integer> dims;
-    case (sval,(Values.ARRAY(valueLst = vals, dimLst = dims) :: rest))
-      equation
-        v1 = powArrayeltScalar(sval, vals);
-        v2 = powArrayeltScalar(sval, rest);
-      then
-        (Values.ARRAY(v1,dims) :: v2);
-    case ((sval as Values.INTEGER(integer = i1)),(Values.INTEGER(integer = i2) :: rest))
-      equation
-        r1=intReal(i1);
-        r2=intReal(i2);
-        r1 = r2 ^ r1;
-        v2 = powArrayeltScalar(sval, rest);
-      then
-        (Values.REAL(r1) :: v2);
-    case ((sval as Values.REAL(real = r1)),(Values.INTEGER(integer = i2) :: rest))
-      equation
-        r2 = intReal(i2);
-        r1 = r2 ^ r1;
-        v2 = powArrayeltScalar(sval, rest);
-      then
-        (Values.REAL(r1) :: v2);
-    case ((sval as Values.INTEGER(integer = i1)),(Values.REAL(real = r2) :: rest))
-      equation
-        r1 = intReal(i1);
-        r1 = r2 ^ r1;
-        v2 = powArrayeltScalar(sval, rest);
-      then
-        (Values.REAL(r1) :: v2);
-    case ((sval as Values.REAL(real = r1)),(Values.REAL(real = r2) :: rest))
-      equation
-        r1 = r2 ^ r1;
-        v2 = powArrayeltScalar(sval, rest);
-      then
-        (Values.REAL(r1) :: v2);
-    case (_,{}) then {};
-  end match;
+  result := list(
+    match v
+      case Values.ARRAY()
+        then Values.ARRAY(divScalarArrayelt(scalarValue, v.valueLst), v.dimLst);
+      else valueDivide(scalarValue, v);
+    end match
+  for v in arrayValues);
+end divScalarArrayelt;
+
+public function divArrayeltScalar
+  "Divides each array element with a scalar."
+  input Values.Value scalarValue;
+  input list<Values.Value> arrayValues;
+  output list<Values.Value> result;
+algorithm
+  result := list(
+    match v
+      case Values.ARRAY()
+        then Values.ARRAY(divArrayeltScalar(scalarValue, v.valueLst), v.dimLst);
+      else valueDivide(v, scalarValue);
+    end match
+  for v in arrayValues);
+end divArrayeltScalar;
+
+public function powScalarArrayelt
+  "Takes a power of a scalar with a list of Values, i.e. array."
+  input Values.Value scalarValue;
+  input list<Values.Value> arrayValues;
+  output list<Values.Value> result;
+algorithm
+  result := list(
+    match v
+      case Values.ARRAY()
+        then Values.ARRAY(powScalarArrayelt(scalarValue, v.valueLst), v.dimLst);
+      else valuePow(scalarValue, v);
+    end match
+  for v in arrayValues);
+end powScalarArrayelt;
+
+public function powArrayeltScalar
+  "Takes a power of a scalar with a list of Values, i.e. array."
+  input Values.Value scalarValue;
+  input list<Values.Value> arrayValues;
+  output list<Values.Value> result;
+algorithm
+  result := list(
+    match v
+      case Values.ARRAY()
+        then Values.ARRAY(powArrayeltScalar(scalarValue, v.valueLst), v.dimLst);
+      else valuePow(scalarValue, v);
+    end match
+  for v in arrayValues);
 end powArrayeltScalar;
 
 public function multScalarProduct "
@@ -1739,71 +1519,6 @@ algorithm
   end match;
 end multMatrix;
 
-public function divArrayeltScalar
-"Divide each array element with a scalar."
-  input Values.Value inValue;
-  input list<Values.Value> inValueLst;
-  output list<Values.Value> outValueLst;
-algorithm
-  outValueLst:=
-  matchcontinue (inValue,inValueLst)
-    local
-      String s2;
-      Values.Value sval;
-      Integer i1,i2;
-      Real v1,v2_1,v1_1,v2;
-      list<Values.Value> vlst,r1,r2,vals,rest;
-      list<Integer> dims;
-    case ((Values.REAL(real = v1)),vlst)
-      equation
-        true = realEq(v1, 0.0);
-        s2 = unparseValues(vlst);
-        Error.addMessage(Error.DIVISION_BY_ZERO, {"0.0",s2});
-      then
-        fail();
-    case ((Values.INTEGER(integer = i1)),vlst)
-      equation
-        true = intEq(i1, 0);
-        s2 = unparseValues(vlst);
-        Error.addMessage(Error.DIVISION_BY_ZERO, {"0",s2});
-      then
-        fail();
-    case (sval,(Values.ARRAY(valueLst = vals, dimLst = dims) :: rest))
-      equation
-        r1 = divArrayeltScalar(sval, vals);
-        r2 = divArrayeltScalar(sval, rest);
-      then
-        (Values.ARRAY(r1,dims) :: r2);
-    case ((sval as Values.INTEGER(integer = i1)),(Values.INTEGER(integer = i2) :: rest))
-      equation
-        i1 = intDiv(i2,i1);
-        r2 = divArrayeltScalar(sval, rest);
-      then
-        (Values.INTEGER(i1) :: r2);
-    case ((sval as Values.REAL(real = v1)),(Values.INTEGER(integer = i2) :: rest))
-      equation
-        v2_1 = intReal(i2);
-        v1 = v2_1 / v1;
-        r2 = divArrayeltScalar(sval, rest);
-      then
-        (Values.REAL(v1) :: r2);
-    case ((sval as Values.INTEGER(integer = i1)),(Values.REAL(real = v2) :: rest))
-      equation
-        v1_1 = intReal(i1);
-        v1 = v2 / v1_1;
-        r2 = divArrayeltScalar(sval, rest);
-      then
-        (Values.REAL(v1) :: r2);
-    case ((sval as Values.REAL(real = v1)),(Values.REAL(real = v2) :: rest))
-      equation
-        v1 = v2 / v1;
-        r2 = divArrayeltScalar(sval, rest);
-      then
-        (Values.REAL(v1) :: r2);
-    case (_,{}) then {};
-  end matchcontinue;
-end divArrayeltScalar;
-
 protected function matrixStripFirstColumn "This function takes a Value list representing a matrix and strips the
   first column of the matrix, i.e. for each sub list it removes the first
   element. Returning both the stripped column and the resulting matrix."
@@ -1937,6 +1652,14 @@ algorithm
       then Values.ARRAY(vlst,{i1});
   end matchcontinue;
 end makeArray;
+
+public function makeStringArray
+  "Creates a Values.ARRAY from a list of Strings."
+  input list<String> inReals;
+  output Values.Value outArray;
+algorithm
+  outArray := makeArray(List.map(inReals, makeString));
+end makeStringArray;
 
 public function makeIntArray
   "Creates a Value.ARRAY from a list of integers."
@@ -2280,19 +2003,19 @@ algorithm
   match (inString1,inValue2,inStringLst3,inString4)
     local
       String str,filename,timevar,message;
-      Values.Value time;
+      Values.Value t;
       list<Values.Value> rest;
       list<String> varnames;
       Integer handle;
 
-    case (filename,Values.ARRAY(valueLst = (time :: rest)),(_ :: varnames),message) /* filename values Variable names message string */
+    case (filename,Values.ARRAY(valueLst = (t :: rest)),(_ :: varnames),message) /* filename values Variable names message string */
       equation
         handle = Print.saveAndClearBuf();
 
         Print.printBuf("#Ptolemy Plot generated by OpenModelica\nTitleText: ");
         Print.printBuf(message);
         Print.printBuf("\n");
-        unparsePtolemyValues(time, rest, varnames);
+        unparsePtolemyValues(t, rest, varnames);
 
         str = Print.getString();
         Print.restoreBuf(handle);
@@ -2311,15 +2034,15 @@ algorithm
   _ := match (inValue,inValueLst,inStringLst)
     local
       String v1;
-      Values.Value time,s1;
+      Values.Value t,s1;
       list<Values.Value> xs;
       list<String> vs;
 
     case (_,{},_) then ();
-    case (time,(s1 :: xs),(v1 :: vs))
+    case (t,(s1 :: xs),(v1 :: vs))
       equation
-        unparsePtolemySet(time, s1, v1);
-        unparsePtolemyValues(time, xs, vs);
+        unparsePtolemySet(t, s1, v1);
+        unparsePtolemyValues(t, xs, vs);
       then
         ();
   end match;
@@ -2447,12 +2170,12 @@ public function valueDimensions
   input Values.Value inValue;
   output list<Integer> outDimensions;
 algorithm
-  outDimensions := matchcontinue(inValue)
+  outDimensions := match(inValue)
     local
       list<Integer> dims;
     case Values.ARRAY(dimLst = dims) then dims;
     else {};
-  end matchcontinue;
+  end match;
 end valueDimensions;
 
 public function extractValueString
@@ -2573,6 +2296,47 @@ algorithm
     outValue := makeArray(List.fill(outValue, Expression.dimensionSize(dim)));
   end for;
 end liftValueList;
+
+public function isEmpty
+  input Values.Value inValue;
+  output Boolean outIsEmpty;
+algorithm
+  outIsEmpty := match inValue
+    case Values.EMPTY() then true;
+    else false;
+  end match;
+end isEmpty;
+
+public function typeConvertRecord
+  "Converts the component values of a record to the correct types."
+  input Values.Value inValue;
+  input DAE.Type inType;
+  output Values.Value outValue = inValue;
+algorithm
+  outValue := match (outValue, inType)
+    local
+      DAE.Type ty;
+
+    case (Values.RECORD(), DAE.T_COMPLEX())
+      algorithm
+        outValue.orderd := list(typeConvertRecord(val, Types.getVarType(var))
+          threaded for val in outValue.orderd, var in inType.varLst);
+      then
+        outValue;
+
+    case (Values.INTEGER(), DAE.T_REAL())
+      then Values.REAL(intReal(outValue.integer));
+
+    case (Values.ARRAY(), DAE.T_ARRAY())
+      algorithm
+        ty := Expression.unliftArray(inType);
+        outValue.valueLst := list(typeConvertRecord(v, ty) for v in outValue.valueLst);
+      then
+        outValue;
+
+    else outValue;
+  end match;
+end typeConvertRecord;
 
 annotation(__OpenModelica_Interface="frontend");
 end ValuesUtil;

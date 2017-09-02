@@ -37,7 +37,6 @@ encapsulated package BaseHashTable
   description: BaseHashTable is a generic implementation of hashtables.
                See HashTable*.mo to see how to use it.
 
-  RCS: $Id$
 
   This file is an extension to OpenModelica.
 
@@ -87,7 +86,7 @@ replaceable type Value subtypeof Any;
 
 type HashEntry = tuple<Key, Value>;
 type HashNode = list<tuple<Key, Integer>>;
-type HashTable = tuple<HashVector, ValueArray, Integer, Integer, FuncsTuple>;
+type HashTable = tuple<HashVector, ValueArray, Integer, FuncsTuple>;
 type HashVector = array<HashNode>;
 type ValueArray = tuple<Integer, Integer, array<Option<HashEntry>>>;
 type FuncsTuple = tuple<FuncHash, FuncEq, FuncKeyString, FuncValString>;
@@ -123,7 +122,7 @@ algorithm
   arr := arrayCreate(szBucket, {});
   szArr := bucketToValuesSize(szBucket);
   emptyarr := arrayCreate(szArr, NONE());
-  hashTable := (arr,(0,szArr,emptyarr),szBucket,0,fntpl);
+  hashTable := (arr,(0,szArr,emptyarr),szBucket,fntpl);
 end emptyHashTableWork;
 
 public function add
@@ -135,7 +134,7 @@ public function add
 protected
   HashVector hashvec;
   ValueArray varr;
-  Integer bsize, n, hash_idx, arr_idx, new_pos;
+  Integer bsize, hash_idx, arr_idx, new_pos;
   FuncsTuple fntpl;
   FuncHash hashFunc;
   FuncEq keyEqual;
@@ -144,7 +143,7 @@ protected
   HashNode indices;
 algorithm
   (key, _) := entry;
-  (hashvec, varr, bsize, n, fntpl as (hashFunc, keyEqual, _, _)) := hashTable;
+  (hashvec, varr, bsize, fntpl as (hashFunc, keyEqual, _, _)) := hashTable;
 
   hash_idx := hashFunc(key, bsize) + 1;
   indices := hashvec[hash_idx];
@@ -154,17 +153,15 @@ algorithm
 
     if keyEqual(key, key2) then
       (_, arr_idx) := i;
-      varr := valueArraySetnth(varr, arr_idx, entry);
-      outHashTable := (hashvec, varr, bsize, n, fntpl);
+      valueArraySet(varr, arr_idx, entry);
+      outHashTable := hashTable;
       return;
     end if;
   end for;
 
-  new_pos := valueArrayLength(varr);
-  varr := valueArrayAdd(varr, entry);
+  (varr, new_pos) := valueArrayAdd(varr, entry);
   arrayUpdate(hashvec, hash_idx, ((key, new_pos)) :: indices);
-  n := new_pos + 1;
-  outHashTable := (hashvec, varr, bsize, n, fntpl);
+  outHashTable := (hashvec, varr, bsize, fntpl);
 end add;
 
 public function dumpHashTableStatistics "
@@ -174,10 +171,13 @@ dump statistics on how many entries per hash value. Useful to see how hash funct
 algorithm
  _ := match(hashTable)
  local HashVector hvec;
-   case((hvec,_,_,_,_)) equation
+   case((hvec,_,_,_)) equation
       print("index list lengths:\n");
-      print(stringDelimitList(List.map(List.map(arrayList(hvec),listLength),intString),","));
+      print(stringDelimitList(list(intString(listLength(l)) for l in hvec),","));
       print("\n");
+      print("non-zero: " + String(sum(1 for l guard not listEmpty(l) in hvec)) + "/" + String(arrayLength(hvec)) +"\n");
+      print("max element: " + String(max(listLength(l) for l in hvec)) + "\n");
+      print("total entries: " + String(sum(listLength(l) for l in hvec)) + "\n");
    then ();
  end match;
 end dumpHashTableStatistics;
@@ -204,16 +204,14 @@ algorithm
 
     // Adding when not existing previously
     case ((v as (key, _)),
-       (hashvec, varr, bsize, n, fntpl as (hashFunc, _, _, _)))
+       (hashvec, varr, bsize, fntpl as (hashFunc, _, _, _)))
       equation
-        indx = hashFunc(key, bsize);
-        newpos = valueArrayLength(varr);
-        varr = valueArrayAdd(varr, v);
-        indexes = hashvec[indx + 1];
-        hashvec = arrayUpdate(hashvec, indx + 1, ((key, newpos) :: indexes));
-        n = valueArrayLength(varr);
+        indx = hashFunc(key, bsize)+1;
+        (varr,newpos) = valueArrayAdd(varr, v);
+        indexes = hashvec[indx];
+        hashvec = arrayUpdate(hashvec, indx, ((key, newpos) :: indexes));
       then
-        ((hashvec, varr, bsize, n, fntpl));
+        ((hashvec, varr, bsize, fntpl));
 
     else
       equation
@@ -244,17 +242,15 @@ algorithm
 
     // Adding when not existing previously
     case ((v as (key, _)),
-        ((hashvec, varr, bsize, n, fntpl as (hashFunc, _, _, _))))
+        ((hashvec, varr, bsize, fntpl as (hashFunc, _, _, _))))
       equation
         failure((_) = get(key, hashTable));
-        indx = hashFunc(key, bsize);
-        newpos = valueArrayLength(varr);
-        varr = valueArrayAdd(varr, v);
-        indexes = hashvec[indx + 1];
-        hashvec = arrayUpdate(hashvec, indx + 1, ((key, newpos) :: indexes));
-        n = valueArrayLength(varr);
+        indx = hashFunc(key, bsize)+1;
+        (varr,newpos) = valueArrayAdd(varr, v);
+        indexes = hashvec[indx];
+        hashvec = arrayUpdate(hashvec, indx, ((key, newpos) :: indexes));
       then
-        ((hashvec, varr, bsize, n, fntpl));
+        ((hashvec, varr, bsize, fntpl));
 
   end match;
 end addUnique;
@@ -262,9 +258,8 @@ end addUnique;
 public function update
   "Updates an already existing value in the hashtable. Fails if the entry does
    not exist."
-  input HashEntry inEntry;
-  input HashTable inHashTable;
-  output HashTable outHashTable;
+  input HashEntry entry;
+  input HashTable hashTable;
 protected
   HashVector hashvec;
   ValueArray varr;
@@ -272,12 +267,11 @@ protected
   FuncsTuple functpl;
   Key key;
 algorithm
-  (key, _) := inEntry;
-  (hashvec, varr, bsize, n, functpl) := inHashTable;
-  index := hasKeyIndex(key, inHashTable);
+  (key, _) := entry;
+  (hashvec, varr, bsize, functpl) := hashTable;
+  index := hasKeyIndex(key, hashTable);
   true := valueArrayKeyIndexExists(varr, index);
-  varr := valueArraySetnth(varr, index, inEntry);
-  outHashTable := (hashvec, varr, bsize, n, functpl);
+  valueArraySet(varr, index, entry);
 end update;
 
 public function delete
@@ -287,26 +281,17 @@ public function delete
    more compact, it will still contain a lot of incices information."
   input Key key;
   input HashTable hashTable;
-  output HashTable outHashTable;
+protected
+  Integer indx;
+  ValueArray varr;
 algorithm
-  outHashTable := match hashTable
-    local
-      Integer indx, n, bsize;
-      ValueArray varr;
-      HashVector hashvec;
-      FuncsTuple fntpl;
-
-    case (hashvec, varr, bsize, n, fntpl)
-      equation
-        indx = hasKeyIndex(key, hashTable);
-        if not valueArrayKeyIndexExists(varr, indx) then
-          print("BaseHashTable.delete failed\n");
-          fail();
-        end if;
-        varr = valueArrayClearnth(varr, indx);
-      then (hashvec, varr, bsize, n, fntpl);
-
-  end match;
+  indx := hasKeyIndex(key, hashTable);
+  (_, varr, _, _) := hashTable;
+  if not valueArrayKeyIndexExists(varr, indx) then
+    print("BaseHashTable.delete failed\n");
+    fail();
+  end if;
+  valueArrayClear(varr, indx);
 end delete;
 
 public function hasKey "checks if the given key is in the hashTable"
@@ -316,7 +301,7 @@ public function hasKey "checks if the given key is in the hashTable"
 protected
   ValueArray varr;
 algorithm
-  (_, varr, _, _, _) := hashTable;
+  (_, varr, _, _) := hashTable;
    b := valueArrayKeyIndexExists(varr, hasKeyIndex(key, hashTable));
 end hasKey;
 
@@ -345,8 +330,8 @@ protected
 algorithm
   i := hasKeyIndex(key, hashTable);
   false := i == -1;
-  (_, varr, _, _, _) := hashTable;
-  (_, value) := valueArrayNth(varr, i);
+  (_, varr, _, _) := hashTable;
+  (_, value) := getValueArray(varr, i);
 end get;
 
 protected function hasKeyIndex
@@ -366,10 +351,10 @@ algorithm
       FuncHash hashFunc;
       Boolean eq;
 
-    case (hashvec, _, bsize, _, (hashFunc, keyEqual, _, _))
+    case (hashvec, _, bsize, (hashFunc, keyEqual, _, _))
       equation
-        hashindx = hashFunc(key, bsize);
-        indexes = hashvec[hashindx + 1];
+        hashindx = hashFunc(key, bsize)+1;
+        indexes = hashvec[hashindx];
       then hasKeyIndex2(key, indexes, keyEqual);
 
   end match;
@@ -398,11 +383,20 @@ public function dumpHashTable
 protected
   FuncKeyString printKey;
   FuncValString printValue;
+  Key k;
+  Value v;
 algorithm
-  (_, _, _, _, (_, _, printKey, printValue)) := t;
+  (_, _, _, (_, _, printKey, printValue)) := t;
   print("HashTable:\n");
-  print(stringDelimitList(List.map2(hashTableList(t), dumpTuple, printKey, printValue), "\n"));
-  print("\n");
+
+  for entry in hashTableList(t) loop
+    (k, v) := entry;
+    print("{");
+    print(printKey(k));
+    print(",{");
+    print(printValue(v));
+    print("}}\n");
+  end for;
 end dumpHashTable;
 
 protected function dumpTuple
@@ -444,7 +438,7 @@ public function hashTableList
 protected
   ValueArray varr;
 algorithm
-  (_, varr, _, _, _) := hashTable;
+  (_, varr, _, _) := hashTable;
   outEntries := valueArrayList(varr);
 end hashTableList;
 
@@ -467,7 +461,7 @@ public function hashTableCurrentSize
 protected
   ValueArray va;
 algorithm
-  (_, va, _, _, _) := hashTable;
+  (_, va, _, _) := hashTable;
   sz := valueArrayLength(va);
 end hashTableCurrentSize;
 
@@ -479,14 +473,17 @@ algorithm
   (sz, _, _) := valueArray;
 end valueArrayLength;
 
-public function valueArrayAdd
+protected
+
+function valueArrayAdd
   "Adds an entry last to the ValueArray, increasing array size if no space left
    by factor 1.4"
   input ValueArray valueArray;
   input HashEntry entry;
   output ValueArray outValueArray;
+  output Integer newpos;
 algorithm
-  outValueArray := matchcontinue(valueArray, entry)
+  (outValueArray, newpos) := matchcontinue(valueArray, entry)
     local
       Integer n, size, expandsize, newsize;
       array<Option<HashEntry>> arr;
@@ -498,7 +495,7 @@ algorithm
         n = n + 1;
         arr = arrayUpdate(arr, n, SOME(entry));
       then
-        ((n, size, arr));
+        ((n, size, arr), n);
 
     case ((n, size, arr), _)
       equation
@@ -512,7 +509,7 @@ algorithm
         n = n + 1;
         arr = arrayUpdate(arr, n, SOME(entry));
       then
-        ((n, newsize, arr));
+        ((n, newsize, arr), n);
 
     else
       equation
@@ -523,7 +520,7 @@ algorithm
   end matchcontinue;
 end valueArrayAdd;
 
-public function valueArraySetnth
+function valueArraySet
   "Set the n:th variable in the ValueArray to value."
   input ValueArray valueArray;
   input Integer pos;
@@ -537,65 +534,48 @@ algorithm
 
     case ((n, size, arr), _, _)
       equation
-        (pos < size) = true;
-        arr = arrayUpdate(arr, pos + 1, SOME(entry));
+        true = pos <= size;
+        arr = arrayUpdate(arr, pos, SOME(entry));
       then
         ((n, size, arr));
 
-    else
+    case ((_, size, arr), _, _)
       equation
-        print("-HashTable.valueArraySetnth failed\n");
+        Error.addInternalError("HashTable.valueArraySet(pos="+String(pos)+") size="+String(size)+" arrSize="+String(arrayLength(arr))+" failed\n", sourceInfo());
       then
         fail();
 
   end matchcontinue;
-end valueArraySetnth;
+end valueArraySet;
 
-protected
-function valueArrayClearnth
+function valueArrayClear
   "Clears the n:th variable in the ValueArray (set to NONE())."
   input ValueArray valueArray;
   input Integer pos;
-  output ValueArray outValueArray;
+protected
+  array<Option<HashEntry>> arr;
+  Integer size;
 algorithm
-  outValueArray := match valueArray
-    local
-      array<Option<HashEntry>> arr;
-      Integer n, size;
-
-    case (_, size, arr)
-      equation
-        true = pos < size;
-        arr = arrayUpdate(arr, pos + 1,NONE());
-      then valueArray;
-
-  end match;
-end valueArrayClearnth;
+  (_, size, arr) := valueArray;
+  true := pos <= size; // TODO: Needed? arrayUpdate checks bounds and we should more reasonably check n?
+  arrayUpdate(arr, pos,NONE());
+end valueArrayClear;
 
 protected
-function valueArrayNth
-  "Retrieve the n:th Value from ValueArray, index from 0..n-1."
+function getValueArray
+  "Retrieve the n:th Value from ValueArray, index from 1..n."
   input ValueArray valueArray;
   input Integer pos;
   output Key key;
   output Value value;
+protected
+  array<Option<HashEntry>> arr;
+  Integer n;
 algorithm
-  (key, value) := match(valueArray, pos)
-    local
-      Key k;
-      Value v;
-      Integer n;
-      array<Option<HashEntry>> arr;
-
-    case ((n, _, arr), _)
-      equation
-        true = pos <= n;
-        SOME((k, v)) = arr[pos + 1];
-      then
-        (k, v);
-
-  end match;
-end valueArrayNth;
+  (n, _, arr) := valueArray;
+  true := pos <= n; // In case the user sends in higher values and we did not clear the array properly?
+  SOME((key,value)) := arrayGet(arr, pos);
+end getValueArray;
 
 function valueArrayKeyIndexExists
   "Checks if the given index exists in the value array"
@@ -612,7 +592,7 @@ algorithm
 
     case (_, -1) then false;
     case ((n, _, arr), _)
-      then if pos <= n then isSome(arr[pos + 1]) else false;
+      then if pos <= n then isSome(arr[pos]) else false;
 
   end match;
 end valueArrayKeyIndexExists;
@@ -627,11 +607,85 @@ protected
   FuncsTuple ft;
   array<Option<HashEntry>> vae;
 algorithm
-  (hv, (vs, ve, vae), bs, sz, ft) := inHashTable;
+  (hv, (vs, ve, vae), bs, ft) := inHashTable;
   hv := arrayCopy(hv);
   vae := arrayCopy(vae);
-  outCopy := (hv, (vs, ve, vae), bs, sz, ft);
+  outCopy := (hv, (vs, ve, vae), bs, ft);
 end copy;
+
+public function clear
+  "Clears the hashtable."
+  input output HashTable ht;
+protected
+  HashVector hv;
+  Integer bs, sz, vs, ve, hash_idx;
+  FuncsTuple ft;
+  FuncHash hashFunc;
+  Key key;
+  array<Option<HashEntry>> vae;
+algorithm
+  (hv, (vs, ve, vae), bs, ft as (hashFunc,_,_,_)) := ht;
+  for i in 1:vs loop
+    _ := match arrayGet(vae, i)
+      case SOME((key,_))
+        algorithm
+          hash_idx := hashFunc(key, bs) + 1;
+          arrayUpdate(hv, hash_idx, {});
+          arrayUpdate(vae, i, NONE());
+        then ();
+      else ();
+    end match;
+  end for;
+  ht := (hv, (0, ve, vae), bs, ft);
+end clear;
+
+public function clearAssumeNoDelete
+  "Clears a HashTable that has not been properly stored, but was known to never delete an element (making the values sequential SOME() for as long as there are elements). NOTE: Does not handle arrays that were expanded?"
+  input HashTable ht;
+protected
+  HashVector hv;
+  Integer bs, sz, vs, ve, hash_idx;
+  FuncsTuple ft;
+  FuncHash hashFunc;
+  Key key;
+  array<Option<HashEntry>> vae;
+  constant Boolean workaroundForBug=true "TODO: Make it impossible to update a value by not updating n (fully mutable HT instead of this hybrid)";
+  constant Boolean debug=false;
+algorithm
+  (hv, (vs, ve, vae), bs, ft as (hashFunc,_,_,_)) := ht;
+  for i in 1:ve loop
+    _ := match arrayGet(vae, i)
+      case SOME((key,_))
+        algorithm
+          if not workaroundForBug then
+            hash_idx := hashFunc(key, bs) + 1;
+            arrayUpdate(hv, hash_idx, {});
+          end if;
+          arrayUpdate(vae, i, NONE());
+        then ();
+      else
+        algorithm
+          if not workaroundForBug then return; end if;
+        then ();
+    end match;
+  end for;
+  if debug then
+    for i in vae loop
+      if isSome(i) then
+        print("vae not empty\n");
+        break;
+      end if;
+    end for;
+  end if;
+  if workaroundForBug then
+    for i in 1:arrayLength(hv) loop
+      if not listEmpty(arrayGet(hv,i)) then
+        if debug then print("hv not empty\n"); end if;
+        arrayUpdate(hv,i,{});
+      end if;
+    end for;
+  end if;
+end clearAssumeNoDelete;
 
 annotation(__OpenModelica_Interface="util");
 end BaseHashTable;

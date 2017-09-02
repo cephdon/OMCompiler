@@ -33,18 +33,18 @@ encapsulated package BackendDAE
 " file:        BackendDAE.mo
   package:     BackendDAE
   description: BackendDAE contains the data-types used by the back end.
-
-  RCS: $Id$
 "
 
-public import Absyn;
-public import DAE;
-public import FCore;
-public import SCode;
-public import Values;
-public import HashTable3;
-public import HashTableCG;
-public import MMath;
+import Absyn;
+import DAE;
+import DoubleEndedList;
+import ExpandableArray;
+import FCore;
+import HashTable3;
+import HashTableCG;
+import MMath;
+import SCode;
+import ZeroCrossings;
 
 public
 type Type = .DAE.Type
@@ -70,13 +70,15 @@ type EqSystems = list<EqSystem>;
 public
 uniontype EqSystem "An independent system of equations (and their corresponding variables)"
   record EQSYSTEM
-    Variables orderedVars "ordered Variables, only states and alg. vars";
-    EquationArray orderedEqs "ordered Equations";
+    Variables orderedVars                   "ordered Variables, only states and alg. vars";
+    EquationArray orderedEqs                "ordered Equations";
     Option<IncidenceMatrix> m;
     Option<IncidenceMatrixT> mT;
     Matching matching;
-    StateSets stateSets "the state sets of the system";
+    StateSets stateSets                    "the state sets of the system";
     BaseClockPartitionKind partitionKind;
+    EquationArray removedEqs               "these are equations that cannot solve for a variable.
+                                            e.g. assertions, external function calls, algorithm sections without effect";
   end EQSYSTEM;
 end EqSystem;
 
@@ -86,15 +88,17 @@ public uniontype SubClock
     MMath.Rational shift;
     Option<String> solver;
   end SUBCLOCK;
+  record INFERED_SUBCLOCK
+  end INFERED_SUBCLOCK;
 end SubClock;
+
+public constant SubClock DEFAULT_SUBCLOCK = SUBCLOCK(MMath.RAT1, MMath.RAT0, NONE());
 
 public
 uniontype BaseClockPartitionKind
   record UNKNOWN_PARTITION end UNKNOWN_PARTITION;
   record CLOCKED_PARTITION
-    Integer baseClock;
-    SubClock subClock;
-    Boolean holdEvents;
+    Integer subPartIdx;
   end CLOCKED_PARTITION;
   record CONTINUOUS_TIME_PARTITION end CONTINUOUS_TIME_PARTITION;
   record UNSPECIFIED_PARTITION "treated as CONTINUOUS_TIME_PARTITION" end UNSPECIFIED_PARTITION;
@@ -105,11 +109,11 @@ end BaseClockPartitionKind;
 public
 uniontype Shared "Data shared for all equation-systems"
   record SHARED
-    Variables knownVars                     "Known variables, i.e. constants and parameters";
+    Variables globalKnownVars               "variables only depending on parameters and constants [TODO: move stuff (like inputs) to localKnownVars]";
+    Variables localKnownVars                "variables only depending on locally constant variables in the simulation step, i.e. states, input variables";
     Variables externalObjects               "External object variables";
     Variables aliasVars                     "Data originating from removed simple equations needed to build
                                              variables' lookup table (in C output).
-
                                              In that way, double buffering of variables in pre()-buffer, extrapolation
                                              buffer and results caching, etc., is avoided, but in C-code output all the
                                              data about variables' names, comments, units, etc. is preserved as well as
@@ -130,9 +134,32 @@ uniontype Shared "Data shared for all equation-systems"
   end SHARED;
 end Shared;
 
+uniontype InlineData
+  record INLINE_DATA
+    EqSystems inlineSystems;
+    Variables knownVariables;
+  end INLINE_DATA;
+end InlineData;
+
+uniontype BasePartition
+  record BASE_PARTITION
+    .DAE.ClockKind clock;
+    Integer nSubClocks;
+  end BASE_PARTITION;
+end BasePartition;
+
+uniontype SubPartition
+  record SUB_PARTITION
+    SubClock clock;
+    Boolean holdEvents;
+    list<.DAE.ComponentRef> prevVars;
+  end SUB_PARTITION;
+end SubPartition;
+
 uniontype PartitionsInfo
   record PARTITIONS_INFO
-    array<.DAE.ClockKind> clocks;
+    array<BasePartition> basePartitions;
+    array<SubPartition> subPartitions;
   end PARTITIONS_INFO;
 end PartitionsInfo;
 
@@ -152,6 +179,7 @@ uniontype BackendDAEType "BackendDAEType to indicate different types of BackendD
   record ARRAYSYSTEM     "Type for multi dim equation arrays BackendDAE.DAE" end ARRAYSYSTEM;
   record PARAMETERSYSTEM "Type for parameter system BackendDAE.DAE"          end PARAMETERSYSTEM;
   record INITIALSYSTEM   "Type for initial system BackendDAE.DAE"            end INITIALSYSTEM;
+  record INLINESYSTEM    "Type for inline system BackendDAE.DAE"             end INLINESYSTEM;
 end BackendDAEType;
 
 //
@@ -181,20 +209,12 @@ uniontype VariableArray "array of Equations are expandable, to amortize the cost
   equations in a more efficient manner"
   record VARIABLE_ARRAY
     Integer numberOfElements "no. elements";
-    Integer arrSize "array size";
     array<Option<Var>> varOptArr;
   end VARIABLE_ARRAY;
 end VariableArray;
 
 public
-uniontype EquationArray
-  record EQUATION_ARRAY
-    Integer size "size of the Equations in scalar form";
-    Integer numberOfElement "no. elements";
-    Integer arrSize "array size";
-    array<Option<Equation>> equOptArr;
-  end EQUATION_ARRAY;
-end EquationArray;
+type EquationArray = ExpandableArray<Equation>;
 
 public
 uniontype Var "variables"
@@ -204,12 +224,13 @@ uniontype Var "variables"
     .DAE.VarDirection varDirection "input, output or bidirectional";
     .DAE.VarParallelism varParallelism "parallelism of the variable. parglobal, parlocal or non-parallel";
     Type varType "built-in type or enumeration";
-    Option< .DAE.Exp> bindExp "Binding expression e.g. for parameters";
-    Option<Values.Value> bindValue "binding value for parameters";
+    Option<.DAE.Exp> bindExp "Binding expression e.g. for parameters";
+    Option<.DAE.Exp> tplExp "Variable is part of a tuple. Needed for the globalKnownVars and localKnownVars";
     .DAE.InstDims arryDim "array dimensions of non-expanded var";
     .DAE.ElementSource source "origin of variable";
-    Option< .DAE.VariableAttributes> values "values on built-in attributes";
+    Option<.DAE.VariableAttributes> values "values on built-in attributes";
     Option<TearingSelect> tearingSelectOption "value for TearingSelect";
+    .DAE.Exp hideResult "expression from the hideResult annotation";
     Option<SCode.Comment> comment "this contains the comment and annotation from Absyn";
     .DAE.ConnectorType connectorType "flow, stream, unspecified or not connector.";
     .DAE.VarInnerOuter innerOuter "inner, outer, inner outer or unspecified";
@@ -227,12 +248,17 @@ uniontype VarKind "variable kind"
   record STATE_DER end STATE_DER;
   record DUMMY_DER end DUMMY_DER;
   record DUMMY_STATE end DUMMY_STATE;
+  record CLOCKED_STATE
+    .DAE.ComponentRef previousName "the name of the previous variable";
+    Boolean isStartFixed "is fixed at first clock tick";
+  end CLOCKED_STATE;
   record DISCRETE end DISCRETE;
   record PARAM end PARAM;
   record CONST end CONST;
   record EXTOBJ Absyn.Path fullClassName; end EXTOBJ;
   record JAC_VAR end JAC_VAR;
   record JAC_DIFF_VAR end JAC_DIFF_VAR;
+  record SEED_VAR end SEED_VAR;
   record OPT_CONSTR end OPT_CONSTR;
   record OPT_FCONSTR end OPT_FCONSTR;
   record OPT_INPUT_WITH_DER end OPT_INPUT_WITH_DER;
@@ -241,9 +267,9 @@ uniontype VarKind "variable kind"
   record OPT_LOOP_INPUT
     .DAE.ComponentRef replaceExp;
   end OPT_LOOP_INPUT;
-  record ALG_STATE "algebraic state"
-    VarKind oldKind;
-  end ALG_STATE;
+  record ALG_STATE  end ALG_STATE; // algebraic state used by inline solver
+  record ALG_STATE_OLD  end ALG_STATE_OLD; // algebraic state old value used by inline solver
+  record DAE_RESIDUAL_VAR end DAE_RESIDUAL_VAR; // variable kind used for DAEmode
 end VarKind;
 
 public uniontype TearingSelect
@@ -273,38 +299,13 @@ public uniontype EquationAttributes
   record EQUATION_ATTRIBUTES
     Boolean differentiated "true if the equation was differentiated, and should not differentiated again to avoid equal equations";
     EquationKind kind;
-    LoopInfo loopInfo;
   end EQUATION_ATTRIBUTES;
 end EquationAttributes;
 
-public constant EquationAttributes EQ_ATTR_DEFAULT_DYNAMIC = EQUATION_ATTRIBUTES(false, DYNAMIC_EQUATION(), NO_LOOP());
-public constant EquationAttributes EQ_ATTR_DEFAULT_BINDING = EQUATION_ATTRIBUTES(false, BINDING_EQUATION(), NO_LOOP());
-public constant EquationAttributes EQ_ATTR_DEFAULT_INITIAL = EQUATION_ATTRIBUTES(false, INITIAL_EQUATION(), NO_LOOP());
-public constant EquationAttributes EQ_ATTR_DEFAULT_UNKNOWN = EQUATION_ATTRIBUTES(false, UNKNOWN_EQUATION_KIND(), NO_LOOP());
-
-public uniontype LoopInfo "is this equation part of a for-loop"
-  record NO_LOOP
-  end NO_LOOP;
-
-  record LOOP
-    Integer loopId;
-    //Integer pos; // position in the loop, 1=start, endIt=last, needed to get the matching afterwards
-    .DAE.Exp startIt;
-    .DAE.Exp endIt;
-    list<IterCref> crefs;
-  end LOOP;
-end LoopInfo;
-
-public uniontype IterCref "which crefs occur in the for-loop and what are their iterated indexes"
-  record ITER_CREF
-    .DAE.ComponentRef cref;
-    .DAE.Exp iterator;
-  end ITER_CREF;
-    record ACCUM_ITER_CREF
-    .DAE.ComponentRef cref;
-    .DAE.Operator op; // the operator e.g. add
-  end ACCUM_ITER_CREF;
-end IterCref;
+public constant EquationAttributes EQ_ATTR_DEFAULT_DYNAMIC = EQUATION_ATTRIBUTES(false, DYNAMIC_EQUATION());
+public constant EquationAttributes EQ_ATTR_DEFAULT_BINDING = EQUATION_ATTRIBUTES(false, BINDING_EQUATION());
+public constant EquationAttributes EQ_ATTR_DEFAULT_INITIAL = EQUATION_ATTRIBUTES(false, INITIAL_EQUATION());
+public constant EquationAttributes EQ_ATTR_DEFAULT_UNKNOWN = EQUATION_ATTRIBUTES(false, UNKNOWN_EQUATION_KIND());
 
 public
 uniontype Equation
@@ -377,17 +378,52 @@ uniontype Equation
     EquationAttributes attr;
   end FOR_EQUATION;
 
+  record DUMMY_EQUATION
+  end DUMMY_EQUATION;
 end Equation;
 
 public
 uniontype WhenEquation
-  record WHEN_EQ "equation when condition then left = right; [elsewhenPart] end when;"
-    .DAE.Exp condition                "the when-condition";
-    .DAE.ComponentRef left            "left hand side of equation";
-    .DAE.Exp right                    "right hand side of equation";
+  record WHEN_STMTS "equation when condition then cr = exp, reinit(...), terminate(...) or assert(...)"
+    .DAE.Exp condition                "the when-condition" ;
+    list<WhenOperator> whenStmtLst;
     Option<WhenEquation> elsewhenPart "elsewhen equation with the same cref on the left hand side.";
-  end WHEN_EQ;
+  end WHEN_STMTS;
 end WhenEquation;
+
+public
+uniontype WhenOperator
+  record ASSIGN " left_cr = right_exp"
+    .DAE.Exp left     "left hand side of equation";
+    .DAE.Exp right             "right hand side of equation";
+    .DAE.ElementSource source  "origin of equation";
+  end ASSIGN;
+
+  record REINIT "Reinit Statement"
+    .DAE.ComponentRef stateVar "State variable to reinit";
+    .DAE.Exp value             "Value after reinit";
+    .DAE.ElementSource source  "origin of equation";
+  end REINIT;
+
+  record ASSERT
+    .DAE.Exp condition;
+    .DAE.Exp message;
+    .DAE.Exp level;
+    .DAE.ElementSource source "the origin of the component/equation/algorithm";
+  end ASSERT;
+
+  record TERMINATE "The Modelica built-in terminate(msg)"
+    .DAE.Exp message;
+    .DAE.ElementSource source "the origin of the component/equation/algorithm";
+  end TERMINATE;
+
+  record NORETCALL "call with no return value, i.e. no equation.
+    Typically side effect call of external function but also
+    Connections.* i.e. Connections.root(...) functions."
+    .DAE.Exp exp;
+    .DAE.ElementSource source "the origin of the component/equation/algorithm";
+  end NORETCALL;
+end WhenOperator;
 
 public
 type ExternalObjectClasses = list<ExternalObjectClass>
@@ -439,7 +475,7 @@ type StructurallySingularSystemHandlerArg = tuple<StateOrder,ConstraintEquations
 "StateOrder,ConstraintEqns,Eqn->EqnsIndxes,EqnIndex->Eqns,NrOfEqnsbeforeIndexReduction";
 
 public
-type ConstraintEquations = list<tuple<Integer,list<Equation>>>;
+type ConstraintEquations = array<list<Equation>>;
 
 public
 uniontype StateOrder
@@ -447,6 +483,8 @@ uniontype StateOrder
     HashTableCG.HashTable hashTable "x -> dx";
     HashTable3.HashTable invHashTable "dx -> {x,y,z}";
   end STATEORDER;
+  record NOSTATEORDER "Index reduction disabled; don't need big hashtables"
+  end NOSTATEORDER;
 end StateOrder;
 
 public
@@ -505,10 +543,27 @@ uniontype TearingSet
   record TEARINGSET
     list<Integer> tearingvars;
     list<Integer> residualequations;
-    list<tuple<Integer,list<Integer>>> otherEqnVarTpl "list of tuples of indexes for Equation and Variable solved in the equation, in the order they have to be solved";
+    InnerEquations innerEquations "list of matched equations and variables; these will be solved explicitly in the given order";
     Jacobian jac;
   end TEARINGSET;
 end TearingSet;
+
+type InnerEquations = list<InnerEquation>;
+
+public
+uniontype InnerEquation
+  record INNEREQUATION
+    Integer eqn;
+    list<Integer> vars;
+  end INNEREQUATION;
+
+  record INNEREQUATIONCONSTRAINTS
+    Integer eqn;
+    list<Integer> vars;
+    Constraints cons;
+  end INNEREQUATIONCONSTRAINTS;
+end InnerEquation;
+
 
 public
 type StateSets = list<StateSet> "List of StateSets";
@@ -516,15 +571,15 @@ type StateSets = list<StateSet> "List of StateSets";
 public
 uniontype StateSet
   record STATESET
-    Integer rang;
+    Integer rang; // how many states are needed?
     list< .DAE.ComponentRef> state;
     .DAE.ComponentRef crA "set.x=A*states";
-    list< Var> varA;
-    list< Var> statescandidates;
-    list< Var> ovars;
-    list< Equation> eqns;
-    list< Equation> oeqns;
-    .DAE.ComponentRef crJ;
+    list< Var> varA; //the jacobian matrix entries
+    list< Var> statescandidates; //all state candidates
+    list< Var> ovars; //other variables to solve the eqns
+    list< Equation> eqns; //the constraint equations
+    list< Equation> oeqns; //other equations to solve the eqns
+    .DAE.ComponentRef crJ; // the jac vector
     list< Var> varJ;
     Jacobian jacobian;
   end STATESET;
@@ -538,62 +593,25 @@ public
 uniontype EventInfo
   record EVENT_INFO
     list<TimeEvent> timeEvents         "stores all information related to time events";
-    list<WhenClause> whenClauseLst     "list of when clauses. The WhenEquation data type refer to this list by position";
-    list<ZeroCrossing> zeroCrossingLst "list of zero crossing conditions";
-    list<ZeroCrossing> sampleLst       "[deprecated] list of sample as before, only used by cpp runtime (TODO: REMOVE ME)";
-    list<ZeroCrossing> relationsLst    "list of zero crossing function as before";
+    ZeroCrossingSet zeroCrossings "list of zero crossing conditions";
+    DoubleEndedList<ZeroCrossing> relations    "list of zero crossing function as before";
+    ZeroCrossingSet samples       "[deprecated] list of sample as before, only used by cpp runtime (TODO: REMOVE ME)";
     Integer numberMathEvents           "stores the number of math function that trigger events e.g. floor, ceil, integer, ...";
   end EVENT_INFO;
 end EventInfo;
 
-public
-uniontype WhenOperator
-  record REINIT "Reinit Statement"
-    .DAE.ComponentRef stateVar "State variable to reinit";
-    .DAE.Exp value             "Value after reinit";
-    .DAE.ElementSource source  "origin of equation";
-  end REINIT;
-
-  record ASSERT
-    .DAE.Exp condition;
-    .DAE.Exp message;
-    .DAE.Exp level;
-    .DAE.ElementSource source "the origin of the component/equation/algorithm";
-  end ASSERT;
-
-  record TERMINATE "The Modelica built-in terminate(msg)"
-    .DAE.Exp message;
-    .DAE.ElementSource source "the origin of the component/equation/algorithm";
-  end TERMINATE;
-
-  record NORETCALL "call with no return value, i.e. no equation.
-    Typically side effect call of external function but also
-    Connections.* i.e. Connections.root(...) functions."
-    .DAE.Exp exp;
-    .DAE.ElementSource source "the origin of the component/equation/algorithm";
-  end NORETCALL;
-end WhenOperator;
-
-public
-uniontype WhenClause
-  record WHEN_CLAUSE
-    .DAE.Exp condition               "the when-condition";
-    list<WhenOperator> reinitStmtLst "list of reinit statements associated to the when clause.";
-    Option<Integer> elseClause       "index of elsewhen clause";
-
-    // HL only needs to know if it is an elsewhen the equations take care of which clauses are related.
-
-    // The equations associated to the clause are linked to this when clause by the index in the
-    // when clause list where this when clause is stored.
-  end WHEN_CLAUSE;
-end WhenClause;
+uniontype ZeroCrossingSet
+  record ZERO_CROSSING_SET
+    DoubleEndedList<ZeroCrossing> zc;
+    array<ZeroCrossings.Tree> tree;
+  end ZERO_CROSSING_SET;
+end ZeroCrossingSet;
 
 public
 uniontype ZeroCrossing
   record ZERO_CROSSING
     .DAE.Exp relation_         "function";
     list<Integer> occurEquLst  "list of equations where the function occurs";
-    list<Integer> occurWhenLst "list of when clauses where the function occurs";
   end ZERO_CROSSING;
 end ZeroCrossing;
 
@@ -628,7 +646,7 @@ type IncidenceMatrixT = IncidenceMatrix
  contain the state variable and not the derivative have a negative index.";
 
 public
-type AdjacencyMatrixElementEnhancedEntry = tuple<Integer,Solvability>;
+type AdjacencyMatrixElementEnhancedEntry = tuple<Integer,Solvability,Constraints>;
 
 public
 type AdjacencyMatrixElementEnhanced = list<AdjacencyMatrixElementEnhancedEntry>;
@@ -643,7 +661,9 @@ public
 uniontype Solvability
   record SOLVABILITY_SOLVED "Equation is already solved for the variable" end SOLVABILITY_SOLVED;
   record SOLVABILITY_CONSTONE "Coefficient is equal 1 or -1" end SOLVABILITY_CONSTONE;
-  record SOLVABILITY_CONST "Coefficient is constant" end SOLVABILITY_CONST;
+  record SOLVABILITY_CONST "Coefficient is constant"
+    Boolean b "false if the constant is almost zero (<1e-6)";
+  end SOLVABILITY_CONST;
   record SOLVABILITY_PARAMETER "Coefficient contains parameters"
     Boolean b "false if the partial derivative is zero";
   end SOLVABILITY_PARAMETER;
@@ -656,6 +676,9 @@ uniontype Solvability
   record SOLVABILITY_SOLVABLE "It is possible to solve the equation for the variable, it is not considered
                      how the variable occurs in the equation." end SOLVABILITY_SOLVABLE;
 end Solvability;
+
+public
+type Constraints = list<.DAE.Constraint> "Constraints on the solvability of the (casual) tearing set; needed for proper Dynamic Tearing";
 
 public
 uniontype IndexType
@@ -698,7 +721,8 @@ public constant String functionDerivativeNamePrefix = "$funDER";
 
 public constant String optimizationMayerTermName = "$OMC$objectMayerTerm";
 public constant String optimizationLagrangeTermName = "$OMC$objectLagrangeTerm";
-public constant String symEulerDT = "__OMC_DT";
+public constant String symSolverDT = "__OMC_DT";
+public constant String homotopyLambda = "__HOM_LAMBDA";
 
 type FullJacobian = Option<list<tuple<Integer, Integer, Equation>>>;
 
@@ -709,7 +733,7 @@ uniontype Jacobian
   end FULL_JACOBIAN;
 
   record GENERIC_JACOBIAN
-    SymbolicJacobian jacobian;
+    Option<SymbolicJacobian> jacobian;
     SparsePattern sparsePattern;
     SparseColoring coloring;
   end GENERIC_JACOBIAN;
@@ -723,16 +747,20 @@ type SymbolicJacobians = list<tuple<Option<SymbolicJacobian>, SparsePattern, Spa
 public
 type SymbolicJacobian = tuple<BackendDAE,               // symbolic equation system
                               String,                   // Matrix name
-                              list<Var>,                // diff vars
-                              list<Var>,                // result diffed equation
-                              list<Var>                 // all diffed equation
+                              list<Var>,                // diff vars (independent vars)
+                              list<Var>,                // diffed vars (residual vars)
+                              list<Var>                 // all diffed vars (residual vars + dependent vars)
                               >;
 
 public
 type SparsePattern = tuple<list<tuple< .DAE.ComponentRef, list< .DAE.ComponentRef>>>, // column-wise sparse pattern
                            list<tuple< .DAE.ComponentRef, list< .DAE.ComponentRef>>>, // row-wise sparse pattern
                            tuple<list< .DAE.ComponentRef>,                            // diff vars
-                                 list< .DAE.ComponentRef>>>;                          // diffed vars
+                                 list< .DAE.ComponentRef>>,                           // diffed vars
+                           Integer>;                                                  // nonZeroElements
+
+public
+constant SparsePattern emptySparsePattern = ({},{},({},{}),0);
 
 public
 type SparseColoring = list<list< .DAE.ComponentRef>>;   // colouring
@@ -745,13 +773,13 @@ uniontype DifferentiateInputData
     Option<Variables> dependenentVars;            // Dependent variables
     Option<Variables> knownVars;                  // known variables (e.g. parameter, constants, ...)
     Option<Variables> allVars;                    // all variables
-    Option<list< Var>> controlVars;               // variables to save control vars of for algorithm
-    Option<list< .DAE.ComponentRef>> diffCrefs;   // all crefs to differentiate, needed for generic gradient
+    list< Var> controlVars;                       // variables to save control vars of for algorithm
+    list< .DAE.ComponentRef> diffCrefs;           // all crefs to differentiate, needed for generic gradient
     Option<String> matrixName;                    // name to create temporary vars, needed for generic gradient
   end DIFFINPUTDATA;
 end DifferentiateInputData;
 
-public constant DifferentiateInputData noInputData = DIFFINPUTDATA(NONE(),NONE(),NONE(),NONE(),NONE(),NONE(),NONE());
+public constant DifferentiateInputData emptyInputData = DIFFINPUTDATA(NONE(),NONE(),NONE(),NONE(),{},{},NONE());
 
 public
 type DifferentiateInputArguments = tuple< .DAE.ComponentRef, DifferentiateInputData, DifferentiationType, .DAE.FunctionTree>;

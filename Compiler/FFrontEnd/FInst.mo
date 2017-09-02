@@ -34,7 +34,6 @@ encapsulated package FInst
   package:     FInst
   description: Graph based instantiation
 
-  RCS: $Id: FInst 18987 2014-02-05 16:24:53Z adrpo $
 
 "
 
@@ -182,7 +181,7 @@ algorithm
         lst = List.consr(lst, System.realtimeTock(ClockIndexes.RT_CLOCK_FINST));
         print("FExpand.path:   " + realString(listHead(lst)) + "\n");
 
-        print("FGraph nodes:   " + intString(FGraph.lastId(g)) + "\n");
+        // print("FGraph nodes:   " + intString(FGraph.lastId(g)) + "\n");
         print("Total time:     " + realString(List.fold(lst, realAdd, 0.0)) + "\n");
 
         FGraphDump.dumpGraph(g, "F:\\dev\\" + Absyn.pathString(inPath) + ".graph.graphml");

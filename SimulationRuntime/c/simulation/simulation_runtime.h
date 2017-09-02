@@ -53,14 +53,9 @@
 
 extern "C" {
 
-extern int callSolver(DATA* simData, std::string init_initMethod,
-    std::string init_file, double init_time, int lambda_steps, std::string outputVariablesAtEnd, int cpuTime);
-
-extern int initializeResultData(DATA* simData, int cpuTime);
+extern int initializeResultData(DATA* simData, threadData_t *threadData, int cpuTime);
 
 #endif /* cplusplus */
-
-extern int measure_time_flag;
 
 extern int modelTermination;     /* Becomes non-zero when simulation terminates. */
 extern int terminationTerminate; /* Becomes non-zero when user terminates simulation. */
@@ -79,18 +74,31 @@ extern const char* getNameString(const char** ptr);
 extern double getSimulationStepSize();
 extern void printSimulationStepSize(double in_stepSize, double time);
 
-extern void communicateStatus(const char *phase, double completionPercent);
+extern void communicateStatus(const char *phase, double completionPercent, double currentTime, double currentStepSize);
 extern void communicateMsg(char id, unsigned int size, const char *data);
 
 /* the main function of the simulation runtime!
  * simulation runtime no longer has main, is defined by the generated model code which calls this function.
  */
-extern int _main_SimulationRuntime(int argc, char**argv, DATA *data);
+extern int _main_SimulationRuntime(int argc, char**argv, DATA *data, threadData_t *threadData);
 
-extern void parseVariableStr(char* variableStr);
+#if !defined(OMC_MINIMAL_RUNTIME)
+const char* prettyPrintNanoSec(int64_t ns, int *v);
+#endif
+
+void setStreamPrintXML(int isXML);
 
 #ifdef __cplusplus
 }
+#endif
+
+/*
+ * adrpo: weird msvc _C2 defined inside stdint.h via yvals.h interferes with some generated Modelica code
+ */
+#if defined(_MSC_VER)
+#if defined(_C2)
+#undef _C2
+#endif
 #endif
 
 #endif

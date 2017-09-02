@@ -36,20 +36,7 @@
 #define DDASKR _daskr_ddaskr_
 
 static const unsigned int maxOrder = 5;
-static const unsigned int numStatistics = 5;
 static const unsigned int infoLength = 20;
-static const unsigned int SIZERINGBUFFER = 3;
-
-enum DASSL_JACOBIAN
-{
-  DASSL_JAC_UNKNOWN = 0,
-  DASSL_COLOREDNUMJAC,
-  DASSL_COLOREDSYMJAC,
-  DASSL_INTERNALNUMJAC,
-  DASSL_NUMJAC,
-  DASSL_SYMJAC,
-  DASSL_JAC_MAX
-};
 
 typedef struct DASSL_DATA{
 
@@ -59,14 +46,9 @@ typedef struct DASSL_DATA{
   int dasslRootFinding;         /* if TRUE then the internal root finding is used */
   int dasslJacobian;            /* specifices the method to calculate the jacobian matrix */
   int dasslAvoidEventRestart;   /* if TRUE then no restart after an event is performed */
+  int daeMode;                  /* if TRUE then solve dae more with a reals residual function */
 
-  unsigned int* dasslStatistics;
-  unsigned int* dasslStatisticsTmp;
-
-  /* current context evaulation */
-  int currentContext;
-  int currentContextOld;
-
+  long N;
   int* info;
 
   int idid;
@@ -84,29 +66,28 @@ typedef struct DASSL_DATA{
   int ng;
   int *jroot;
 
-  /* varibales used in jacobian calculation */
-  double sqrteps;
+  /* variables used in jacobian calculation */
   double *ysave;
+  double *ypsave;
   double *delta_hh;
   double *newdelta;
   double *stateDer;
+  double *states;
 
-  /* function pointer of provied functions */
-  void* jacobianFunction;
+  /* function pointer of provided functions */
+  int (*residualFunction)(double *t, double *x, double *xprime, double *cj, double *delta, int *ires, double *rpar, int* ipar);
+  int (*jacobianFunction)(double *t, double *y, double *yprime, double *deltaD, double *pd, double *cj, double *h, double *wt,
+     double *rpar, int* ipar);
   void* zeroCrossingFunction;
-
-  /* internal dassl ring buffer */
-  RINGBUFFER* simulationData;          /* RINGBUFFER of SIMULATION_DATA */
-  SIMULATION_DATA **localData;
 } DASSL_DATA;
 
 /* main dassl function to make a step */
 int
-dassl_step(DATA* simData, SOLVER_INFO* solverInfo);
+dassl_step(DATA* simData, threadData_t *threadData, SOLVER_INFO* solverInfo);
 
 /* initial main dassl Data */
 int
-dassl_initial(DATA* simData, SOLVER_INFO* solverInfo, DASSL_DATA *dasslData);
+dassl_initial(DATA* simData, threadData_t *threadData, SOLVER_INFO* solverInfo, DASSL_DATA *dasslData);
 
 /* deinitial main dassl Data */
 int

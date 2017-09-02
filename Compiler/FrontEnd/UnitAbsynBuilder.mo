@@ -93,7 +93,7 @@ algorithm
        FCore.Ref r;
 
      case(_,_) equation
-       (_,_,env) = Lookup.lookupClass(Util.tuple21(tpl),Util.tuple22(tpl),p,false);
+       (_,_,env) = Lookup.lookupClass(Util.tuple21(tpl),Util.tuple22(tpl),p,NONE());
        r = FGraph.lastScopeRef(env);
        // get the defined units node
        r = FNode.child(r, FNode.duNodeName);
@@ -659,12 +659,12 @@ algorithm
       equation
         (terms,st) = buildTerms(env,dae,ht,st);
         (terms2,st) = buildTerms(env,compDae,ht,st) "to get bindings of scalar variables";
-        terms = listAppend(terms,terms2);
+        terms = listReverse(terms);
+        terms = List.append_reverse(terms2,terms);
         //print("built terms, store :"); printStore(st);
         //print("ht =");BaseHashTable.dumpHashTable(ht);
         st = createTypeParameterLocations(st);
         // print("built type param, store :"); printStore(st);
-        terms = listReverse(terms);
      then (UnitAbsyn.INSTSTORE(st,ht,res),terms);
     else equation
       print("instBuildUnitTerms failed!!\n");
@@ -698,8 +698,7 @@ algorithm
       HashTable.HashTable ht;
       String unitStr;
       UnitAbsyn.Unit unit; Integer indx;
-      DAE.TypeSource ts;
-      list<DAE.Var> vs;
+      list<DAE.Var> varLst;
       Option<UnitAbsyn.UnitCheckResult> res;
       UnitAbsyn.InstStore store;
       DAE.Type tp;
@@ -707,21 +706,24 @@ algorithm
     case(UnitAbsyn.NOSTORE(),_,_)
       then istore;
 
-    case(UnitAbsyn.INSTSTORE(st,ht,res),DAE.T_REAL(varLst = DAE.TYPES_VAR(name="unit",binding = DAE.EQBOUND(exp=DAE.SCONST(unitStr)))::_),_)
-      equation
-        unit = str2unit(unitStr,NONE());
-        unit = if 0 == stringCompare(unitStr,"") then UnitAbsyn.UNSPECIFIED() else unit;
-        (st,indx) = add(unit,st);
-        ht = BaseHashTable.add((cr,indx),ht);
-      then UnitAbsyn.INSTSTORE(st,ht,res);
-    case(store,DAE.T_REAL(_::vs,ts),_)
-     then instAddStore(store,DAE.T_REAL(vs,ts),cr);
-
-      /* No unit available. */
-    case(UnitAbsyn.INSTSTORE(st,ht,res),DAE.T_REAL(varLst = {}),_)
-      equation
-        (st,indx) = add(UnitAbsyn.UNSPECIFIED(),st);
-        ht = BaseHashTable.add((cr,indx),ht);
+    case(UnitAbsyn.INSTSTORE(st,ht,res),DAE.T_REAL(varLst = varLst),_)
+      algorithm
+        for v in varLst loop
+          _ := match v
+            case DAE.TYPES_VAR(name="unit",binding = DAE.EQBOUND(exp=DAE.SCONST(unitStr)))
+              algorithm
+                unit := str2unit(unitStr,NONE());
+                unit := if 0 == stringCompare(unitStr,"") then UnitAbsyn.UNSPECIFIED() else unit;
+                (st,indx) := add(unit,st);
+                ht := BaseHashTable.add((cr,indx),ht);
+                outStore := UnitAbsyn.INSTSTORE(st,ht,res);
+                return;
+              then ();
+            else ();
+          end match;
+        end for;
+        (st,indx) := add(UnitAbsyn.UNSPECIFIED(),st);
+        ht := BaseHashTable.add((cr,indx),ht);
       then UnitAbsyn.INSTSTORE(st,ht,res);
 
     case(store,DAE.T_SUBTYPE_BASIC(complexType=tp),_)
@@ -1061,8 +1063,8 @@ algorithm
         print("vector ="+ExpressionDump.printExpStr(e)+"\n");
       (uts,terms,store) = buildTermExpList(env,expl,ht,store);
       ut::uts = buildArrayElementTerms(uts,expl);
-      terms = listAppend(terms,uts);
-    then (ut,terms,store);
+      uts = listAppend(terms,uts);
+    then (ut,uts,store);
 
     case(_,e as DAE.MATRIX(matrix=mexpl),_,ht,store)
       equation
@@ -1070,8 +1072,8 @@ algorithm
         expl = List.flatten(mexpl);
         (uts,terms,store) = buildTermExpList(env,expl,ht,store);
         ut::uts = buildArrayElementTerms(uts,expl);
-        terms = listAppend(terms,uts);
-      then (ut,terms,store);
+        uts = listAppend(terms,uts);
+      then (ut,uts,store);
 
     case(_,e as DAE.CALL(),_,_,_) equation
       print("buildTermDAE.CALL failed exp: "+ExpressionDump.printExpStr(e)+"\n");
@@ -1083,23 +1085,22 @@ protected function buildArrayElementTerms "help function to buildTermExpression.
 and EQN to make the constraint that they must have the same unit"
   input list<UnitAbsyn.UnitTerm> iuts;
   input list<DAE.Exp> iexpl;
-  output list<UnitAbsyn.UnitTerm> outUts;
+  output list<UnitAbsyn.UnitTerm> outUts = {};
+protected
+  list<UnitAbsyn.UnitTerm> rest_ut = iuts;
+  UnitAbsyn.UnitTerm ut1, ut2;
+  DAE.Type ty;
+  list<DAE.Exp> rest_expl = iexpl;
+  DAE.Exp e1, e2;
 algorithm
-  outUts := match(iuts,iexpl)
-    local
-      UnitAbsyn.UnitTerm ut1,ut2;
-      DAE.Type ty; DAE.Exp e1,e2;
-      list<UnitAbsyn.UnitTerm> uts;
-      list<DAE.Exp> expl;
+  while not listEmpty(rest_ut) loop
+    ut1 :: ut2 :: rest_ut := rest_ut;
+    e1 :: e2 :: rest_expl := rest_expl;
+    ty := Expression.typeof(e1);
+    outUts := UnitAbsyn.EQN(ut1, ut2, DAE.ARRAY(ty, true, {e1, e2})) :: outUts;
+  end while;
 
-    case({},_) then  {};
-    case(uts as {_},_) then uts;
-    case(ut1::ut2::uts,e1::e2::expl) equation
-      uts = buildArrayElementTerms(uts,expl);
-      ty = Expression.typeof(e1);
-      uts = listAppend(uts,{UnitAbsyn.EQN(ut1,ut2,DAE.ARRAY(ty,true,{e1,e2}))});
-    then uts;
-  end match;
+  outUts := listReverse(outUts);
 end  buildArrayElementTerms;
 
 protected function buildTermCall "builds a term and additional terms from a function call"
@@ -1129,7 +1130,7 @@ algorithm
        (actTermLst,extraTerms,store) = buildTermExpList(env,expl,ht,store);
         terms = buildFormal2ActualParamTerms(formalParamIndxs,actTermLst);
         ({ut},extraTerms2,store) = buildResultTerms(functp,funcInstId,funcCallExp,store);
-        extraTerms = listAppend(extraTerms,listAppend(extraTerms2,terms));
+       extraTerms = List.flatten({extraTerms, extraTerms2, terms});
     then (ut,extraTerms,store);
   end match;
 end buildTermCall;
@@ -1280,13 +1281,17 @@ algorithm
   str := matchcontinue(itp)
     local
       list<DAE.Var> varLst;
-      DAE.TypeSource ts;
       DAE.Type tp;
 
-    case(DAE.T_REAL(varLst = DAE.TYPES_VAR(name="unit",binding=DAE.EQBOUND(exp=DAE.SCONST(str)))::_))
-      then str;
-    case(DAE.T_REAL(_::varLst,ts)) then getUnitStr(DAE.T_REAL(varLst,ts));
-    case(DAE.T_REAL({},_)) then "";
+    case DAE.T_REAL(varLst = varLst)
+      algorithm
+        for v in varLst loop
+          _ := match v
+            case DAE.TYPES_VAR(name="unit",binding=DAE.EQBOUND(exp=DAE.SCONST(str))) algorithm return; then ();
+            else ();
+          end match;
+        end for;
+      then "";
     case(DAE.T_INTEGER()) then "";
     case(DAE.T_ARRAY(ty=tp)) then getUnitStr(tp);
     case(tp) equation print("getUnitStr for type "+Types.unparseType(tp)+" failed\n"); then fail();
@@ -1550,6 +1555,37 @@ algorithm
   typeParams := joinTypeParams(tpnoms,tpdenoms,tpstrs,funcInstIdOpt);
   unit := UnitAbsyn.SPECIFIED(UnitAbsyn.SPECUNIT(typeParams,units));
 end str2unitWithScaleFactor;
+
+protected function getDerivedUnitsHelper
+  input UnitAbsyn.Unit baseUnit;
+  input String baseUnitStr;
+  input list<String> inUnits;
+  output list<String> outUnits = {};
+protected
+  UnitAbsyn.Unit unit;
+  Boolean b;
+algorithm
+  for unitStr in inUnits loop
+    if boolNot(stringEq(baseUnitStr, unitStr)) then // skip same units
+      unit := str2unit(unitStr, NONE());
+      b := valueEq(baseUnit, unit);
+      if b then
+        outUnits := unitStr::outUnits;
+      end if;
+    end if;
+  end for;
+end getDerivedUnitsHelper;
+
+public function getDerivedUnits
+  input UnitAbsyn.Unit baseUnit;
+  input String baseUnitStr;
+  output list<String> derivedUnits;
+protected
+  list<String> unitSymbols;
+algorithm
+  unitSymbols := UnitParserExt.allUnitSymbols();
+  derivedUnits := getDerivedUnitsHelper(baseUnit, baseUnitStr, unitSymbols);
+end getDerivedUnits;
 
 /* Tests  */
 

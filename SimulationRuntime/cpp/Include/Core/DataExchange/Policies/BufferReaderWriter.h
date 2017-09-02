@@ -5,29 +5,39 @@
  */
 #include "TextfileWriter.h"
 
+#include <boost/circular_buffer.hpp>
+typedef boost::container::vector<double> real_values_t;
+typedef boost::container::vector<int> int_values_t;
+typedef boost::container::vector<bool> bool_values_t;
 
-template <size_t dim_1,size_t dim_2,size_t dim_3,size_t dim_4>
-class BufferReaderWriter : public Writer<dim_1, dim_2, dim_3, dim_4>
+struct CopyVar {
+  template<class T>
+   T operator()(T* var) const {
+    return *var;
+  }
+};
+class BufferReaderWriter : public ContainerManager
 {
     //typedef TextFileWriter<dim_1,dim_2> TextwriterType;
 public:
     BufferReaderWriter(unsigned long size, string output_path, string file_name)
-        : Writer<dim_1, dim_2, dim_3, dim_4>(),
+        : ContainerManager(),
             _buffer_pos(0)
     {
         try
         {
-            _variables_buffer.set_capacity(size+size/10);
-            _derivatives_buffer.set_capacity(size+size/10);
-            //_residues_buffer.set_capacity(size+size/10);
-            //textwriter = new TextwriterType(size,output_folder);
+            _real_variables_buffer.set_capacity(size+size/10);
+            _bool_variables_buffer.set_capacity(size+size/10);
+            _int_variables_buffer.set_capacity(size+size/10);
+            /*ToDo: use correct size for corresponding type*/
         }
         catch(std::exception& ex)
         {
            throw ModelicaSimulationError(DATASTORAGE,string("allocating   buffers failed")+ex.what());
         }
     }
-    void  init(string output_path,string file_name)
+
+    void init(/*string output_path,string file_name*/std::string output_path, std::string file_name, size_t dim)
     {
     }
     /**
@@ -86,7 +96,7 @@ public:
     {
 
         ublas::matrix<double>::size_type m = size();
-        ublas::matrix<double>::size_type n = _var_outputs.size();
+        ublas::matrix<double>::size_type n = _var_outputs.size();/*get<0>(_var_outputs).size() + get<1>(_var_outputs).size() + get<2>(_var_outputs).size()*/;
         ublas::matrix<double>::size_type i,i2=0,j;
         try
         {
@@ -102,11 +112,12 @@ public:
         }
          try
         {
-            /*BOOST_FOREACH(i,indices)*/
+            /*FOREACH(i,indices)*/
             for(i=0;i<n;i++)
             {
                 for(j=0;j<m;++j)
-                    R(i2,j)=_variables_buffer[j](i);
+                    R(i2,j)= (_real_variables_buffer[j][i]);
+                    /*ToDo: add int and bool variables*/
                 i2++;
             }
         }
@@ -155,24 +166,36 @@ public:
 
     }
     /*writes pramater values to results file
-     @v_list values of parameter
+     @v_list values of real,int,bool parameter
      @start_time
      @end_time
      */
-    void write(const typename Writer<dim_1, dim_2, dim_3, dim_4>::value_type_p& v_list, double start_time, double end_time)
+    virtual void write(const all_vars_t& v_list, double start_time, double end_time)
     {
       //not supported for buffer
     }
      /*
      writes header of results file with the variable names
-     @s_list name of variables
-     @s_desc_list description of variables
-     @s_parameter_list name of parameter
-     @s_desc_parameter_list description of parameter
+     @s_list name of real,int,bool variables
+     @s_desc_list description of real,int,bool variables
+     @s_parameter_list name ofreal,int,bool parameter
+     @s_desc_parameter_list description of real,int,bool parameter
      */
-    void write(const std::vector<std::string>& s_list, const std::vector<std::string>& s_desc_list, const std::vector<std::string>& s_parameter_list, const std::vector<std::string>& s_desc_parameter_list)
+    virtual void write(const all_names_t& s_list,const all_description_t& s_desc_list,const all_names_t& s_parameter_list,const all_description_t& s_desc_parameter_list)
     {
-       _var_outputs =s_list;
+        _dim_real = get<0>(s_list).size();
+        _dim_int = get<0>(s_list).size();
+        _dim_bool = get<0>(s_list).size();
+        _real_values = real_values_t(_dim_real);
+        _int_values =  int_values_t(_dim_real);
+        _bool_values =  bool_values_t(_dim_int);
+
+        //_var_outputs = s_list;
+		_var_outputs.clear();
+        for (var_names_t::const_iterator it = get<0>(s_list).begin(); it != get<0>(s_list).end(); ++it)
+        {
+            _var_outputs.push_back(*it);
+        }
     }
 
      /*
@@ -181,27 +204,31 @@ public:
      @v2_list derivatives vars
      @time
      */
-    void write(typename Writer<dim_1, dim_2, dim_3, dim_4>::value_type_v& v_list, typename Writer<dim_1, dim_2, dim_3, dim_4>::value_type_dv& v2_list, double time)
+    virtual void write(const all_vars_time_t& v_list,const neg_all_vars_t& neg_v_list)
     {
 
 
         try
         {
             std::pair<std::map<double, unsigned long>::iterator,bool> p;
-            p = _time_entries.insert(make_pair(time,_buffer_pos));
+            p = _time_entries.insert(make_pair(get<3>(v_list),_buffer_pos));
             if(!p.second)//if variable and derivatives for time are already inserted, erase old values
             {
-                _variables_buffer.pop_back();
-                _derivatives_buffer.pop_back();
+                _real_variables_buffer.pop_back();
+                _int_variables_buffer.pop_back();
+                _bool_variables_buffer.pop_back();
             }
             else
             {
                 _buffer_pos++;
             }
 
-
-            _variables_buffer.push_back(v_list);
-            _derivatives_buffer.push_back(v2_list);
+             std::transform(get<0>(v_list).begin(),get<0>(v_list).end(),_real_values.begin(),CopyVar());
+             std::transform(get<1>(v_list).begin(),get<1>(v_list).end(),_int_values.begin(),CopyVar());
+             std::transform(get<2>(v_list).begin(),get<2>(v_list).end(),_bool_values.begin(),CopyVar());
+            _real_variables_buffer.push_back(_real_values);
+            _int_variables_buffer.push_back(_int_values);
+            _bool_variables_buffer.push_back(_bool_values);
         }
         catch(std::exception& ex)
         {
@@ -218,11 +245,10 @@ public:
     {
         try
         {
-            std::pair<double,unsigned long> i;
-            BOOST_FOREACH(i, _time_entries)
+            typedef std::pair<double, unsigned long> pair_double_ulong;
+            FOREACH(pair_double_ulong i, _time_entries)
             {
                 time.push_back(i.first);
-
             }
         }
         catch(std::exception& ex)
@@ -248,8 +274,9 @@ public:
     void eraseAll()
     {
 
-        _variables_buffer.clear();
-        _derivatives_buffer.clear();
+        _real_variables_buffer.clear();
+        _int_variables_buffer.clear();
+         _bool_variables_buffer.clear();
         //_residues_buffer.clear();
         _time_entries.clear();
         _buffer_pos=0;
@@ -258,16 +285,27 @@ public:
 
 
 protected:
-    typedef boost::circular_buffer<  typename Writer<dim_1, dim_2, dim_3, dim_4>::value_type_v   > buffer_type_v;
-    typedef boost::circular_buffer<  typename Writer<dim_1, dim_2, dim_3, dim_4>::value_type_dv   > buffer_type_d;
+    typedef boost::circular_buffer<  real_values_t   > real_buffer_type;
+     typedef boost::circular_buffer<  int_values_t   > int_buffer_type;
+    typedef boost::circular_buffer<  bool_values_t   > bool_buffer_type;
 
     typedef std::map<double,unsigned long> _time_entries_type;
-    buffer_type_v _variables_buffer;
-    buffer_type_d _derivatives_buffer;
+    real_buffer_type _real_variables_buffer;
+    int_buffer_type _int_variables_buffer;
+    bool_buffer_type _bool_variables_buffer;
     //buffer_type_r _residues_buffer;
     _time_entries_type _time_entries;
-    unsigned long  _buffer_pos;
+    unsigned long _buffer_pos;
     vector<string> _var_outputs;
+
+    size_t _dim_real;
+    size_t _dim_int;
+    size_t _dim_bool;
+
+    real_values_t  _real_values;
+    int_values_t   _int_values;
+    bool_values_t  _bool_values;
+
 
 };
 /** @} */ // end of dataexchangePolicies

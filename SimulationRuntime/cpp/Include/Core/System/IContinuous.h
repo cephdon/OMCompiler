@@ -39,6 +39,8 @@ public:
 
     /// Provide number (dimension) of states
     virtual int getDimContinuousStates() const = 0;
+    /// Provide number (dimension) of states
+    virtual int getDimAE() const = 0;
 
     /// Provide number (dimension) of integer variables
     virtual int getDimInteger() const = 0;
@@ -86,17 +88,38 @@ public:
     virtual void setString(const std::string* z) = 0;
 
     /// Provide the right hand side
-    virtual void setRHS(const double* f) = 0;
-
+    virtual void setStateDerivatives(const double* f) = 0;
+    ///Restores all algloop variables for a output step
+     virtual void restoreOldValues() = 0;
+     ///Restores all algloop variables for last output step
+     virtual void restoreNewValues() = 0;
     /// Update transfer behavior of the system of equations according to command given by solver
 
     virtual bool evaluateAll(const UPDATETYPE command = UNDEF_UPDATE) = 0;  // vxworks
     virtual void evaluateODE(const UPDATETYPE command = UNDEF_UPDATE) = 0;  // vxworks
     virtual void evaluateZeroFuncs(const UPDATETYPE command = UNDEF_UPDATE) = 0;
     virtual bool evaluateConditions(const UPDATETYPE command = UNDEF_UPDATE) = 0;
-
+    virtual void evaluateDAE(const UPDATETYPE command = UNDEF_UPDATE) =0;
     virtual bool stepCompleted(double time) = 0;
     virtual bool stepStarted(double time) = 0;
+
+    virtual double& getRealStartValue(double& var) = 0;
+    virtual bool& getBoolStartValue(bool& var) = 0;
+    virtual int& getIntStartValue(int& var) = 0;
+    virtual string& getStringStartValue(string& var) = 0;
+    virtual void setRealStartValue(double& var,double val) = 0;
+    virtual void setBoolStartValue(bool& var,bool val) = 0;
+    virtual void setIntStartValue(int& var,int val) = 0;
+    virtual void setStringStartValue(string& var,string val) = 0;
+
+    //in case of solver-based activation of system equations
+    virtual void setNumPartitions(int numPartitions) = 0;
+    virtual int getNumPartitions() = 0;
+    virtual void setPartitionActivation(bool* partitions) = 0;
+    virtual void getPartitionActivation(bool* partitions) = 0;
+    virtual int getActivator(int state) = 0;
+
+
 };
 /** @} */ // end of coreSystem
 /*

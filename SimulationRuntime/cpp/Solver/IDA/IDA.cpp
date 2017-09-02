@@ -1,19 +1,28 @@
 #include <Core/ModelicaDefine.h>
- #include <Core/Modelica.h>
+#include <Core/Modelica.h>
 #include <Solver/IDA/IDA.h>
 #include <Core/Math/Functions.h>
 
-#include <Core/Utils/numeric/bindings/traits/ublas_vector.hpp>
-#include <Core/Utils/numeric/bindings/traits/ublas_sparse.hpp>
+//#include <Core/Utils/numeric/bindings/traits/ublas_vector.hpp>
+//#include <Core/Utils/numeric/bindings/traits/ublas_sparse.hpp>
 
 Ida::Ida(IMixedSystem* system, ISolverSettings* settings)
     : SolverDefaultImplementation(system, settings),
       _idasettings(dynamic_cast<ISolverSettings*>(_settings)),
       _idaMem(NULL),
-      _z(NULL),
+      /*_z(NULL),
       _zInit(NULL),
       _zWrite(NULL),
+	  */
+	  _y(NULL),
+	  _yp(NULL),
+      _yInit(NULL),
+      _yWrite(NULL),
+	  _ypWrite(NULL),
+	  _dae_res(NULL),
       _dimSys(0),
+	  _dimAE(0),
+	  _dimStates(0),
       _cv_rt(0),
       _outStps(0),
       _locStps(0),
@@ -31,53 +40,85 @@ Ida::Ida(IMixedSystem* system, ISolverSettings* settings)
       _event_system(NULL),
       _mixed_system(NULL),
       _time_system(NULL),
-    _delta(NULL),
-  _deltaInv(NULL),
-    _ysave(NULL),
-  _colorOfColumn (NULL),
-  _jacobianAIndex(NULL),
-  _jacobianALeadindex(NULL)
-
-
+      _delta(NULL),
+      _deltaInv(NULL),
+      _ysave(NULL),
+      _colorOfColumn (NULL),
+      _jacobianAIndex(NULL),
+      _jacobianALeadindex(NULL),
+      _CV_y0(),
+      _CV_y(),
+      _CV_yp(),
+      _CV_yWrite(),
+      _CV_ypWrite(),
+      _CV_absTol(),
+      _bWritten(false),
+      _zeroFound(false),
+      _maxColors(0),
+      _tLastWrite(-1.0),
+      _jacobianANonzeros(0)
 {
   _data = ((void*) this);
- std::cout<<"Using IDA!"<<std::endl;
   #ifdef RUNTIME_PROFILING
   if(MeasureTime::getInstance() != NULL)
   {
-      measureTimeFunctionsArray = std::vector<MeasureTimeData>(7); //0 calcFunction //1 solve ... //6 solver statistics
-      MeasureTime::addResultContentBlock(system->getModelName(),"ida",&measureTimeFunctionsArray);
+      measureTimeFunctionsArray = new std::vector<MeasureTimeData*>(7, NULL); //0 calcFunction //1 solve ... //6 solver statistics
+      (*measureTimeFunctionsArray)[0] = new MeasureTimeData("calcFunction");
+      (*measureTimeFunctionsArray)[1] = new MeasureTimeData("solve");
+      (*measureTimeFunctionsArray)[2] = new MeasureTimeData("writeOutput");
+      (*measureTimeFunctionsArray)[3] = new MeasureTimeData("evaluateZeroFuncs");
+      (*measureTimeFunctionsArray)[4] = new MeasureTimeData("initialize");
+      (*measureTimeFunctionsArray)[5] = new MeasureTimeData("stepCompleted");
+      (*measureTimeFunctionsArray)[6] = new MeasureTimeData("solverStatistics");
+
+      MeasureTime::addResultContentBlock(system->getModelName(),"ida", measureTimeFunctionsArray);
       measuredFunctionStartValues = MeasureTime::getZeroValues();
       measuredFunctionEndValues = MeasureTime::getZeroValues();
       solveFunctionStartValues = MeasureTime::getZeroValues();
       solveFunctionEndValues = MeasureTime::getZeroValues();
       solverValues = new MeasureTimeValuesSolver();
 
-      measureTimeFunctionsArray[0] = MeasureTimeData("calcFunction");
-      measureTimeFunctionsArray[1] = MeasureTimeData("solve");
-      measureTimeFunctionsArray[2] = MeasureTimeData("writeOutput");
-      measureTimeFunctionsArray[3] = MeasureTimeData("evaluateZeroFuncs");
-      measureTimeFunctionsArray[4] = MeasureTimeData("initialize");
-      measureTimeFunctionsArray[5] = MeasureTimeData("stepCompleted");
-      measureTimeFunctionsArray[6] = MeasureTimeData("solverStatistics");
-
-      measureTimeFunctionsArray[6].sumMeasuredValues = solverValues;
+      (*measureTimeFunctionsArray)[6]->_sumMeasuredValues = solverValues;
+  }
+  else
+  {
+    measureTimeFunctionsArray = new std::vector<MeasureTimeData*>();
+    measuredFunctionStartValues = NULL;
+    measuredFunctionEndValues = NULL;
+    solveFunctionStartValues = NULL;
+    solveFunctionEndValues = NULL;
+    solverValues = NULL;
   }
   #endif
 }
 
 Ida::~Ida()
 {
+  /*
   if (_z)
     delete[] _z;
   if (_zInit)
     delete[] _zInit;
+  if (_zWrite)
+      delete[] _zWrite;
+*/
+  if (_y)
+    delete[] _y;
+  if (_yp)
+    delete[] _yp;
+  if (_yInit)
+    delete[] _yInit;
+  if (_yWrite)
+      delete[] _yWrite;
+  if (_ypWrite)
+      delete[] _ypWrite;
+  if (_dae_res)
+	  delete[] _dae_res;
   if (_zeroSign)
     delete[] _zeroSign;
   if (_absTol)
     delete[] _absTol;
-  if (_zWrite)
-      delete[] _zWrite;
+
   if (_ida_initialized)
   {
     N_VDestroy_Serial(_CV_y0);
@@ -87,8 +128,6 @@ Ida::~Ida()
     N_VDestroy_Serial(_CV_absTol);
     IDAFree(&_idaMem);
   }
-
-
 
   if (_colorOfColumn)
     delete [] _colorOfColumn;
@@ -108,6 +147,8 @@ Ida::~Ida()
     delete solveFunctionStartValues;
   if(solveFunctionEndValues)
     delete solveFunctionEndValues;
+  if(solverValues)
+    delete solverValues;
   #endif
 }
 
@@ -124,10 +165,16 @@ void Ida::initialize()
   _tLastEvent = 0.0;
   _event_n = 0;
   SolverDefaultImplementation::initialize();
-  _dimSys = _continuous_system->getDimContinuousStates();
-  _dimZeroFunc = _event_system->getDimZeroFunc();
 
-  if (_dimSys <= 0)
+  _dimStates = _continuous_system->getDimContinuousStates();
+  _dimZeroFunc = _event_system->getDimZeroFunc();
+  _dimAE = _continuous_system->getDimAE();
+   if(_dimAE>0)
+		_dimSys=_dimAE+ _dimStates;
+	else
+		_dimSys=_dimStates;
+  if (_dimStates <= 0)
+
   {
     _idid = -1;
     throw std::invalid_argument("Ida::initialize()");
@@ -135,36 +182,60 @@ void Ida::initialize()
   else
   {
     // Allocate state vectors, stages and temporary arrays
-    if (_z)
+
+   /*if (_z)
       delete[] _z;
     if (_zInit)
       delete[] _zInit;
     if (_zWrite)
-      delete[] _zWrite;
+      delete[] _zWrite;*/
+    if (_y)
+      delete[] _y;
+    if (_yInit)
+      delete[] _yInit;
+    if (_yWrite)
+      delete[] _yWrite;
+    if (_ypWrite)
+      delete[] _ypWrite;
+    if (_yp)
+      delete[] _yp;
+    if (_dae_res)
+      delete[] _dae_res;
     if (_zeroSign)
       delete[] _zeroSign;
     if (_absTol)
       delete[] _absTol;
-  if(_delta)
-    delete [] _delta;
+    if(_delta)
+      delete [] _delta;
     if(_deltaInv)
-    delete [] _deltaInv;
+      delete [] _deltaInv;
     if(_ysave)
-    delete [] _ysave;
+      delete [] _ysave;
 
-    _z = new double[_dimSys];
+
+	_y = new double[_dimSys];
+	_yp = new double[_dimSys];
+    _yInit = new double[_dimSys];
+    _yWrite = new double[_dimSys];
+	_ypWrite = new double[_dimSys];
+	_dae_res = new double[_dimSys];
+	/*
+	_z = new double[_dimSys];
     _zInit = new double[_dimSys];
     _zWrite = new double[_dimSys];
+	*/
+
     _zeroSign = new int[_dimZeroFunc];
     _absTol = new double[_dimSys];
     _delta =new double[_dimSys];
     _deltaInv =new double[_dimSys];
     _ysave =new double[_dimSys];
 
-    memset(_z, 0, _dimSys * sizeof(double));
-    memset(_zInit, 0, _dimSys * sizeof(double));
-  memset(_ysave, 0, _dimSys * sizeof(double));
-
+    memset(_y, 0, _dimSys * sizeof(double));
+	memset(_yp, 0, _dimSys * sizeof(double));
+    memset(_yInit, 0, _dimSys * sizeof(double));
+    memset(_ysave, 0, _dimSys * sizeof(double));
+	 std::fill_n(_absTol, _dimSys, 1.0);
     // Counter initialisieren
     _outStps = 0;
 
@@ -188,19 +259,25 @@ void Ida::initialize()
     //
 
     // Set initial values for IDA
-    _continuous_system->evaluateAll(IContinuous::CONTINUOUS);
-    _continuous_system->getContinuousStates(_zInit);
-    memcpy(_z, _zInit, _dimSys * sizeof(double));
-
+    //_continuous_system->evaluateAll(IContinuous::CONTINUOUS);
+   _continuous_system->getContinuousStates(_yInit);
+    memcpy(_y, _yInit, _dimStates * sizeof(double));
+    if(_dimAE>0)
+	{
+       _mixed_system->getAlgebraicDAEVars(_yInit+_dimStates);
+	    memcpy(_y+_dimStates, _yInit+_dimStates, _dimAE * sizeof(double));
+	  _continuous_system->getContinuousStates(_yp);
+	}
     // Get nominal values
-    _continuous_system->getNominalStates(_absTol);
-    for (int i = 0; i < _dimSys; i++)
-      _absTol[i] *= dynamic_cast<ISolverSettings*>(_idasettings)->getATol();
+	 _continuous_system->getNominalStates(_absTol);
+    for (int i = 0; i < _dimStates; i++)
+	    _absTol[i] = dynamic_cast<ISolverSettings*>(_idasettings)->getATol();
 
-    _CV_y0 = N_VMake_Serial(_dimSys, _zInit);
-    _CV_y = N_VMake_Serial(_dimSys, _z);
-    _CV_yp = N_VNew_Serial(_dimSys);
-    _CV_yWrite = N_VMake_Serial(_dimSys, _zWrite);
+    _CV_y0 = N_VMake_Serial(_dimSys, _yInit);
+    _CV_y = N_VMake_Serial(_dimSys, _y);
+    _CV_yp = N_VMake_Serial(_dimSys, _yp);
+    _CV_yWrite = N_VMake_Serial(_dimSys, _yWrite);
+	_CV_ypWrite = N_VMake_Serial(_dimSys, _ypWrite);
     _CV_absTol = N_VMake_Serial(_dimSys, _absTol);
 
     if (check_flag((void*) _CV_y0, "N_VMake_Serial", 0))
@@ -208,15 +285,19 @@ void Ida::initialize()
       _idid = -5;
       throw std::invalid_argument("Ida::initialize()");
     }
-    calcFunction(_tCurrent, NV_DATA_S(_CV_y0), NV_DATA_S(_CV_yp));
+
+	//is already initialized: calcFunction(_tCurrent, NV_DATA_S(_CV_y0), NV_DATA_S(_CV_yp),NV_DATA_S(_CV_yp));
+
     // Initialize Ida (Initial values are required)
-    _idid = IDAInit(_idaMem, CV_fCallback, _tCurrent, _CV_y0, _CV_yp);
+    _idid = IDAInit(_idaMem, rhsFunctionCB, _tCurrent, _CV_y0, _CV_yp);
     if (_idid < 0)
     {
       _idid = -5;
       throw std::invalid_argument("Ida::initialize()");
     }
-
+	_idid = IDASetErrHandlerFn(_idaMem, errOutputIDA, _data);
+	 if (_idid < 0)
+      throw std::invalid_argument("IDA::initialize()");
     // Set Tolerances
     _idid = IDASVtolerances(_idaMem, dynamic_cast<ISolverSettings*>(_idasettings)->getRTol(), _CV_absTol);    // RTOL and ATOL
     if (_idid < 0)
@@ -248,18 +329,29 @@ void Ida::initialize()
       throw std::invalid_argument(/*_idid,_tCurrent,*/"IDA::initialize()");
 
     // Initialize linear solver
-  _idid = IDADense(_idaMem, _dimSys);
+    _idid = IDADense(_idaMem, _dimSys);
     if (_idid < 0)
       throw std::invalid_argument("IDA::initialize()");
+    if(_dimAE>0)
+	{
+	    _idid = IDASetSuppressAlg(_idaMem, TRUE);
+        double* tmp = new double[_dimSys];
+	    std::fill_n(tmp, _dimStates, 1.0);
+	    std::fill_n(tmp+_dimStates, _dimAE, 0.0);
+	   _idid = IDASetId(_idaMem, N_VMake_Serial(_dimSys,tmp));
+	    delete [] tmp;
+	    if (_idid < 0)
+         throw std::invalid_argument("IDA::initialize()");
+	}
 
   // Use own jacobian matrix
-  //_idid = CVDlsSetDenseJacFn(_idaMem, &CV_JCallback);
+  //_idid = CVDlsSetDenseJacFn(_idaMem, &jacobianFunctionCB);
   //if (_idid < 0)
   //    throw std::invalid_argument("IDA::initialize()");
 
     if (_dimZeroFunc)
     {
-      _idid = IDARootInit(_idaMem, _dimZeroFunc, &CV_ZerofCallback);
+      _idid = IDARootInit(_idaMem, _dimZeroFunc, &zeroFunctionCB);
 
       memset(_zeroSign, 0, _dimZeroFunc * sizeof(int));
       _idid = IDASetRootDirection(_idaMem, _zeroSign);
@@ -270,7 +362,7 @@ void Ida::initialize()
 
     }
 
-    initializeColoredJac();
+
     _ida_initialized = true;
 
     //
@@ -283,7 +375,7 @@ void Ida::initialize()
 void Ida::solve(const SOLVERCALL action)
 {
   bool writeEventOutput = (_settings->getGlobalSettings()->getOutputPointType() == OPT_ALL);
-  bool writeOutput = !(_settings->getGlobalSettings()->getOutputFormat() == OF_EMPTY) && !(_settings->getGlobalSettings()->getOutputPointType() == OPT_EMPTY);
+  bool writeOutput = !(_settings->getGlobalSettings()->getOutputPointType() == OPT_NONE);
 
   #ifdef RUNTIME_PROFILING
   MEASURETIME_REGION_DEFINE(idaSolveFunctionHandler, "solve");
@@ -311,7 +403,7 @@ void Ida::solve(const SOLVERCALL action)
         #ifdef RUNTIME_PROFILING
         if(MeasureTime::getInstance() != NULL)
         {
-            MEASURETIME_END(measuredFunctionStartValues, measuredFunctionEndValues, measureTimeFunctionsArray[4], idaInitializeHandler);
+            MEASURETIME_END(measuredFunctionStartValues, measuredFunctionEndValues, (*measureTimeFunctionsArray)[4], idaInitializeHandler);
         }
         #endif
 
@@ -336,13 +428,13 @@ void Ida::solve(const SOLVERCALL action)
         writeToFile(0, _tCurrent, _h);
       if (writeOutput)
         writeIDAOutput(_tCurrent, _h, _locStps);
-    _continuous_system->getContinuousStates(_z);
+       _continuous_system->getContinuousStates(_y);
     }
 
     // Solver soll fortfahren
     _solverStatus = ISolver::CONTINUE;
 
-    while (_solverStatus & ISolver::CONTINUE && !_interrupt )
+    while ((_solverStatus & ISolver::CONTINUE) && !_interrupt )
     {
       // Zuvor wurde initialize aufgerufen und hat funktioniert => RESET IDID
       if (_idid == 5000)
@@ -385,7 +477,7 @@ void Ida::solve(const SOLVERCALL action)
   #ifdef RUNTIME_PROFILING
   if(MeasureTime::getInstance() != NULL)
   {
-      MEASURETIME_END(solveFunctionStartValues, solveFunctionEndValues, measureTimeFunctionsArray[1], idaSolveFunctionHandler);
+      MEASURETIME_END(solveFunctionStartValues, solveFunctionEndValues, (*measureTimeFunctionsArray)[1], idaSolveFunctionHandler);
 
       long int nst, nfe, nsetups, netf, nni, ncfn;
       int qlast, qcur;
@@ -397,8 +489,8 @@ void Ida::solve(const SOLVERCALL action)
       flag = IDAGetNonlinSolvStats(_idaMem, &nni, &ncfn);
 
       MeasureTimeValuesSolver solverVals = MeasureTimeValuesSolver(nfe, netf);
-      measureTimeFunctionsArray[6].sumMeasuredValues->_numCalcs += nst;
-      measureTimeFunctionsArray[6].sumMeasuredValues->add(&solverVals);
+      (*measureTimeFunctionsArray)[6]->_sumMeasuredValues->_numCalcs += nst;
+      (*measureTimeFunctionsArray)[6]->_sumMeasuredValues->add(&solverVals);
   }
   #endif
 }
@@ -423,9 +515,9 @@ void Ida::IDACore()
     throw std::runtime_error("IDA::ReInit");
 
   bool writeEventOutput = (_settings->getGlobalSettings()->getOutputPointType() == OPT_ALL);
-  bool writeOutput = !(_settings->getGlobalSettings()->getOutputFormat() == OF_EMPTY) && !(_settings->getGlobalSettings()->getOutputPointType() == OPT_EMPTY);
+  bool writeOutput = !(_settings->getGlobalSettings()->getOutputPointType() == OPT_NONE);
 
-  while (_solverStatus & ISolver::CONTINUE && !_interrupt )
+  while ((_solverStatus & ISolver::CONTINUE) && !_interrupt )
   {
     _cv_rt = IDASolve(_idaMem, _tEnd, &_tCurrent,  _CV_y, _CV_yp, IDA_ONE_STEP);
 
@@ -459,14 +551,14 @@ void Ida::IDACore()
     #ifdef RUNTIME_PROFILING
     if(MeasureTime::getInstance() != NULL)
     {
-        MEASURETIME_END(measuredFunctionStartValues, measuredFunctionEndValues, measureTimeFunctionsArray[5], idaStepCompletedHandler);
+        MEASURETIME_END(measuredFunctionStartValues, measuredFunctionEndValues, (*measureTimeFunctionsArray)[5], idaStepCompletedHandler);
     }
     #endif
 
     // Perform state selection
     bool state_selection = stateSelection();
     if (state_selection)
-      _continuous_system->getContinuousStates(_z);
+      _continuous_system->getContinuousStates(_y);
 
     _zeroFound = false;
 
@@ -500,7 +592,7 @@ void Ida::IDACore()
         _event_n = 0;
       }
       else
-        throw std::runtime_error("Number of events exceeded  in time interval " + boost::lexical_cast<string>(_abs) + " at time " + boost::lexical_cast<string>(_tCurrent));
+        throw std::runtime_error("Number of events exceeded  in time interval " + to_string(_abs) + " at time " + to_string(_tCurrent));
 
       // IDA has interpolated the states at time 'tCurrent'
       _time_system->setTime(_tCurrent);
@@ -518,7 +610,14 @@ void Ida::IDACore()
       // Write the values of (P1)
       if (writeEventOutput)
       {
-        _continuous_system->evaluateAll(IContinuous::CONTINUOUS);
+		if(_dimAE>0)
+		{
+			 _continuous_system->evaluateDAE(IContinuous::CONTINUOUS);
+        }
+		else
+		{
+		    _continuous_system->evaluateAll(IContinuous::CONTINUOUS);
+		}
         writeToFile(0, _tCurrent, _h);
       }
 
@@ -531,8 +630,13 @@ void Ida::IDACore()
       {
         // State variables were reinitialized, thus we have to give these values to the ida-solver
         // Take care about the memory regions, _z is the same like _CV_y
-        _continuous_system->getContinuousStates(_z);
-  calcFunction(_tCurrent, NV_DATA_S(_CV_y), NV_DATA_S(_CV_yp));
+        _continuous_system->getContinuousStates(_y);
+        if(_dimAE>0)
+		{
+           _mixed_system->getAlgebraicDAEVars(_y+_dimStates);
+		   _continuous_system->getRHS(_yp);
+		}
+		calcFunction(_tCurrent, NV_DATA_S(_CV_y), NV_DATA_S(_CV_yp),_dae_res);
 
       }
     }
@@ -543,7 +647,14 @@ void Ida::IDACore()
       if (writeEventOutput)
       {
         // If we want to write the event-results, we should evaluate the whole system again
-        _continuous_system->evaluateAll(IContinuous::CONTINUOUS);
+        if(_dimAE>0)
+		{
+			 _continuous_system->evaluateDAE(IContinuous::CONTINUOUS);
+        }
+		else
+		{
+		    _continuous_system->evaluateAll(IContinuous::CONTINUOUS);
+		}
         writeToFile(0, _tCurrent, _h);
       }
 
@@ -564,7 +675,16 @@ void Ida::IDACore()
     {
       _time_system->setTime(_tEnd);
       _continuous_system->setContinuousStates(NV_DATA_S(_CV_y));
-      _continuous_system->evaluateAll(IContinuous::CONTINUOUS);
+	  if(_dimAE>0)
+	  {
+	    _mixed_system->setAlgebraicDAEVars(NV_DATA_S(_CV_y)+_dimStates);
+	    _continuous_system->setStateDerivatives(NV_DATA_S(_CV_yp));
+		_continuous_system->evaluateDAE(IContinuous::CONTINUOUS);
+      }
+	  else
+	  {
+		_continuous_system->evaluateAll(IContinuous::CONTINUOUS);
+      }
       if(writeOutput)
          writeToFile(0, _tEnd, _h);
 
@@ -613,11 +733,21 @@ void Ida::writeIDAOutput(const double &time, const double &h, const int &stp)
         _idid = IDAGetDky(_idaMem, _tLastWrite, 0, _CV_yWrite);
         _time_system->setTime(_tLastWrite);
         _continuous_system->setContinuousStates(NV_DATA_S(_CV_yWrite));
-        _continuous_system->evaluateAll(IContinuous::CONTINUOUS);
+		if(_dimAE>0)
+		{
+		   _mixed_system->setAlgebraicDAEVars(NV_DATA_S(_CV_y)+_dimStates);
+		   _idid = IDAGetDky(_idaMem, _tLastWrite, 1, _CV_ypWrite);
+		   _continuous_system->setStateDerivatives(NV_DATA_S(_CV_ypWrite));
+		   _continuous_system->evaluateDAE(IContinuous::CONTINUOUS);
+        }
+		else
+		{
+			_continuous_system->evaluateAll(IContinuous::CONTINUOUS);
+		}
         #ifdef RUNTIME_PROFILING
         if(MeasureTime::getInstance() != NULL)
         {
-            MEASURETIME_END(measuredFunctionStartValues, measuredFunctionEndValues, measureTimeFunctionsArray[2], idaWriteOutputHandler);
+            MEASURETIME_END(measuredFunctionStartValues, measuredFunctionEndValues, (*measureTimeFunctionsArray)[2], idaWriteOutputHandler);
         }
         #endif
         SolverDefaultImplementation::writeToFile(stp, _tLastWrite, h);
@@ -625,7 +755,7 @@ void Ida::writeIDAOutput(const double &time, const double &h, const int &stp)
         MEASURETIME_REGION_DEFINE(idaWriteOutputHandler, "IDAWriteOutput");
         if(MeasureTime::getInstance() != NULL)
         {
-            measureTimeFunctionsArray[2].sumMeasuredValues->_numCalcs--;
+          (*measureTimeFunctionsArray)[2]->_sumMeasuredValues->_numCalcs--;
             MEASURETIME_START(measuredFunctionStartValues, idaWriteOutputHandler, "IDAWriteOutput");
         }
         #endif
@@ -633,21 +763,35 @@ void Ida::writeIDAOutput(const double &time, const double &h, const int &stp)
       if (_bWritten)
       {
         _time_system->setTime(time);
-        _continuous_system->setContinuousStates(_z);
-        _continuous_system->setRHS(oldValues);
+        _continuous_system->setContinuousStates(_y);
+        _continuous_system->setStateDerivatives(oldValues);
+		if(_dimAE>0)
+		{
+		   _mixed_system->setAlgebraicDAEVars(_y+_dimStates);
+		}
         delete[] oldValues;
-        //_continuous_system->evaluateAll(IContinuous::CONTINUOUS);
+
       }
       else if (time == _tEnd && _tLastWrite != time)
       {
         _idid = IDAGetDky(_idaMem, time, 0, _CV_y);
+		_idid = IDAGetDky(_idaMem, time, 1, _CV_yp);
         _time_system->setTime(time);
         _continuous_system->setContinuousStates(NV_DATA_S(_CV_y));
-        _continuous_system->evaluateAll(IContinuous::CONTINUOUS);
+		if(_dimAE>0)
+		{
+		   _mixed_system->setAlgebraicDAEVars(NV_DATA_S(_CV_y)+_dimStates);
+		   _continuous_system->setStateDerivatives(NV_DATA_S(_CV_yp));
+		   _continuous_system->evaluateDAE(IContinuous::CONTINUOUS);
+        }
+		else
+		{
+		   _continuous_system->evaluateAll(IContinuous::CONTINUOUS);
+		}
         #ifdef RUNTIME_PROFILING
         if(MeasureTime::getInstance() != NULL)
         {
-            MEASURETIME_END(measuredFunctionStartValues, measuredFunctionEndValues, measureTimeFunctionsArray[2], idaWriteOutputHandler);
+            MEASURETIME_END(measuredFunctionStartValues, measuredFunctionEndValues, (*measureTimeFunctionsArray)[2], idaWriteOutputHandler);
         }
         #endif
         SolverDefaultImplementation::writeToFile(stp, _tEnd, h);
@@ -658,7 +802,7 @@ void Ida::writeIDAOutput(const double &time, const double &h, const int &stp)
         #ifdef RUNTIME_PROFILING
         if(MeasureTime::getInstance() != NULL)
         {
-            MEASURETIME_END(measuredFunctionStartValues, measuredFunctionEndValues, measureTimeFunctionsArray[2], idaWriteOutputHandler);
+            MEASURETIME_END(measuredFunctionStartValues, measuredFunctionEndValues, (*measureTimeFunctionsArray)[2], idaWriteOutputHandler);
         }
         #endif
         SolverDefaultImplementation::writeToFile(stp, time, h);
@@ -670,7 +814,7 @@ bool Ida::stateSelection()
 {
   return SolverDefaultImplementation::stateSelection();
 }
-int Ida::calcFunction(const double& time, const double* y, double* f)
+int Ida::calcFunction(const double& time, const double* y, double *yp,double* res)
 {
   #ifdef RUNTIME_PROFILING
   MEASURETIME_REGION_DEFINE(idaCalcFunctionHandler, "IDACalcFunction");
@@ -683,38 +827,53 @@ int Ida::calcFunction(const double& time, const double* y, double* f)
   int returnValue = 0;
   try
   {
-    _time_system->setTime(time);
-    _continuous_system->setContinuousStates(y);
-    _continuous_system->evaluateODE(IContinuous::CONTINUOUS);
-    _continuous_system->getRHS(f);
+    if(_dimAE>0)
+	{
+	   _time_system->setTime(time);
+      _continuous_system->setContinuousStates(y);
+	  _continuous_system->setStateDerivatives(yp);
+	  _mixed_system->setAlgebraicDAEVars(y+_dimStates);
+	  _continuous_system->evaluateDAE(IContinuous::CONTINUOUS);
+	  _mixed_system->getResidual(res);
+
+	}
+	else
+	{
+	  _time_system->setTime(time);
+      _continuous_system->setContinuousStates(y);
+      _continuous_system->evaluateODE(IContinuous::CONTINUOUS);
+      _continuous_system->getRHS(res);
+	  for(size_t i(0); i<_dimSys; ++i)
+		   res[i]-=yp[i];
+
+	}
   }      //workaround until exception can be catch from c- libraries
   catch (std::exception& ex)
   {
     std::string error = ex.what();
     cerr << "IDA integration error: " << error;
-    returnValue = 1;
+    returnValue = -1;
   }
 
   #ifdef RUNTIME_PROFILING
   if(MeasureTime::getInstance() != NULL)
   {
-      MEASURETIME_END(measuredFunctionStartValues, measuredFunctionEndValues, measureTimeFunctionsArray[0], idaCalcFunctionHandler);
+      MEASURETIME_END(measuredFunctionStartValues, measuredFunctionEndValues, (*measureTimeFunctionsArray)[0], idaCalcFunctionHandler);
   }
   #endif
 
   return returnValue;
 }
 
-int Ida::CV_fCallback(double t, N_Vector y, N_Vector ydot, N_Vector resval, void *user_data)
+int Ida::rhsFunctionCB(double t, N_Vector y, N_Vector ydot, N_Vector resval, void *user_data)
 {
-  double* ypval=NV_DATA_S(ydot);
-  double* rval=NV_DATA_S(resval);
-  ((Ida*) user_data)->calcFunction(t, NV_DATA_S(y), NV_DATA_S(resval));
-  for(size_t i(0); i<((Ida*) user_data)->_dimSys; ++i) rval[i]-=ypval[i];
-  return 0;
+
+  int status = ((Ida*) user_data)->calcFunction(t, NV_DATA_S(y), NV_DATA_S(ydot),NV_DATA_S(resval));
+
+  return status;
 }
 
-void Ida::giveZeroVal(const double &t, const double *y, double *zeroValue)
+void Ida::giveZeroVal(const double &t, const double *y,const double *yp,double *zeroValue)
 {
   #ifdef RUNTIME_PROFILING
   MEASURETIME_REGION_DEFINE(idaEvalZeroHandler, "evaluateZeroFuncs");
@@ -726,7 +885,11 @@ void Ida::giveZeroVal(const double &t, const double *y, double *zeroValue)
 
   _time_system->setTime(t);
   _continuous_system->setContinuousStates(y);
-
+   if(_dimAE>0)
+   {
+	 _mixed_system->setAlgebraicDAEVars(y+_dimStates);
+	 _continuous_system->setStateDerivatives(yp);
+   }
   // System aktualisieren
   _continuous_system->evaluateZeroFuncs(IContinuous::DISCRETE);
 
@@ -735,19 +898,19 @@ void Ida::giveZeroVal(const double &t, const double *y, double *zeroValue)
   #ifdef RUNTIME_PROFILING
   if(MeasureTime::getInstance() != NULL)
   {
-      MEASURETIME_END(measuredFunctionStartValues, measuredFunctionEndValues, measureTimeFunctionsArray[3], idaEvalZeroHandler);
+      MEASURETIME_END(measuredFunctionStartValues, measuredFunctionEndValues, (*measureTimeFunctionsArray)[3], idaEvalZeroHandler);
   }
   #endif
 }
 
-int Ida::CV_ZerofCallback(double t, N_Vector y, N_Vector yp, double *zeroval, void *user_data)
+int Ida::zeroFunctionCB(double t, N_Vector y, N_Vector yp, double *zeroval, void *user_data)
 {
-  ((Ida*) user_data)->giveZeroVal(t, NV_DATA_S(y), zeroval);
+  ((Ida*) user_data)->giveZeroVal(t, NV_DATA_S(y),NV_DATA_S(yp), zeroval);
 
   return (0);
 }
 
-int Ida::CV_JCallback(long int N, double t, N_Vector y, N_Vector fy, DlsMat Jac,void *user_data, N_Vector tmp1, N_Vector tmp2, N_Vector tmp3)
+int Ida::jacobianFunctionCB(long int N, double t, N_Vector y, N_Vector fy, DlsMat Jac,void *user_data, N_Vector tmp1, N_Vector tmp2, N_Vector tmp3)
 {
   return ((Ida*) user_data)->calcJacobian(t,N, tmp1, tmp2, tmp3,  NV_DATA_S(y), fy, Jac);
 
@@ -810,7 +973,7 @@ int Ida::calcJacobian(double t, long int N, N_Vector fHelp, N_Vector errorWeight
       }
     }
 
-    calcFunction(t, y, fHelp_data);
+    calcFunction(t, y, fHelp_data,fHelp_data);
 
   for (int k = 0; k < _dimSys; k++)
    {
@@ -870,16 +1033,7 @@ int Ida::calcJacobian(double t, long int N, N_Vector fHelp, N_Vector errorWeight
   return 0;
 }
 
-void Ida::initializeColoredJac()
-{
-  _colorOfColumn = new int[_dimSys];
-  _system->getAColorOfColumn( _colorOfColumn, _dimSys);
 
-  _system->getJacobian(_jacobianA);
-  _jacobianANonzeros  = boost::numeric::bindings::traits::spmatrix_num_nonzeros (_jacobianA);
-  _jacobianAIndex     = boost::numeric::bindings::traits::spmatrix_index2_storage(_jacobianA);
-  _jacobianALeadindex = boost::numeric::bindings::traits::spmatrix_index1_storage(_jacobianA);
-}
 
 int Ida::reportErrorMessage(ostream& messageStream)
 {
@@ -919,12 +1073,12 @@ void Ida::writeSimulationInfo()
 
   flag = IDAGetNonlinSolvStats(_idaMem, &nni, &ncfn);
 
-  Logger::write("Cvode: number steps = " + boost::lexical_cast<std::string>(nst),LC_SOLV,LL_INFO);
-  Logger::write("Cvode: function evaluations 'f' = " + boost::lexical_cast<std::string>(nfe),LC_SOLV,LL_INFO);
-  Logger::write("Cvode: error test failures 'netf' = " + boost::lexical_cast<std::string>(netfS),LC_SOLV,LL_INFO);
-  Logger::write("Cvode: linear solver setups 'nsetups' = " + boost::lexical_cast<std::string>(nsetups),LC_SOLV,LL_INFO);
-  Logger::write("Cvode: nonlinear iterations 'nni' = " + boost::lexical_cast<std::string>(nni),LC_SOLV,LL_INFO);
-  Logger::write("Cvode: convergence failures 'ncfn' = " + boost::lexical_cast<std::string>(ncfn),LC_SOLV,LL_INFO);
+  LOGGER_WRITE("IDA: number steps = " + to_string(nst), LC_SOLVER, LL_INFO);
+  LOGGER_WRITE("IDA: function evaluations 'f' = " + to_string(nfe), LC_SOLVER, LL_INFO);
+  LOGGER_WRITE("IDA: error test failures 'netf' = " + to_string(netfS), LC_SOLVER, LL_INFO);
+  LOGGER_WRITE("IDA: linear solver setups 'nsetups' = " + to_string(nsetups), LC_SOLVER, LL_INFO);
+  LOGGER_WRITE("IDA: nonlinear iterations 'nni' = " + to_string(nni), LC_SOLVER, LL_INFO);
+  LOGGER_WRITE("IDA: convergence failures 'ncfn' = " + to_string(ncfn), LC_SOLVER, LL_INFO);
 }
 
 int Ida::check_flag(void *flagvalue, const char *funcname, int opt)
@@ -960,4 +1114,15 @@ int Ida::check_flag(void *flagvalue, const char *funcname, int opt)
   }
 
   return (0);
+}
+
+
+void Ida::errOutputIDA(int error_code, const char *module, const char *function,
+    char *msg, void *userData)
+{
+
+  cout << "#### IDA error message #####";
+  cout << " -> error code" << error_code << "in module" << module << " and function " << function;
+  cout << " Message: " << msg;
+
 }

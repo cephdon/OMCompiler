@@ -48,11 +48,12 @@ package CodegenFMU2
 import interface SimCodeTV;
 import interface SimCodeBackendTV;
 import CodegenUtil.*;
+import CodegenUtilSimulation.*;
 import CodegenC.*; //unqualified import, no need the CodegenC is optional when calling a template; or mandatory when the same named template exists in this package (name hiding)
 import CodegenFMUCommon.*;
 
 // Code for generating modelDescription.xml file for FMI 2.0 ModelExchange.
-template fmiModelDescription(SimCode simCode, String guid)
+template fmiModelDescription(SimCode simCode, String guid, String FMUType)
  "Generates code for ModelDescription file for FMU target."
 ::=
 //  <%UnitDefinitions(simCode)%>
@@ -62,8 +63,26 @@ case SIMCODE(__) then
   <<
   <fmiModelDescription
     <%fmiModelDescriptionAttributes(simCode,guid)%>>
-    <%ModelExchange(simCode)%>
-    <%fmiTypeDefinitions(modelInfo, "2.0")%>
+    <%if isFMIMEType(FMUType) then ModelExchange(simCode)%>
+    <%if isFMICSType(FMUType) then CoSimulation(simCode)%>
+    <%fmiTypeDefinitions(simCode, "2.0")%>
+    <% if Flags.isSet(Flags.FMU_EXPERIMENTAL) then
+    <<
+    <LogCategories>
+      <Category name="logEvents" description="logEvents" />
+      <Category name="logSingularLinearSystems" description="logSingularLinearSystems" />
+      <Category name="logNonlinearSystems" description="logNonlinearSystems" />
+      <Category name="logDynamicStateSelection" description="logDynamicStateSelection" />
+      <Category name="logStatusWarning" description="logStatusWarning" />
+      <Category name="logStatusDiscard" description="logStatusDiscard" />
+      <Category name="logStatusError" description="logStatusError" />
+      <Category name="logStatusFatal" description="logStatusFatal" />
+      <Category name="logStatusPending" description="logStatusPending" />
+      <Category name="logAll" description="logAll" />
+      <Category name="logFmi2Call" description="logFmi2Call" />
+    </LogCategories>
+    >> else
+    <<
     <LogCategories>
       <Category name="logEvents" />
       <Category name="logSingularLinearSystems" />
@@ -77,9 +96,10 @@ case SIMCODE(__) then
       <Category name="logAll" />
       <Category name="logFmi2Call" />
     </LogCategories>
+    >> %>
     <%DefaultExperiment(simulationSettingsOpt)%>
-    <%fmiModelVariables(modelInfo, "2.0")%>
-    <%ModelStructureHelper(modelStructure)%>
+    <%fmiModelVariables(simCode, "2.0")%>
+    <%ModelStructure(modelStructure)%>
   </fmiModelDescription>
   >>
 end fmiModelDescription;
@@ -95,7 +115,7 @@ case SIMCODE(modelInfo = MODELINFO(varInfo = vi as VARINFO(__), vars = SIMVARS(s
   let generationTool= 'OpenModelica Compiler <%getVersionNr()%>'
   let generationDateAndTime = xsdateTime(getCurrentDateTime())
   let variableNamingConvention = 'structured'
-  let numberOfEventIndicators = vi.numZeroCrossings
+  let numberOfEventIndicators = getNumberOfEventIndicators(simCode)
   <<
   fmiVersion="<%fmiVersion%>"
   modelName="<%modelName%>"
@@ -107,6 +127,29 @@ case SIMCODE(modelInfo = MODELINFO(varInfo = vi as VARINFO(__), vars = SIMVARS(s
   numberOfEventIndicators="<%numberOfEventIndicators%>"
   >>
 end fmiModelDescriptionAttributes;
+
+template CoSimulation(SimCode simCode)
+ "Generates CoSimulation code for ModelDescription file for FMU target."
+::=
+match simCode
+case SIMCODE(__) then
+  let modelIdentifier = modelNamePrefix(simCode)
+  <<
+  <CoSimulation
+    modelIdentifier="<%modelIdentifier%>"
+    needsExecutionTool="false"
+    canHandleVariableCommunicationStepSize="true"
+    canInterpolateInputs="false"
+    maxOutputDerivativeOrder="1"
+    canRunAsynchronuously = "false"
+    canBeInstantiatedOnlyOncePerProcess="false"
+    canNotUseMemoryManagementFunctions="false"
+    canGetAndSetFMUstate="false"
+    canSerializeFMUstate="false"
+    <% if Flags.isSet(FMU_EXPERIMENTAL) then 'providesDirectionalDerivative="true"'%> />
+  >>
+end CoSimulation;
+
 
 annotation(__OpenModelica_Interface="backend");
 end CodegenFMU2;

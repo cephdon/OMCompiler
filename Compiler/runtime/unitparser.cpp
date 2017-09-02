@@ -33,7 +33,6 @@
 #include <iostream>
 #include <sstream>
 #include <stack>
-#include "omc_msvc.h" /* For round() */
 
 #ifndef NO_LPLIB
 
@@ -51,7 +50,7 @@
 /*   CLASS: Rational                                                                   */
 /***************************************************************************************/
 
-Rational::Rational(long numerator, long denominator) {
+Rational::Rational(mmc_sint_t numerator, mmc_sint_t denominator) {
   num = numerator;
   denom = denominator;
   fixsign();
@@ -63,16 +62,16 @@ void Rational::rationalize(double r) {
 #ifndef NO_LPLIB
   const double eps = 1e-6;
   double rapp;
-  long numerator = (long) r;
-  long denominator = 1;
+  mmc_sint_t numerator = (mmc_sint_t) r;
+  mmc_sint_t denominator = 1;
   r = round(r / eps) * eps;
   do {
     rapp = (double) numerator / (double) denominator;
     denominator *= 10;
-    numerator = (long) (r * denominator);
+    numerator = (mmc_sint_t) (r * denominator);
   } while (fabs(r - rapp) > eps);
 
-  long d = gcd(numerator, denominator);
+  mmc_sint_t d = gcd(numerator, denominator);
   num = numerator / d;
   denom = denominator / d;
   //cout << "Rationalized " << r << " to " << num << " / " << denom << endl;
@@ -89,7 +88,7 @@ bool Rational::isZero() {
   return num == 0;
 }
 
-bool Rational::is(long numerator, long denominator) {
+bool Rational::is(mmc_sint_t numerator, mmc_sint_t denominator) {
   return (num == numerator) && (denom == denominator);
 }
 
@@ -130,7 +129,7 @@ Rational Rational::div(Rational q1, Rational q2) {
 }
 
 Rational Rational::simplify(const Rational q) {
-  long gcd = Rational::gcd(q.num, q.denom);
+  mmc_sint_t gcd = Rational::gcd(q.num, q.denom);
   Rational q2(Rational(q.num / gcd, q.denom / gcd));
   q2.fixsign();
   return q2;
@@ -143,9 +142,9 @@ void Rational::fixsign() {
   }
 }
 
-long Rational::gcd(long a, long b) {
+mmc_sint_t Rational::gcd(mmc_sint_t a, mmc_sint_t b) {
   while (b != 0) {
-    long t = b;
+    mmc_sint_t t = b;
     b = a % b;
     a = t;
   }
@@ -288,6 +287,15 @@ void UnitParser::addPrefix(const string symbol, Rational exponent) {
   _prefix[symbol] = exponent;
 }
 
+void* UnitParser::allUnitSymbols()
+{
+  void* res = mmc_mk_nil();
+  for (map<string, Unit>::iterator p = _units.begin(); p != _units.end(); p++) {
+    res = mmc_mk_cons(mmc_mk_scon((*p).second.unitSymbol.c_str()), res);
+  }
+  return res;
+}
+
 void UnitParser::addBase(const string quantityName, const string unitName,
 
     const string unitSymbol, bool prefixAllowed) {
@@ -299,7 +307,7 @@ void UnitParser::addBase(const string quantityName, const string unitName,
     u.quantityName = b.quantityName;
     u.unitName = b.unitName;
     u.unitSymbol = unitSymbol;
-    for (unsigned long j = 0; j < _base.size(); j++) {
+    for (mmc_uint_t j = 0; j < _base.size(); j++) {
       u.unitVec.push_back(Rational((_base.size() - 1) == j ? 1 : 0));
     }
 
@@ -984,7 +992,7 @@ UnitRes UnitParser::parseSymbol(Scanner& scan, Unit& unit) {
 UnitRes UnitParser::parseRational(Scanner& scan, Rational& q) {
 
   string str;
-  long l1, l2;
+  mmc_sint_t l1, l2;
   Scanner::TokenType tok = scan.getToken(str);
   if (tok == scan.TOK_INT) {
     istringstream iss1(str);
@@ -1089,7 +1097,7 @@ void UnitParser::initSIUnits() {
       Rational(1), Rational(0), true);
   addDerived("inductance", "henry", "H", "Wb/A", Rational(0), Rational(1),
       Rational(0), true);
-  addDerived("Celsius temperature", "degree Celsius", "degC", "K",
+  addDerived("thermodynamic temperature", "degree Celsius", "degC", "K",
       Rational(0), Rational(1), Rational(27315, 100), true);
   addDerived("luminous flux", "lumen", "lm", "cd.sr", Rational(0),
       Rational(1), Rational(0), true);
@@ -1105,6 +1113,58 @@ void UnitParser::initSIUnits() {
       true);
   addDerived("catalyctic activity", "katal", "kat", "s-1.mol", Rational(0),
       Rational(1), Rational(0), true);
+
+  // More derived units
+  addDerived("plane angle", "degree", "deg", "rad", Rational(0),
+      Rational(31415926535897932, 1800000000000000000), Rational(0), true);
+  addDerived("plane angle", "revolutions", "rev", "rad", Rational(0),
+      Rational(31415926535897932, 5000000000000000), Rational(0), true);
+
+  addDerived("angular velocity", "revolutions per minute", "rpm", "rad/s", Rational(0),
+      Rational(31415926535897932, 300000000000000000), Rational(0), true);
+
+  addDerived("velocity", "knot", "kn", "m/s", Rational(0),
+      Rational(1852, 3600), Rational(0), true);
+
+  addDerived("mass", "metric ton", "t", "kg", Rational(3),
+      Rational(1), Rational(0), true);
+
+  addDerived("volume", "litre", "l", "m3", Rational(0),
+      Rational(1, 1000), Rational(0), true);
+
+  addDerived("apparent power", "volt-ampere", "VA", "J/s", Rational(0),
+      Rational(1), Rational(0), true);
+  addDerived("reactive power", "volt-ampere reactive", "var", "J/s", Rational(0),
+      Rational(1), Rational(0), true);
+
+  addDerived("thermodynamic temperature", "degree Fahrenheit", "degF", "K",
+      Rational(0), Rational(5, 9), Rational(27315*9-3200*5, 900), true);
+  addDerived("thermodynamic temperature", "degree Rankine", "degRk", "K",
+      Rational(0), Rational(5, 9), Rational(0), true);
+
+  addDerived("pressure", "bar", "bar", "Pa", Rational(0), Rational(100000), Rational(0), true);
+
+  addDerived("time", "millisecond", "ms", "s", Rational(-3), Rational(1), Rational(0), true);
+  addDerived("time", "minute", "min", "s", Rational(0), Rational(60), Rational(0), true);
+  addDerived("time", "hour", "h", "s", Rational(0), Rational(60 * 60), Rational(0), true);
+  addDerived("time", "day", "d", "s", Rational(0), Rational(60 * 60 * 24), Rational(0), true);
+
+  // Imperial units
+  addDerived("length", "inch", "in", "m", Rational(0),
+      Rational(254, 10000), Rational(0), true);
+  addDerived("length", "foot", "ft", "m", Rational(0),
+      Rational(3048, 10000), Rational(0), true);
+
+  addDerived("velocity", "miles per hour", "mph", "m/s", Rational(0),
+      Rational(44704, 100000), Rational(0), true);
+
+  addDerived("mass", "pound", "lb", "kg", Rational(0),
+      Rational(45359237, 100000000), Rational(0), true);
+
+  addDerived("pressure", "pound per square inch", "psi", "Pa", Rational(0),
+      Rational(689475729, 100000), Rational(0), true);
+  addDerived("pressure", "inch water gauge", "inWG", "Pa", Rational(0),
+      Rational(249088908333, 1000000000), Rational(0), true);
 
   commit();
 }

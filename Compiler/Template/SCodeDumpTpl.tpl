@@ -8,40 +8,48 @@ template dumpProgram(list<SCode.Element> program, SCodeDumpOptions options)
 end dumpProgram;
 
 template dumpElements(list<SCode.Element> elements, Boolean indent, SCodeDumpOptions options)
-::= dumpElements2(filterElements(elements,options), "", indent, true, true, options)
+::= dumpElements2(filterElements(elements,options), indent, options)
 end dumpElements;
 
-template dumpElements2(list<SCode.Element> elements, String prevSpacing,
-    Boolean indent, Boolean firstElement, Boolean inPublicSection, SCodeDumpOptions options)
+template dumpElements2(list<SCode.Element> elements,
+    Boolean indent, SCodeDumpOptions options)
 ::=
-match elements
-  case el :: rest_els then
+  dumpElements3(elements, listLength(elements), makeStatefulBoolean(false), indent, makeStatefulBoolean(true), options)
+end dumpElements2;
+
+template dumpElements3(list<SCode.Element> elements, Integer numElements, array<Boolean> prevSpacing,
+    Boolean indent, array<Boolean> inPublicSection, SCodeDumpOptions options)
+::=
+  elements |> el hasindex i1 fromindex 1 =>
     let spacing = dumpElementSpacing(el)
-    let pre_spacing = if not firstElement then
-      dumpPreElementSpacing(spacing, prevSpacing)
+    let pre_spacing = if boolNot(intEq(1,i1)) then dumpPreElementSpacing(spacing, getStatefulBoolean(prevSpacing))
     let el_str = dumpElement(el,'',options)
-    let vis_str = dumpElementVisibility(el, inPublicSection)
-    let rest_str = if vis_str then
-        dumpElements2(rest_els, spacing, indent, false, boolNot(inPublicSection), options)
+    let vis_str = dumpElementVisibility(el, getStatefulBoolean(inPublicSection))
+    let dummyTxt = if vis_str then setStatefulBoolean(inPublicSection, boolNot(getStatefulBoolean(inPublicSection)))
+    let post_spacing = if boolNot(intEq(i1, numElements))
+      then
+        (if spacing then
+          let () = setStatefulBoolean(prevSpacing, true)
+          spacing
+        else
+          let () = setStatefulBoolean(prevSpacing, false)
+          "")
       else
-        dumpElements2(rest_els, spacing, indent, false, inPublicSection, options)
-    let post_spacing = if rest_str then spacing
-    let elements_str = if indent then
+        let () = setStatefulBoolean(prevSpacing, false)
+        ""
+    if indent then
       <<
       <%pre_spacing%><%vis_str%>
         <%el_str%>;<%post_spacing%><%\n%>
-      <%rest_str%>
       >>
       else
       <<
       <%pre_spacing%><%vis_str%>
       <%el_str%>;<%post_spacing%><%\n%>
-      <%rest_str%>
       >>
-    elements_str
-end dumpElements2;
+end dumpElements3;
 
-template dumpPreElementSpacing(String curSpacing, String prevSpacing)
+template dumpPreElementSpacing(String curSpacing, Boolean prevSpacing)
 ::= if not prevSpacing then curSpacing
 end dumpPreElementSpacing;
 
@@ -131,21 +139,21 @@ match class
     let cmt_str = dumpClassComment(cmt, options)
     let ann_str = dumpClassAnnotation(cmt, options)
     let cc_str = dumpReplaceableConstrainClass(prefixes, options)
-    let header_str = dumpClassHeader(classDef, name, cmt_str, options)
+    let header_str = dumpClassHeader(classDef, name, restriction, cmt_str, options)
     let footer_str = dumpClassFooter(classDef, cdef_str, name, cmt_str, ann_str, cc_str)
     <<
     <%prefixes_str%> <%header_str%> <%footer_str%>
     >>
 end dumpClass;
 
-template dumpClassHeader(SCode.ClassDef classDef, String name, String cmt, SCodeDumpOptions options)
+template dumpClassHeader(SCode.ClassDef classDef, String name, SCode.Restriction restr, String cmt, SCodeDumpOptions options)
 ::=
 match classDef
   case CLASS_EXTENDS(__)
     then
     let mod_str = dumpModifier(modifications, options)
     'extends <%name%><%mod_str%> <%cmt%>'
-  case PARTS(__) then '<%name%> <%cmt%>'
+  case PARTS(__) then '<%name%><%dumpRestrictionTypeVars(restr)%> <%cmt%>'
   else '<%name%>'
 end dumpClassHeader;
 
@@ -678,6 +686,14 @@ match restriction
   else errorMsg("SCodeDump.dumpRestriction: Unknown restriction.")
 end dumpRestriction;
 
+template dumpRestrictionTypeVars(SCode.Restriction restriction)
+::=
+match restriction
+  case R_UNIONTYPE(__) then
+    (if typeVars then ("<" + (typeVars |> tv => tv ; separator=",") + ">"))
+  else ""
+end dumpRestrictionTypeVars;
+
 template dumpFunctionRestriction(SCode.FunctionRestriction funcRest)
 ::=
 match funcRest
@@ -807,6 +823,7 @@ template dumpDirection(Absyn.Direction direction)
 match direction
   case INPUT(__) then 'input '
   case OUTPUT(__) then 'output '
+  case INPUT_OUTPUT(__) then 'input output '
 end dumpDirection;
 
 template dumpAttributeDim(SCode.Attributes attributes)

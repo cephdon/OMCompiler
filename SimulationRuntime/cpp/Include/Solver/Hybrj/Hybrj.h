@@ -20,7 +20,7 @@ class Hybrj : public IAlgLoopSolver
 {
 public:
 
-    Hybrj(IAlgLoop* algLoop,INonLinSolverSettings* settings);
+    Hybrj(INonLinearAlgLoop* algLoop,INonLinSolverSettings* settings);
 
     virtual ~Hybrj();
 
@@ -33,7 +33,8 @@ public:
     /// Returns the status of iteration
     virtual ITERATIONSTATUS getIterationStatus();
     virtual void stepCompleted(double time);
-
+    virtual void restoreOldValues();
+    virtual void restoreNewValues();
 
 private:
     /// Encapsulation of determination of residuals to given unknowns
@@ -49,13 +50,13 @@ private:
     INonLinSolverSettings
         *_newtonSettings;            ///< Settings for the solver
 
-    IAlgLoop
+    INonLinearAlgLoop
         *_algLoop;                    ///< Algebraic loop to be solved
 
     ITERATIONSTATUS
         _iterationStatus;            ///< Output        - Denotes the status of iteration
 
-     int
+    int
         _dimSys;                    ///< Temp        - Number of unknowns (=dimension of system of equations)
 
     bool
@@ -75,7 +76,9 @@ private:
         *_x_nom,                    //Nominal value of unknown variables
         *_x_ex,                 //extraplated unknown varibales
         *_x_scale,                 //current scale factor of unknown varibales
-        _t0,             //old time
+        *_x_old,
+        *_x_new,
+		_t0,             //old time
         _t1,            //old time
         _t2;              //old time
     bool _usescale;

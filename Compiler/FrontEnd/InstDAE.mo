@@ -34,7 +34,6 @@ encapsulated package InstDAE
   package:     InstDAE
   description: DAE generation
 
-  RCS: $Id: InstDAE.mo 17556 2013-10-05 23:58:57Z adrpo $
 
   This module is responsible for generating the DAE.
 
@@ -52,6 +51,7 @@ protected import ComponentReference;
 protected import Config;
 protected import DAEUtil;
 protected import Debug;
+protected import ElementSource;
 protected import Error;
 protected import Flags;
 protected import InstBinding;
@@ -173,7 +173,7 @@ algorithm
         str = if System.getPartialInstantiation() then " partial" else " full";
         print("DAE: parent: " + FGraph.getGraphNameStr(inParentEnv) +
               " class: " + FGraph.getGraphNameStr(inClassEnv) + " state: " + sstr + str + "\n" +
-              DAEDump.dumpStr(dae, DAE.emptyFuncTree) + "\n");
+              DAEDump.dumpStr(dae, DAE.AvlTreePathFunction.Tree.EMPTY()) + "\n");
       then
         ();
 
@@ -301,7 +301,7 @@ algorithm
       equation
         true = Config.splitArrays();
         s = ComponentReference.printComponentRefStr(vn);
-        info = DAEUtil.getElementSourceFileInfo(source);
+        info = ElementSource.getElementSourceFileInfo(source);
         Error.addSourceMessage(Error.DIMENSION_NOT_KNOWN, {s}, info);
       then
         fail();
@@ -318,9 +318,9 @@ algorithm
       equation
         finst_dims = List.flatten(inst_dims);
         path = ComponentReference.crefToPath(vn);
-        ty = Types.setTypeSource(tty,Types.mkTypeSource(SOME(path)));
+        tty.path = path;
       then
-        DAE.DAE({DAE.VAR(vn,kind,dir,daePrl,prot,ty,e,finst_dims,ct,source,dae_var_attr,comment,io)});
+        DAE.DAE({DAE.VAR(vn,kind,dir,daePrl,prot,tty,e,finst_dims,ct,source,dae_var_attr,comment,io)});
 
     // MetaModelica extension
     case (vn,ty,ct,kind,dir,daePrl,prot,e,inst_dims,_,dae_var_attr,comment,_,_,_)

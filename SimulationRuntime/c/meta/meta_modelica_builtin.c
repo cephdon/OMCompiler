@@ -38,13 +38,6 @@
 #include <string.h>
 #include <stdio.h>
 
-#if defined(_MSC_VER)
-#include <float.h>
-#define isinf(d) (!_finite(d) && !_isnan(d))
-#define isnan _isnan
-#define snprintf _snprintf
-#endif
-
 #define GEN_META_MODELICA_BUILTIN_BOXPTR
 #include "meta_modelica_builtin_boxptr.h"
 
@@ -366,7 +359,7 @@ modelica_integer nobox_stringGet(threadData_t *threadData,metamodelica_string st
 {
   if (ix < 1 || ix > (long) MMC_STRLEN(str))
     MMC_THROW_INTERNAL();
-  return MMC_STRINGDATA(str)[ix-1];
+  return ((unsigned char*)MMC_STRINGDATA(str))[ix-1];
 }
 
 modelica_metatype boxptr_stringUpdateStringChar(threadData_t *threadData,metamodelica_string str, metamodelica_string c, modelica_metatype iix)
@@ -396,44 +389,20 @@ modelica_metatype boxptr_stringUpdateStringChar(threadData_t *threadData,metamod
   return res;
 }
 
-metamodelica_string_const stringAppend(metamodelica_string_const s1, metamodelica_string_const s2)
-{
-  unsigned len1 = 0, len2 = 0, nbytes = 0, header = 0, nwords = 0;
-  void *res = NULL;
-  struct mmc_string *p = NULL;
-  MMC_CHECK_STRING(s1);
-  MMC_CHECK_STRING(s2);
-
-  /* fprintf(stderr, "stringAppend([%p] %s, [%p] %s)->\n", s1, anyString(s1), s2, anyString(s2)); fflush(NULL); */
-  len1 = MMC_STRLEN(s1);
-  len2 = MMC_STRLEN(s2);
-  nbytes = len1+len2;
-  header = MMC_STRINGHDR(nbytes);
-  nwords = MMC_HDRSLOTS(header) + 1;
-  p = (struct mmc_string *) mmc_alloc_words_atomic(nwords);
-  /* fprintf(stderr, "at address %p\n", MMC_TAGPTR(p)); fflush(NULL); */
-  p->header = header;
-
-  memcpy(p->data, MMC_STRINGDATA(s1), len1);
-  memcpy(p->data + len1, MMC_STRINGDATA(s2), len2 + 1);
-  res = MMC_TAGPTR(p);
-  MMC_CHECK_STRING(res);
-  /* fprintf(stderr, "-> %s\n", anyString(res)); fflush(NULL); */
-  return res;
-}
-
 /* List Operations */
 
 modelica_metatype listReverse(modelica_metatype lst)
 {
   modelica_metatype res = NULL;
-
+  if (MMC_NILTEST(lst) || MMC_NILTEST(MMC_CDR(lst))) {
+    // 0/1 elements are already reversed
+    return lst;
+  }
   res = mmc_mk_nil();
-  while (!MMC_NILTEST(lst))
-  {
+  do {
     res = mmc_mk_cons(MMC_CAR(lst),res);
     lst = MMC_CDR(lst);
-  }
+  } while (!MMC_NILTEST(lst));
   return res;
 }
 
@@ -448,6 +417,22 @@ modelica_metatype listReverseInPlace(modelica_metatype lst)
     lst = oldcdr;
   }
   return prev;
+}
+
+void boxptr_listSetRest(threadData_t *threadData, modelica_metatype cellToDestroy, modelica_metatype newRest)
+{
+  if (MMC_NILTEST(cellToDestroy)) {
+    MMC_THROW_INTERNAL();
+  }
+  MMC_CDR(cellToDestroy) = newRest;
+}
+
+void boxptr_listSetFirst(threadData_t *threadData, modelica_metatype cellToDestroy, modelica_metatype newContent)
+{
+  if (MMC_NILTEST(cellToDestroy)) {
+    MMC_THROW_INTERNAL();
+  }
+  MMC_CAR(cellToDestroy) = newContent;
 }
 
 modelica_metatype listAppend(modelica_metatype lst1,modelica_metatype lst2)
@@ -532,7 +517,7 @@ modelica_metatype boxptr_listDelete(threadData_t *threadData, modelica_metatype 
     MMC_THROW_INTERNAL();
   }
 
-  tmpArr = (modelica_metatype *) GC_malloc(sizeof(modelica_metatype)*(ix-1)); /* We know the size of the first part of the list */
+  tmpArr = (modelica_metatype *) mmc_alloc_words(ix-1); /* We know the size of the first part of the list */
   if (tmpArr == NULL) {
     fprintf(stderr, "%s:%d: malloc failed", __FILE__, __LINE__);
     EXIT(1);
@@ -596,7 +581,7 @@ modelica_metatype arrayList(modelica_metatype arr)
 modelica_metatype listArray(modelica_metatype lst)
 {
   int nelts = listLength(lst);
-  void* arr = (struct mmc_struct*)mmc_mk_box_no_assign(nelts, MMC_ARRAY_TAG);
+  void* arr = (struct mmc_struct*)mmc_mk_box_no_assign(nelts, MMC_ARRAY_TAG, MMC_IS_IMMEDIATE(MMC_CAR(lst)));
   void **arrp = MMC_STRUCTDATA(arr);
   int i = 0;
   for(i=0; i<nelts; i++) {
@@ -609,13 +594,10 @@ modelica_metatype listArray(modelica_metatype lst)
 modelica_metatype arrayCopy(modelica_metatype arr)
 {
   int nelts = MMC_HDRSLOTS(MMC_GETHDR(arr));
-  void* res = (struct mmc_struct*)mmc_mk_box_no_assign(nelts, MMC_ARRAY_TAG);
+  void* res = (struct mmc_struct*)mmc_mk_box_no_assign(nelts, MMC_ARRAY_TAG, MMC_IS_IMMEDIATE(MMC_STRUCTDATA(arr)[0]));
   void **arrp = MMC_STRUCTDATA(arr);
   void **resp = MMC_STRUCTDATA(res);
-  int i = 0;
-  for(i=0; i<nelts; i++) {
-    resp[i] = arrp[i];
-  }
+  memcpy(resp, arrp, sizeof(modelica_metatype)*nelts);
   return res;
 }
 
@@ -623,7 +605,7 @@ modelica_metatype arrayAppend(modelica_metatype arr1, modelica_metatype arr2)
 {
   int nelts1 = MMC_HDRSLOTS(MMC_GETHDR(arr1));
   int nelts2 = MMC_HDRSLOTS(MMC_GETHDR(arr2));
-  void* res = (struct mmc_struct*)mmc_mk_box_no_assign(nelts1 + nelts2, MMC_ARRAY_TAG);
+  void* res = (struct mmc_struct*)mmc_mk_box_no_assign(nelts1 + nelts2, MMC_ARRAY_TAG, MMC_IS_IMMEDIATE(MMC_STRUCTDATA(arr1)[0]));
   void **arr1p = MMC_STRUCTDATA(arr1);
   void **arr2p = MMC_STRUCTDATA(arr2);
   void **resp = MMC_STRUCTDATA(res);
@@ -707,7 +689,7 @@ modelica_real realMaxLit(void)
 
 modelica_integer intMaxLit(void)
 {
-  return INT_MAX / 2;
+  return LONG_MAX / 2;
 }
 
 modelica_boolean setStackOverflowSignal(modelica_boolean inSignal)

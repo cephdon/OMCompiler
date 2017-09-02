@@ -50,50 +50,12 @@
 extern "C" {
 #endif
 
-double bisection(DATA* data, double*, double*, double*, double*, LIST*, LIST*);
+int maxBisectionIterations = 0;
+double bisection(DATA* data, threadData_t *threadData, double*, double*, double*, double*, LIST*, LIST*);
 int checkZeroCrossings(DATA *data, LIST *list, LIST*);
-void saveZeroCrossingsAfterEvent(DATA *data);
+void saveZeroCrossingsAfterEvent(DATA *data, threadData_t *threadData);
 
 int checkForStateEvent(DATA* data, LIST *eventList);
-
-
-/*! \fn initSample
- *
- *  \param [ref] [data]
- *  \param [in]  [startTime]
- *  \param [in]  [stopTime]
- *
- *  This function initializes sample-events.
- */
-void initSample(DATA* data, double startTime, double stopTime)
-{
-  TRACE_PUSH
-  long i;
-
-  data->callback->function_initSample(data);              /* set-up sample */
-  data->simulationInfo.nextSampleEvent = stopTime + 1.0;  /* should never be reached */
-  for(i=0; i<data->modelData.nSamples; ++i)
-  {
-    if(startTime < data->modelData.samplesInfo[i].start) {
-      data->simulationInfo.nextSampleTimes[i] = data->modelData.samplesInfo[i].start;
-    } else {
-      data->simulationInfo.nextSampleTimes[i] = data->modelData.samplesInfo[i].start + ceil((startTime-data->modelData.samplesInfo[i].start) / data->modelData.samplesInfo[i].interval) * data->modelData.samplesInfo[i].interval;
-    }
-
-    if((i == 0) || (data->simulationInfo.nextSampleTimes[i] < data->simulationInfo.nextSampleEvent)) {
-      data->simulationInfo.nextSampleEvent = data->simulationInfo.nextSampleTimes[i];
-    }
-  }
-
-  if(stopTime < data->simulationInfo.nextSampleEvent) {
-    debugStreamPrint(LOG_EVENTS, 0, "there are no sample-events");
-  } else {
-    debugStreamPrint(LOG_EVENTS, 0, "first sample-event at t = %g", data->simulationInfo.nextSampleEvent);
-  }
-
-  TRACE_POP
-}
-
 
 /*! \fn checkForSampleEvent
  *
@@ -111,11 +73,11 @@ void checkForSampleEvent(DATA *data, SOLVER_INFO* solverInfo)
   TRACE_PUSH
   double nextTimeStep = solverInfo->currentTime + solverInfo->currentStepSize;
 
-  if ((data->simulationInfo.nextSampleEvent <= nextTimeStep + SAMPLE_EPS) && (data->simulationInfo.nextSampleEvent >= solverInfo->currentTime))
+  if ((data->simulationInfo->nextSampleEvent <= nextTimeStep + SAMPLE_EPS) && (data->simulationInfo->nextSampleEvent >= solverInfo->currentTime))
   {
-    solverInfo->currentStepSize = data->simulationInfo.nextSampleEvent - solverInfo->currentTime;
-    data->simulationInfo.sampleActivated = 1;
-    infoStreamPrint(LOG_EVENTS_V, 0, "Adjust step-size to %.15g at time %.15g to get next sample event at %.15g", solverInfo->currentStepSize, solverInfo->currentTime, data->simulationInfo.nextSampleEvent );
+    solverInfo->currentStepSize = data->simulationInfo->nextSampleEvent - solverInfo->currentTime;
+    data->simulationInfo->sampleActivated = 1;
+    infoStreamPrint(LOG_EVENTS_V, 0, "Adjust step-size to %.15g at time %.15g to get next sample event at %.15g", solverInfo->currentStepSize, solverInfo->currentTime, data->simulationInfo->nextSampleEvent );
   }
 
   TRACE_POP
@@ -137,20 +99,20 @@ int checkForStateEvent(DATA* data, LIST *eventList)
 
   debugStreamPrint(LOG_EVENTS, 1, "check state-event zerocrossing at time %g",  data->localData[0]->timeValue);
 
-  for(i=0; i<data->modelData.nZeroCrossings; i++)
+  for(i=0; i<data->modelData->nZeroCrossings; i++)
   {
     int *eq_indexes;
     const char *exp_str = data->callback->zeroCrossingDescription(i,&eq_indexes);
     debugStreamPrintWithEquationIndexes(LOG_EVENTS, 1, eq_indexes, "%s", exp_str);
 
-    if(sign(data->simulationInfo.zeroCrossings[i]) != sign(data->simulationInfo.zeroCrossingsPre[i]))
+    if(sign(data->simulationInfo->zeroCrossings[i]) != sign(data->simulationInfo->zeroCrossingsPre[i]))
     {
-      debugStreamPrint(LOG_EVENTS, 0, "changed:   %s", (data->simulationInfo.zeroCrossingsPre[i] > 0) ? "TRUE -> FALSE" : "FALSE -> TRUE");
-      listPushFront(eventList, &(data->simulationInfo.zeroCrossingIndex[i]));
+      debugStreamPrint(LOG_EVENTS, 0, "changed:   %s", (data->simulationInfo->zeroCrossingsPre[i] > 0) ? "TRUE -> FALSE" : "FALSE -> TRUE");
+      listPushFront(eventList, &(data->simulationInfo->zeroCrossingIndex[i]));
     }
     else
     {
-      debugStreamPrint(LOG_EVENTS, 0, "unchanged: %s", (data->simulationInfo.zeroCrossingsPre[i] > 0) ? "TRUE -- TRUE" : "FALSE -- FALSE");
+      debugStreamPrint(LOG_EVENTS, 0, "unchanged: %s", (data->simulationInfo->zeroCrossingsPre[i] > 0) ? "TRUE -- TRUE" : "FALSE -- FALSE");
     }
 
     if (DEBUG_STREAM(LOG_EVENTS))
@@ -178,24 +140,25 @@ int checkForStateEvent(DATA* data, LIST *eventList)
  *  then it de-activate the time events.
  *
  *  \param [ref] [data]
- *  \param [ref] [eventList]
- *  \param [in]  [eventTime]
- *  \param [ref] [solverInfo]
+ *  \param [ref] [threadData]
+ *  \param [ref] [eventLst]
+ *  \param [in]  [useRootFinding]
+ *  \param [out] [eventTime]
  *  \return 0: no event; 1: time event; 2: state event
  */
-int checkEvents(DATA* data, LIST* eventLst, double *eventTime, SOLVER_INFO* solverInfo)
+int checkEvents(DATA* data, threadData_t *threadData, LIST* eventLst, modelica_boolean useRootFinding, double *eventTime)
 {
   TRACE_PUSH
 
-  if (checkForStateEvent(data, solverInfo->eventLst))
+  if (checkForStateEvent(data, eventLst))
   {
-    if (!solverInfo->solverRootFinding)
+    if (useRootFinding)
     {
-      findRoot(data, solverInfo->eventLst, &(solverInfo->currentTime));
+      *eventTime = findRoot(data, threadData, eventLst);
     }
   }
 
-  if(data->simulationInfo.sampleActivated == 1)
+  if(data->simulationInfo->sampleActivated == 1)
   {
     TRACE_POP
     return 1;
@@ -219,7 +182,7 @@ int checkEvents(DATA* data, LIST* eventLst, double *eventTime, SOLVER_INFO* solv
  *
  *  This handles all zero crossing events from event list at event time
  */
-void handleEvents(DATA* data, LIST* eventLst, double *eventTime, SOLVER_INFO* solverInfo)
+void handleEvents(DATA* data, threadData_t *threadData, LIST* eventLst, double *eventTime, SOLVER_INFO* solverInfo)
 {
   TRACE_PUSH
   double time = data->localData[0]->timeValue;
@@ -227,19 +190,19 @@ void handleEvents(DATA* data, LIST* eventLst, double *eventTime, SOLVER_INFO* so
   LIST_NODE* it;
 
   /* time event */
-  if(data->simulationInfo.sampleActivated)
+  if(data->simulationInfo->sampleActivated)
   {
     storePreValues(data);
 
     /* activate time event */
-    for(i=0; i<data->modelData.nSamples; ++i)
-      if(data->simulationInfo.nextSampleTimes[i] <= time + SAMPLE_EPS)
+    for(i=0; i<data->modelData->nSamples; ++i)
+      if(data->simulationInfo->nextSampleTimes[i] <= time + SAMPLE_EPS)
       {
-        data->simulationInfo.samples[i] = 1;
-        infoStreamPrint(LOG_EVENTS, 0, "[%ld] sample(%g, %g)", data->modelData.samplesInfo[i].index, data->modelData.samplesInfo[i].start, data->modelData.samplesInfo[i].interval);
+        data->simulationInfo->samples[i] = 1;
+        infoStreamPrint(LOG_EVENTS, 0, "[%ld] sample(%g, %g)", data->modelData->samplesInfo[i].index, data->modelData->samplesInfo[i].start, data->modelData->samplesInfo[i].interval);
       }
   }
-  data->simulationInfo.chatteringInfo.lastStepsNumStateEvents-=data->simulationInfo.chatteringInfo.lastSteps[data->simulationInfo.chatteringInfo.currentIndex];
+  data->simulationInfo->chatteringInfo.lastStepsNumStateEvents-=data->simulationInfo->chatteringInfo.lastSteps[data->simulationInfo->chatteringInfo.currentIndex];
   /* state event */
   if(listLen(eventLst)>0)
   {
@@ -258,63 +221,61 @@ void handleEvents(DATA* data, LIST* eventLst, double *eventTime, SOLVER_INFO* so
     }
 
     solverInfo->stateEvents++;
-    data->simulationInfo.chatteringInfo.lastStepsNumStateEvents++;
-    data->simulationInfo.chatteringInfo.lastSteps[data->simulationInfo.chatteringInfo.currentIndex]=1;
-    data->simulationInfo.chatteringInfo.lastTimes[data->simulationInfo.chatteringInfo.currentIndex]=time;
+    data->simulationInfo->chatteringInfo.lastStepsNumStateEvents++;
+    data->simulationInfo->chatteringInfo.lastSteps[data->simulationInfo->chatteringInfo.currentIndex]=1;
+    data->simulationInfo->chatteringInfo.lastTimes[data->simulationInfo->chatteringInfo.currentIndex]=time;
 
-    if (!data->simulationInfo.chatteringInfo.messageEmitted && data->simulationInfo.chatteringInfo.lastStepsNumStateEvents == data->simulationInfo.chatteringInfo.numEventLimit)
+    if (!data->simulationInfo->chatteringInfo.messageEmitted && data->simulationInfo->chatteringInfo.lastStepsNumStateEvents == data->simulationInfo->chatteringInfo.numEventLimit)
     {
-      int numEventLimit = data->simulationInfo.chatteringInfo.numEventLimit;
-      int currentIndex = data->simulationInfo.chatteringInfo.currentIndex;
-      double t0 = data->simulationInfo.chatteringInfo.lastTimes[(currentIndex+1) % numEventLimit];
-      if (time - t0 < data->simulationInfo.stepSize)
+      int numEventLimit = data->simulationInfo->chatteringInfo.numEventLimit;
+      int currentIndex = data->simulationInfo->chatteringInfo.currentIndex;
+      double t0 = data->simulationInfo->chatteringInfo.lastTimes[(currentIndex+1) % numEventLimit];
+      if (time - t0 < data->simulationInfo->stepSize)
       {
         long ix = *((long*) listNodeData(listFirstNode(eventLst)));
         int *eq_indexes;
         const char *exp_str = data->callback->zeroCrossingDescription(ix,&eq_indexes);
-        infoStreamPrintWithEquationIndexes(LOG_STDOUT, 0, eq_indexes, "Chattering detected around time %.12g..%.12g (%d state events in a row with a total time delta less than the step size %.12g). This can be a performance bottleneck. Use -lv LOG_EVENTS for more information. The zero-crossing was: %s", t0, time, numEventLimit, data->simulationInfo.stepSize, exp_str);
-        data->simulationInfo.chatteringInfo.messageEmitted = 1;
+        infoStreamPrintWithEquationIndexes(LOG_STDOUT, 0, eq_indexes, "Chattering detected around time %.12g..%.12g (%d state events in a row with a total time delta less than the step size %.12g). This can be a performance bottleneck. Use -lv LOG_EVENTS for more information. The zero-crossing was: %s", t0, time, numEventLimit, data->simulationInfo->stepSize, exp_str);
+        data->simulationInfo->chatteringInfo.messageEmitted = 1;
         if (omc_flag[FLAG_ABORT_SLOW])
         {
-          throwStreamPrintWithEquationIndexes(data->threadData, eq_indexes, "Aborting simulation due to chattering being detected and the simulation flags requesting we do not continue further.");
+          throwStreamPrintWithEquationIndexes(threadData, eq_indexes, "Aborting simulation due to chattering being detected and the simulation flags requesting we do not continue further.");
         }
       }
     }
 
     listClear(eventLst);
-  }
-  else
-  {
-    data->simulationInfo.chatteringInfo.lastSteps[data->simulationInfo.chatteringInfo.currentIndex]=0;
+  } else {
+    data->simulationInfo->chatteringInfo.lastSteps[data->simulationInfo->chatteringInfo.currentIndex]=0;
     /* Setting time does not matter */
   }
-  data->simulationInfo.chatteringInfo.currentIndex = (data->simulationInfo.chatteringInfo.currentIndex+1) % data->simulationInfo.chatteringInfo.numEventLimit;
+  data->simulationInfo->chatteringInfo.currentIndex = (data->simulationInfo->chatteringInfo.currentIndex+1) % data->simulationInfo->chatteringInfo.numEventLimit;
 
   /* update the whole system */
-  updateDiscreteSystem(data);
-  saveZeroCrossingsAfterEvent(data);
+  updateDiscreteSystem(data, threadData);
+  saveZeroCrossingsAfterEvent(data, threadData);
   /*sim_result_emit(data);*/
 
   /* time event */
-  if(data->simulationInfo.sampleActivated)
+  if(data->simulationInfo->sampleActivated)
   {
     /* deactivate time events */
-    for(i=0; i<data->modelData.nSamples; ++i)
+    for(i=0; i<data->modelData->nSamples; ++i)
     {
-      if(data->simulationInfo.samples[i])
+      if(data->simulationInfo->samples[i])
       {
-        data->simulationInfo.samples[i] = 0;
-        data->simulationInfo.nextSampleTimes[i] += data->modelData.samplesInfo[i].interval;
+        data->simulationInfo->samples[i] = 0;
+        data->simulationInfo->nextSampleTimes[i] += data->modelData->samplesInfo[i].interval;
       }
     }
 
-    for(i=0; i<data->modelData.nSamples; ++i)
-      if((i == 0) || (data->simulationInfo.nextSampleTimes[i] < data->simulationInfo.nextSampleEvent))
-        data->simulationInfo.nextSampleEvent = data->simulationInfo.nextSampleTimes[i];
+    for(i=0; i<data->modelData->nSamples; ++i)
+      if((i == 0) || (data->simulationInfo->nextSampleTimes[i] < data->simulationInfo->nextSampleEvent))
+        data->simulationInfo->nextSampleEvent = data->simulationInfo->nextSampleTimes[i];
 
-    data->simulationInfo.sampleActivated = 0;
+    data->simulationInfo->sampleActivated = 0;
 
-    debugStreamPrint(LOG_EVENTS, 0, "next sample-event at t = %g", data->simulationInfo.nextSampleEvent);
+    debugStreamPrint(LOG_EVENTS, 0, "next sample-event at t = %g", data->simulationInfo->nextSampleEvent);
 
     solverInfo->sampleEvents++;
   }
@@ -325,24 +286,26 @@ void handleEvents(DATA* data, LIST* eventLst, double *eventTime, SOLVER_INFO* so
 /*! \fn findRoot
  *
  *  \param [ref] [data]
- *  \param [ref] [eventLst]
- *  \param [in]  [eventTime]
+ *  \param [ref] [threadData]
+ *  \param [ref] [eventList]
+ *  \return: first event of interval [oldTime, timeValue]
  *
- *  This function perform a root finding for Intervall = [oldTime, timeValue]
+ *  This function perform a root finding for interval = [oldTime, timeValue]
  */
-void findRoot(DATA* data, LIST *eventList, double *eventTime)
+double findRoot(DATA* data, threadData_t *threadData, LIST *eventList)
 {
   TRACE_PUSH
 
+  double eventTime;
   long event_id;
   LIST_NODE* it;
   fortran_integer i=0;
   static LIST *tmpEventList = NULL;
 
-  double *states_right = (double*) malloc(data->modelData.nStates * sizeof(double));
-  double *states_left = (double*) malloc(data->modelData.nStates * sizeof(double));
+  double *states_right = (double*) malloc(data->modelData->nStates * sizeof(double));
+  double *states_left = (double*) malloc(data->modelData->nStates * sizeof(double));
 
-  double time_left = data->simulationInfo.timeValueOld;
+  double time_left = data->simulationInfo->timeValueOld;
   double time_right = data->localData[0]->timeValue;
 
   tmpEventList = allocList(sizeof(long));
@@ -356,18 +319,18 @@ void findRoot(DATA* data, LIST *eventList, double *eventTime)
   }
 
   /* write states to work arrays */
-  memcpy(states_left,  data->simulationInfo.realVarsOld, data->modelData.nStates * sizeof(double));
-  memcpy(states_right, data->localData[0]->realVars    , data->modelData.nStates * sizeof(double));
+  memcpy(states_left,  data->simulationInfo->realVarsOld, data->modelData->nStates * sizeof(double));
+  memcpy(states_right, data->localData[0]->realVars    , data->modelData->nStates * sizeof(double));
 
   /* Search for event time and event_id with bisection method */
-  *eventTime = bisection(data, &time_left, &time_right, states_left, states_right, tmpEventList, eventList);
+  eventTime = bisection(data, threadData, &time_left, &time_right, states_left, states_right, tmpEventList, eventList);
 
   if(listLen(tmpEventList) == 0)
   {
-    double value = fabs(data->simulationInfo.zeroCrossings[*((long*) listFirstData(eventList))]);
+    double value = fabs(data->simulationInfo->zeroCrossings[*((long*) listFirstData(eventList))]);
     for(it = listFirstNode(eventList); it; it = listNextNode(it))
     {
-      double fvalue = fabs(data->simulationInfo.zeroCrossings[*((long*) listNodeData(it))]);
+      double fvalue = fabs(data->simulationInfo->zeroCrossings[*((long*) listNodeData(it))]);
       if(value > fvalue)
       {
         value = fvalue;
@@ -376,7 +339,7 @@ void findRoot(DATA* data, LIST *eventList, double *eventTime)
     infoStreamPrint(LOG_ZEROCROSSINGS, 0, "Minimum value: %e", value);
     for(it = listFirstNode(eventList); it; it = listNextNode(it))
     {
-      if(value == fabs(data->simulationInfo.zeroCrossings[*((long*) listNodeData(it))]))
+      if(value == fabs(data->simulationInfo->zeroCrossings[*((long*) listNodeData(it))]))
       {
         listPushBack(tmpEventList, listNodeData(it));
         infoStreamPrint(LOG_ZEROCROSSINGS, 0, "added tmp event : %ld", *((long*) listNodeData(it)));
@@ -407,21 +370,21 @@ void findRoot(DATA* data, LIST *eventList, double *eventTime)
     listPushFront(eventList, &event_id);
   }
 
-  *eventTime = time_right;
-  debugStreamPrint(LOG_EVENTS, 0, "time: %.10e", *eventTime);
+  eventTime = time_right;
+  debugStreamPrint(LOG_EVENTS, 0, "time: %.10e", eventTime);
 
   data->localData[0]->timeValue = time_left;
-  for(i=0; i < data->modelData.nStates; i++) {
+  for(i=0; i < data->modelData->nStates; i++) {
     data->localData[0]->realVars[i] = states_left[i];
   }
 
   /* determined continuous system */
-  updateContinuousSystem(data);
+  data->callback->updateContinuousSystem(data, threadData);
   updateRelationsPre(data);
   /*sim_result_emit(data);*/
 
-  data->localData[0]->timeValue = *eventTime;
-  for(i=0; i < data->modelData.nStates; i++)
+  data->localData[0]->timeValue = eventTime;
+  for(i=0; i < data->modelData->nStates; i++)
   {
     data->localData[0]->realVars[i] = states_right[i];
   }
@@ -430,6 +393,7 @@ void findRoot(DATA* data, LIST *eventList, double *eventTime)
   free(states_right);
 
   TRACE_POP
+  return eventTime;
 }
 
 /*! \fn bisection
@@ -443,9 +407,9 @@ void findRoot(DATA* data, LIST *eventList, double *eventTime)
  *  \param [in]  [eventList]
  *  \return Founded event time
  *
- *  Method to find root in Intervall [oldTime, timeValue]
+ *  Method to find root in interval [oldTime, timeValue]
  */
-double bisection(DATA* data, double* a, double* b, double* states_a, double* states_b, LIST *tmpEventList, LIST *eventList)
+double bisection(DATA* data, threadData_t *threadData, double* a, double* b, double* states_a, double* states_b, LIST *tmpEventList, LIST *eventList)
 {
   TRACE_PUSH
 
@@ -453,9 +417,9 @@ double bisection(DATA* data, double* a, double* b, double* states_a, double* sta
   double c;
   long i=0;
   /* n >= log(2)/log(2) + log(|b-a|/TOL)/log(2)*/
-  unsigned int n = 1 + ceil(log(fabs(*b - *a)/TTOL)/log(2));
+  unsigned int n = maxBisectionIterations > 0 ? maxBisectionIterations : 1 + ceil(log(fabs(*b - *a)/TTOL)/log(2));
 
-  memcpy(data->simulationInfo.zeroCrossingsBackup, data->simulationInfo.zeroCrossings, data->modelData.nZeroCrossings * sizeof(modelica_real));
+  memcpy(data->simulationInfo->zeroCrossingsBackup, data->simulationInfo->zeroCrossings, data->modelData->nZeroCrossings * sizeof(modelica_real));
 
   infoStreamPrint(LOG_ZEROCROSSINGS, 0, "bisection method starts in interval [%e, %e]", *a, *b);
   infoStreamPrint(LOG_ZEROCROSSINGS, 0, "TTOL is set to %e and maximum number of intersections %d.", TTOL, n);
@@ -466,7 +430,7 @@ double bisection(DATA* data, double* a, double* b, double* states_a, double* sta
     data->localData[0]->timeValue = c;
 
     /*calculates states at time c */
-    for(i=0; i < data->modelData.nStates; i++)
+    for(i=0; i < data->modelData->nStates; i++)
     {
       data->localData[0]->realVars[i] = 0.5*(states_a[i] + states_b[i]);
     }
@@ -474,24 +438,24 @@ double bisection(DATA* data, double* a, double* b, double* states_a, double* sta
     /*calculates Values dependents on new states*/
     /* read input vars */
     externalInputUpdate(data);
-    data->callback->input_function(data);
+    data->callback->input_function(data, threadData);
     /* eval needed equations*/
-    data->callback->function_ZeroCrossingsEquations(data);
+    data->callback->function_ZeroCrossingsEquations(data, threadData);
 
-    data->callback->function_ZeroCrossings(data, data->simulationInfo.zeroCrossings);
+    data->callback->function_ZeroCrossings(data, threadData, data->simulationInfo->zeroCrossings);
 
     if(checkZeroCrossings(data, tmpEventList, eventList))  /* If Zerocrossing in left Section */
     {
-      memcpy(states_b, data->localData[0]->realVars, data->modelData.nStates * sizeof(modelica_real));
+      memcpy(states_b, data->localData[0]->realVars, data->modelData->nStates * sizeof(modelica_real));
       *b = c;
-      memcpy(data->simulationInfo.zeroCrossingsBackup, data->simulationInfo.zeroCrossings, data->modelData.nZeroCrossings * sizeof(modelica_real));
+      memcpy(data->simulationInfo->zeroCrossingsBackup, data->simulationInfo->zeroCrossings, data->modelData->nZeroCrossings * sizeof(modelica_real));
     }
     else  /*else Zerocrossing in right Section */
     {
-      memcpy(states_a, data->localData[0]->realVars, data->modelData.nStates * sizeof(modelica_real));
+      memcpy(states_a, data->localData[0]->realVars, data->modelData->nStates * sizeof(modelica_real));
       *a = c;
-      memcpy(data->simulationInfo.zeroCrossingsPre, data->simulationInfo.zeroCrossings, data->modelData.nZeroCrossings * sizeof(modelica_real));
-      memcpy(data->simulationInfo.zeroCrossings, data->simulationInfo.zeroCrossingsBackup, data->modelData.nZeroCrossings * sizeof(modelica_real));
+      memcpy(data->simulationInfo->zeroCrossingsPre, data->simulationInfo->zeroCrossings, data->modelData->nZeroCrossings * sizeof(modelica_real));
+      memcpy(data->simulationInfo->zeroCrossings, data->simulationInfo->zeroCrossingsBackup, data->modelData->nZeroCrossings * sizeof(modelica_real));
     }
   }
   c = 0.5*(*a + *b);
@@ -520,15 +484,15 @@ int checkZeroCrossings(DATA *data, LIST *tmpEventList, LIST *eventList)
   for(it=listFirstNode(eventList); it; it=listNextNode(it))
   {
     /* found event in left section */
-    if((data->simulationInfo.zeroCrossings[*((long*) listNodeData(it))] == -1 &&
-        data->simulationInfo.zeroCrossingsPre[*((long*) listNodeData(it))] == 1) ||
-       (data->simulationInfo.zeroCrossings[*((long*) listNodeData(it))] == 1 &&
-        data->simulationInfo.zeroCrossingsPre[*((long*) listNodeData(it))] == -1))
+    if((data->simulationInfo->zeroCrossings[*((long*) listNodeData(it))] == -1 &&
+        data->simulationInfo->zeroCrossingsPre[*((long*) listNodeData(it))] == 1) ||
+       (data->simulationInfo->zeroCrossings[*((long*) listNodeData(it))] == 1 &&
+        data->simulationInfo->zeroCrossingsPre[*((long*) listNodeData(it))] == -1))
     {
       infoStreamPrint(LOG_ZEROCROSSINGS, 0, "%ld changed from %s to current %s",
             *((long*) listNodeData(it)),
-            (data->simulationInfo.zeroCrossingsPre[*((long*) listNodeData(it))] > 0) ? "TRUE" : "FALSE",
-            (data->simulationInfo.zeroCrossings[*((long*) listNodeData(it))] > 0) ? "TRUE" : "FALSE");
+            (data->simulationInfo->zeroCrossingsPre[*((long*) listNodeData(it))] > 0) ? "TRUE" : "FALSE",
+            (data->simulationInfo->zeroCrossings[*((long*) listNodeData(it))] > 0) ? "TRUE" : "FALSE");
       listPushFront(tmpEventList, listNodeData(it));
     }
   }
@@ -549,16 +513,16 @@ int checkZeroCrossings(DATA *data, LIST *tmpEventList, LIST *eventList)
  *
  *  \param [ref] [data]
  */
-void saveZeroCrossingsAfterEvent(DATA *data)
+void saveZeroCrossingsAfterEvent(DATA *data, threadData_t *threadData)
 {
   TRACE_PUSH
   long i=0;
 
   infoStreamPrint(LOG_ZEROCROSSINGS, 0, "save all zerocrossings after an event at time=%g", data->localData[0]->timeValue); /* ??? */
 
-  data->callback->function_ZeroCrossings(data, data->simulationInfo.zeroCrossings);
-  for(i=0; i<data->modelData.nZeroCrossings; i++)
-    data->simulationInfo.zeroCrossingsPre[i] = data->simulationInfo.zeroCrossings[i];
+  data->callback->function_ZeroCrossings(data, threadData, data->simulationInfo->zeroCrossings);
+  for(i=0; i<data->modelData->nZeroCrossings; i++)
+    data->simulationInfo->zeroCrossingsPre[i] = data->simulationInfo->zeroCrossings[i];
 
   TRACE_POP
 }

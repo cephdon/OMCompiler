@@ -34,33 +34,36 @@ encapsulated package NFSCodeEnv
   package:     NFSCodeEnv
   description: SCode flattening
 
-  RCS: $Id$
 
   This module flattens the SCode representation by removing all extends, imports
   and redeclares, and fully qualifying class names.
 "
 
-public import Absyn;
-public import SCode;
-public import Util;
+import Absyn;
+import Mutable;
+import SCode;
+import Util;
 
-protected import NFEnvExtends;
-protected import Error;
-protected import List;
-protected import SCodeDump;
-protected import NFSCodeFlattenRedeclare;
-protected import NFSCodeLookup;
-protected import NFSCodeCheck;
-protected import SCodeUtil;
-protected import System;
-protected import Builtin;
+protected
 
-public type Import = Absyn.Import;
+import Error;
+import FBuiltin;
+import List;
+import SCodeDump;
+import NFEnvExtends;
+import NFSCodeFlattenRedeclare;
+import NFSCodeLookup;
+import NFSCodeCheck;
+import SCodeUtil;
+import System;
 
-public constant Integer tmpTickIndex = 2;
-public constant Integer extendsTickIndex = 3;
+public
 
-public uniontype ImportTable
+type Import = Absyn.Import;
+constant Integer tmpTickIndex = 2;
+constant Integer extendsTickIndex = 3;
+
+uniontype ImportTable
   record IMPORT_TABLE
     // Imports should not be inherited, but removing them from the environment
     // when doing lookup through extends causes problems for the lookup later
@@ -73,7 +76,7 @@ public uniontype ImportTable
   end IMPORT_TABLE;
 end ImportTable;
 
-public uniontype Redeclaration
+uniontype Redeclaration
   "This uniontype stores a redeclare modifier (which might be derived from an
   element redeclare). The RAW_MODIFIER stores a 'raw' modifier, i.e. the raw
   element stored in the SCode representation. These are processed when they are
@@ -89,7 +92,7 @@ public uniontype Redeclaration
   end PROCESSED_MODIFIER;
 end Redeclaration;
 
-public uniontype Extends
+uniontype Extends
   record EXTENDS
     Absyn.Path baseClass;
     list<Redeclaration> redeclareModifiers;
@@ -98,7 +101,7 @@ public uniontype Extends
   end EXTENDS;
 end Extends;
 
-public uniontype ExtendsTable
+uniontype ExtendsTable
   record EXTENDS_TABLE
     list<Extends> baseClasses;
     list<SCode.Element> redeclaredElements;
@@ -106,34 +109,34 @@ public uniontype ExtendsTable
   end EXTENDS_TABLE;
 end ExtendsTable;
 
-public uniontype FrameType
+uniontype FrameType
   record NORMAL_SCOPE end NORMAL_SCOPE;
   record ENCAPSULATED_SCOPE end ENCAPSULATED_SCOPE;
   record IMPLICIT_SCOPE "This scope contains one or more iterators; they are made unique by the following index (plus their name)" Integer iterIndex; end IMPLICIT_SCOPE;
 end FrameType;
 
-public uniontype Frame
+uniontype Frame
   record FRAME
     Option<String> name;
     FrameType frameType;
-    AvlTree clsAndVars;
+    EnvTree.Tree clsAndVars;
     ExtendsTable extendsTable;
     ImportTable importTable;
-    Option<Util.StatefulBoolean> isUsed "Used by SCodeDependency.";
+    Option<Mutable<Boolean>> isUsed "Used by SCodeDependency.";
   end FRAME;
 end Frame;
 
-public uniontype ClassType
+uniontype ClassType
   record USERDEFINED end USERDEFINED;
   record BUILTIN end BUILTIN;
   record CLASS_EXTENDS end CLASS_EXTENDS;
   record BASIC_TYPE end BASIC_TYPE;
 end ClassType;
 
-public uniontype Item
+uniontype Item
   record VAR
     SCode.Element var;
-    Option<Util.StatefulBoolean> isUsed "Used by SCodeDependency.";
+    Option<Mutable<Boolean>> isUsed "Used by SCodeDependency.";
   end VAR;
 
   record CLASS
@@ -154,6 +157,34 @@ public uniontype Item
     Env declaredEnv;
   end REDECLARED_ITEM;
 end Item;
+
+encapsulated package EnvTree
+  import BaseAvlTree;
+  import NFSCodeEnv.Item;
+  extends BaseAvlTree;
+
+  redeclare type Key = String;
+  redeclare type Value = Item;
+
+  redeclare function extends keyStr
+  algorithm
+    outString := inKey;
+  end keyStr;
+
+  redeclare function extends valueStr
+  algorithm
+    outString := "$item";
+  end valueStr;
+
+  redeclare function extends keyCompare
+  algorithm
+    outResult := stringCompare(inKey1, inKey2);
+  end keyCompare;
+
+  redeclare function addConflictDefault = addConflictReplace;
+
+  annotation(__OpenModelica_Interface="util");
+end EnvTree;
 
 public type Env = list<Frame>;
 public constant Env emptyEnv = {};
@@ -284,15 +315,15 @@ protected function newFrame
   input FrameType inType;
   output Frame outFrame;
 protected
-  AvlTree tree;
+  EnvTree.Tree tree;
   ExtendsTable exts;
   ImportTable imps;
-  Util.StatefulBoolean is_used;
+  Mutable<Boolean> is_used;
 algorithm
-  tree := avlTreeNew();
+  tree := EnvTree.new();
   exts := newExtendsTable();
   imps := newImportTable();
-  is_used := Util.makeStatefulBoolean(false);
+  is_used := Mutable.create(false);
   outFrame := FRAME(inName, inType, tree, exts, imps, SOME(is_used));
 end newFrame;
 
@@ -347,9 +378,9 @@ public function newVarItem
   input Boolean inIsUsed;
   output Item outVarItem;
 protected
-  Util.StatefulBoolean is_used;
+  Mutable<Boolean> is_used;
 algorithm
-  is_used := Util.makeStatefulBoolean(inIsUsed);
+  is_used := Mutable.create(inIsUsed);
   outVarItem := VAR(inVar, SOME(is_used));
 end newVarItem;
 
@@ -406,11 +437,11 @@ public function removeExtendsFromLocalScope
 protected
   Option<String> name;
   FrameType ty;
-  AvlTree tree;
+  EnvTree.Tree tree;
   ImportTable imps;
   ExtendsTable exts;
   Env rest;
-  Option<Util.StatefulBoolean> is_used;
+  Option<Mutable<Boolean>> is_used;
 algorithm
   FRAME(name = name, frameType = ty, clsAndVars = tree, importTable = imps,
     isUsed = is_used) :: rest := inEnv;
@@ -426,10 +457,10 @@ public function removeExtendFromLocalScope
 protected
   Option<String> name;
   FrameType ty;
-  AvlTree tree;
+  EnvTree.Tree tree;
   ImportTable imps;
   Env rest;
-  Option<Util.StatefulBoolean> iu;
+  Option<Mutable<Boolean>> iu;
   list<Extends> bcl;
   list<SCode.Element> re;
   Option<SCode.Element> cei;
@@ -458,11 +489,11 @@ public function removeRedeclaresFromLocalScope
 protected
   Option<String> name;
   FrameType ty;
-  AvlTree tree;
+  EnvTree.Tree tree;
   ImportTable imps;
   ExtendsTable exts;
   Env rest;
-  Option<Util.StatefulBoolean> is_used;
+  Option<Mutable<Boolean>> is_used;
   list<Extends> bc;
   Option<SCode.Element> cei;
 algorithm
@@ -490,18 +521,18 @@ public function removeClsAndVarsFromFrame
   "Removes the classes variables from a frame."
   input Frame inFrame;
   output Frame outFrame;
-  output AvlTree outClsAndVars;
+  output EnvTree.Tree outClsAndVars;
 protected
   Option<String> name;
   FrameType ty;
-  AvlTree tree;
+  EnvTree.Tree tree;
   ImportTable imps;
   ExtendsTable exts;
-  Option<Util.StatefulBoolean> is_used;
+  Option<Mutable<Boolean>> is_used;
 algorithm
   FRAME(name = name, frameType = ty, clsAndVars = outClsAndVars,
     extendsTable = exts, importTable = imps, isUsed = is_used) := inFrame;
-  tree := avlTreeNew();
+  tree := EnvTree.new();
   outFrame := FRAME(name, ty, tree, exts, imps, is_used);
 end removeClsAndVarsFromFrame;
 
@@ -514,12 +545,12 @@ public function setImportTableHidden
 protected
   Option<String> name;
   FrameType ty;
-  AvlTree tree;
+  EnvTree.Tree tree;
   ImportTable imps;
   ExtendsTable exts;
   Env rest;
   list<Import> qi, uqi;
-  Option<Util.StatefulBoolean> is_used;
+  Option<Mutable<Boolean>> is_used;
 algorithm
   FRAME(name = name, frameType = ty, clsAndVars = tree, extendsTable = exts,
     importTable = IMPORT_TABLE(qualifiedImports = qi, unqualifiedImports = uqi),
@@ -557,14 +588,14 @@ public function isItemUsed
 algorithm
   isUsed := match(inItem)
     local
-      Util.StatefulBoolean is_used;
+      Mutable<Boolean> is_used;
       Item item;
 
     case CLASS(env = {FRAME(isUsed = SOME(is_used))})
-      then Util.getStatefulBoolean(is_used);
+      then Mutable.access(is_used);
 
     case VAR(isUsed = SOME(is_used))
-      then Util.getStatefulBoolean(is_used);
+      then Mutable.access(is_used);
 
     case ALIAS() then true;
 
@@ -583,12 +614,12 @@ public function linkItemUsage
 algorithm
   outDestItem := match(inSrcItem, inDestItem)
     local
-      Option<Util.StatefulBoolean> is_used;
+      Option<Mutable<Boolean>> is_used;
       SCode.Element elem;
       ClassType cls_ty;
       Option<String> name;
       FrameType ft;
-      AvlTree cv;
+      EnvTree.Tree cv;
       ExtendsTable exts;
       ImportTable imps;
       Item item;
@@ -724,12 +755,12 @@ protected function extendEnvWithVar
   output Env outEnv;
 protected
   String var_name;
-  Util.StatefulBoolean is_used;
+  Mutable<Boolean> is_used;
   Absyn.TypeSpec ty;
   SourceInfo info;
 algorithm
   SCode.COMPONENT(name = var_name, typeSpec = ty, info = info) := inVar;
-  is_used := Util.makeStatefulBoolean(false);
+  is_used := Mutable.create(false);
   outEnv := extendEnvWithItem(VAR(inVar, SOME(is_used)), inEnv, var_name);
 end extendEnvWithVar;
 
@@ -741,17 +772,26 @@ public function extendEnvWithItem
   output Env outEnv;
 protected
   Option<String> name;
-  AvlTree tree;
+  EnvTree.Tree tree;
   ExtendsTable exts;
   ImportTable imps;
   FrameType ty;
   Env rest;
-  Option<Util.StatefulBoolean> is_used;
+  Option<Mutable<Boolean>> is_used;
 algorithm
   FRAME(name, ty, tree, exts, imps, is_used) :: rest := inEnv;
-  tree := avlTreeAdd(tree, inItemName, inItem);
+  tree := EnvTree.add(tree, inItemName, inItem, extendEnvWithItemConflict);
   outEnv := FRAME(name, ty, tree, exts, imps, is_used) :: rest;
 end extendEnvWithItem;
+
+function extendEnvWithItemConflict
+  input Item newItem;
+  input Item oldItem;
+  input String name;
+  output Item item;
+algorithm
+  item := linkItemUsage(oldItem, newItem);
+end extendEnvWithItemConflict;
 
 public function updateItemInEnv
   "Updates an item in the environment by replacing an existing item."
@@ -761,15 +801,15 @@ public function updateItemInEnv
   output Env outEnv;
 protected
   Option<String> name;
-  AvlTree tree;
+  EnvTree.Tree tree;
   ExtendsTable exts;
   ImportTable imps;
   FrameType ty;
   Env rest;
-  Option<Util.StatefulBoolean> is_used;
+  Option<Mutable<Boolean>> is_used;
 algorithm
   FRAME(name, ty, tree, exts, imps, is_used) :: rest := inEnv;
-  tree := avlTreeReplace(tree, inItemName, inItem);
+  tree := EnvTree.add(tree, inItemName, inItem);
   outEnv := FRAME(name, ty, tree, exts, imps, is_used) :: rest;
 end updateItemInEnv;
 
@@ -783,14 +823,14 @@ algorithm
     local
       Import imp;
       Option<String> name;
-      AvlTree tree;
+      EnvTree.Tree tree;
       ExtendsTable exts;
       list<Import> qual_imps, unqual_imps;
       FrameType ty;
       Env rest;
       SourceInfo info;
       Boolean hidden;
-      Option<Util.StatefulBoolean> is_used;
+      Option<Mutable<Boolean>> is_used;
 
     // Unqualified imports
     case (SCode.IMPORT(imp = imp as Absyn.UNQUAL_IMPORT()),
@@ -1024,18 +1064,16 @@ protected function compareQualifiedImportNames
   input Import inImport2;
   output Boolean outEqual;
 algorithm
-  outEqual := matchcontinue(inImport1, inImport2)
+  outEqual := match(inImport1, inImport2)
     local
       Absyn.Ident name1, name2;
 
-    case (Absyn.NAMED_IMPORT(name = name1), Absyn.NAMED_IMPORT(name = name2))
-      equation
-        true = stringEqual(name1, name2);
+    case (Absyn.NAMED_IMPORT(name = name1), Absyn.NAMED_IMPORT(name = name2)) guard stringEqual(name1, name2)
       then
         true;
 
     else false;
-  end matchcontinue;
+  end match;
 end compareQualifiedImportNames;
 
 protected function extendEnvWithEnumLiterals
@@ -1082,7 +1120,7 @@ algorithm
   ty := Absyn.TPATH(Absyn.QUALIFIED("$EnumType",
     Absyn.QUALIFIED(index, inEnumPath)), NONE());
   enum_lit := SCode.COMPONENT(lit_name, SCode.defaultPrefixes, SCode.ATTR({},
-    SCode.POTENTIAL(), SCode.NON_PARALLEL(), SCode.CONST(), Absyn.BIDIR()), ty,
+    SCode.POTENTIAL(), SCode.NON_PARALLEL(), SCode.CONST(), Absyn.BIDIR(),Absyn.NONFIELD()), ty,
     SCode.NOMOD(), SCode.noComment, NONE(), inInfo);
   outEnv := extendEnvWithElement(enum_lit, inEnv);
 end extendEnvWithEnum;
@@ -1111,7 +1149,7 @@ protected
 algorithm
   Absyn.ITERATOR(name=iter_name) := inIterator;
   iter := SCode.COMPONENT(iter_name, SCode.defaultPrefixes,
-    SCode.ATTR({}, SCode.POTENTIAL(), SCode.NON_PARALLEL(), SCode.CONST(), Absyn.BIDIR()),
+    SCode.ATTR({}, SCode.POTENTIAL(), SCode.NON_PARALLEL(), SCode.CONST(), Absyn.BIDIR(), Absyn.NONFIELD()),
     Absyn.TPATH(Absyn.IDENT(""), NONE()), SCode.NOMOD(),
     SCode.noComment, NONE(), Absyn.dummyInfo);
   outEnv := extendEnvWithElement(iter, inEnv);
@@ -1581,9 +1619,9 @@ public function setEnvExtendsTable
 protected
   Option<String> name;
   FrameType ty;
-  AvlTree tree;
+  EnvTree.Tree tree;
   ImportTable imps;
-  Option<Util.StatefulBoolean> is_used;
+  Option<Mutable<Boolean>> is_used;
   Env rest_env;
 algorithm
   FRAME(name, ty, tree, _, imps, is_used) :: rest_env := inEnv;
@@ -1591,7 +1629,7 @@ algorithm
 end setEnvExtendsTable;
 
 public function setEnvClsAndVars
-  input AvlTree inTree;
+  input EnvTree.Tree inTree;
   input Env inEnv;
   output Env outEnv;
 protected
@@ -1599,7 +1637,7 @@ protected
   FrameType ty;
   ExtendsTable ext;
   ImportTable imps;
-  Option<Util.StatefulBoolean> is_used;
+  Option<Mutable<Boolean>> is_used;
   Env rest_env;
 algorithm
   FRAME(name, ty, _, ext, imps, is_used) :: rest_env := inEnv;
@@ -1724,19 +1762,18 @@ public function buildInitialEnv
   in ModelicaBuiltin or MetaModelicaBuiltin."
   output Env outInitialEnv;
 protected
-  AvlTree tree;
+  EnvTree.Tree tree;
   ExtendsTable exts;
   ImportTable imps;
-  Util.StatefulBoolean is_used;
+  Mutable<Boolean> is_used;
   SCode.Program p;
   list<Absyn.Class> initialClasses;
 algorithm
-  tree := avlTreeNew();
+  tree := EnvTree.new();
   exts := newExtendsTable();
   imps := newImportTable();
-  is_used := Util.makeStatefulBoolean(false);
+  is_used := Mutable.create(false);
 
-  tree := addDummyClassToTree("time", tree);
   tree := addDummyClassToTree("String", tree);
   tree := addDummyClassToTree("Integer", tree);
   tree := addDummyClassToTree("spliceFunction", tree);
@@ -1744,51 +1781,22 @@ algorithm
   outInitialEnv := {FRAME(NONE(), NORMAL_SCOPE(), tree, exts, imps, SOME(is_used))};
 
   // add the builtin classes from ModelicaBuiltin.mo and MetaModelicaBuiltin.mo
-  (_,p) := Builtin.getInitialFunctions();
+  (_,p) := FBuiltin.getInitialFunctions();
   outInitialEnv := extendEnvWithClasses(p, outInitialEnv);
 end buildInitialEnv;
 
 protected function addDummyClassToTree
-  "Insert a dummy class into the AvlTree."
+  "Insert a dummy class into the EnvTree."
   input String inName;
-  input AvlTree inTree;
-  output AvlTree outTree;
+  input EnvTree.Tree inTree;
+  output EnvTree.Tree outTree;
 protected
   SCode.Element cls;
 algorithm
   cls := SCode.CLASS(inName, SCode.defaultPrefixes, SCode.NOT_ENCAPSULATED(), SCode.NOT_PARTIAL(), SCode.R_CLASS(),
     SCode.PARTS({}, {}, {}, {}, {}, {}, {}, NONE()), SCode.noComment, Absyn.dummyInfo);
-  outTree := avlTreeAdd(inTree, inName, CLASS(cls, emptyEnv, BUILTIN()));
+  outTree := EnvTree.add(inTree, inName, CLASS(cls, emptyEnv, BUILTIN()));
 end addDummyClassToTree;
-
-// AVL Tree implementation
-public type AvlKey = String;
-public type AvlValue = Item;
-
-public uniontype AvlTree
-  "The binary tree data structure"
-  record AVLTREENODE
-    Option<AvlTreeValue> value "Value";
-    Integer height "height of tree, used for balancing";
-    Option<AvlTree> left "left subtree";
-    Option<AvlTree> right "right subtree";
-  end AVLTREENODE;
-end AvlTree;
-
-public uniontype AvlTreeValue
-  "Each node in the binary tree can have a value associated with it."
-  record AVLTREEVALUE
-    AvlKey key "Key" ;
-    AvlValue value "Value" ;
-  end AVLTREEVALUE;
-end AvlTreeValue;
-
-protected function avlTreeNew
-  "Return an empty tree"
-  output AvlTree tree;
-algorithm
-  tree := AVLTREENODE(NONE(),0,NONE(),NONE());
-end avlTreeNew;
 
 public function printEnvStr
   input Env inEnv;
@@ -1808,7 +1816,7 @@ algorithm
     local
       Option<String> name;
       FrameType ty;
-      AvlTree tree;
+      EnvTree.Tree tree;
       ExtendsTable exts;
       ImportTable imps;
       String name_str, ty_str, tree_str, ext_str, imp_str, out;
@@ -1817,7 +1825,7 @@ algorithm
       equation
         name_str = printFrameNameStr(name);
         ty_str = printFrameTypeStr(ty);
-        tree_str = printAvlTreeStr(SOME(tree));
+        tree_str = EnvTree.printTreeStr(tree);
         ext_str = printExtendsTableStr(exts);
         imp_str = printImportTableStr(imps);
         name_str = "<<<" + ty_str + " frame " + name_str + ">>>\n";
@@ -1853,61 +1861,6 @@ algorithm
     case IMPLICIT_SCOPE() then "Implicit";
   end match;
 end printFrameTypeStr;
-
-protected function printAvlTreeStr
-  input Option<AvlTree> inTree;
-  output String outString;
-algorithm
-  outString := match(inTree)
-    local
-      Option<AvlTree> left, right;
-      AvlTreeValue value;
-      String left_str, right_str, value_str;
-      Integer height;
-
-    case (NONE()) then "";
-    case (SOME(AVLTREENODE(value = NONE()))) then "";
-    case (SOME(AVLTREENODE(value = SOME(value),  left = left, right = right)))
-      equation
-        left_str = printAvlTreeStr(left);
-        right_str = printAvlTreeStr(right);
-        value_str = printAvlValueStr(value);
-        value_str = value_str + left_str + right_str;
-      then
-        value_str;
-  end match;
-end printAvlTreeStr;
-
-public function printAvlValueStr
-  input AvlTreeValue inValue;
-  output String outString;
-algorithm
-  outString := match(inValue)
-    local
-      String key_str, alias_str, name;
-      Absyn.Path path;
-      Item i;
-
-    case (AVLTREEVALUE(key = key_str, value = CLASS()))
-      then "\t\tClass " + key_str + "\n";
-
-    case (AVLTREEVALUE(key = key_str, value = VAR()))
-      then "\t\tVar " + key_str + "\n";
-
-    case (AVLTREEVALUE(key = key_str, value = ALIAS(name = name, path = SOME(path))))
-      equation
-        alias_str = Absyn.pathString(path) + "." + name;
-      then
-        "\t\tAlias " + key_str + " -> " + alias_str + "\n";
-
-    case (AVLTREEVALUE(key = key_str, value = ALIAS(name = name)))
-      then "\t\tAlias " + key_str + " -> " + name + "\n";
-
-    case (AVLTREEVALUE(key = key_str, value = REDECLARED_ITEM(item = i)))
-      then "\t\tRedeclare " + key_str + " -> " + getItemName(i) + "\n";
-
-  end match;
-end printAvlValueStr;
 
 public function printExtendsTableStr
   input ExtendsTable inExtendsTable;
@@ -1968,439 +1921,6 @@ algorithm
     List.map(unqual_imps, Absyn.printImportString), "\n\t\t");
   outString := "\t\t" + qual_str + unqual_str;
 end printImportTableStr;
-
-public function avlTreeAdd
-  "Inserts a new value into the tree."
-  input AvlTree inAvlTree;
-  input AvlKey inKey;
-  input AvlValue inValue;
-  output AvlTree outAvlTree;
-algorithm
-  outAvlTree := match(inAvlTree, inKey, inValue)
-    local
-      AvlKey key, rkey;
-      AvlValue value;
-
-    // empty tree
-    case (AVLTREENODE(value = NONE(), left = NONE(), right = NONE()), _, _)
-      then AVLTREENODE(SOME(AVLTREEVALUE(inKey, inValue)), 1, NONE(), NONE());
-
-    case (AVLTREENODE(value = SOME(AVLTREEVALUE(key = rkey))), key, value)
-      then balance(avlTreeAdd2(inAvlTree, stringCompare(key, rkey), key, value));
-
-    else
-      equation
-        Error.addMessage(Error.INTERNAL_ERROR, {"Env.avlTreeAdd failed"});
-      then fail();
-
-  end match;
-end avlTreeAdd;
-
-protected function avlTreeAdd2
-  "Helper function to avlTreeAdd."
-  input AvlTree inAvlTree;
-  input Integer inKeyComp;
-  input AvlKey inKey;
-  input AvlValue inValue;
-  output AvlTree outAvlTree;
-algorithm
-  outAvlTree := match(inAvlTree, inKeyComp, inKey, inValue)
-    local
-      AvlKey key;
-      AvlValue value;
-      Option<AvlTree> left, right;
-      Integer h;
-      AvlTree t;
-      Option<AvlTreeValue> oval;
-      SourceInfo info;
-
-    // Don't allow replacing of nodes.
-    case (_, 0, _, _) then inAvlTree;
-
-    // Insert into right subtree.
-    case (AVLTREENODE(value = oval, height = h, left = left, right = right),
-        1, key, value)
-      equation
-        t = createEmptyAvlIfNone(right);
-        t = avlTreeAdd(t, key, value);
-      then
-        AVLTREENODE(oval, h, left, SOME(t));
-
-    // Insert into left subtree.
-    case (AVLTREENODE(value = oval, height = h, left = left, right = right),
-        -1, key, value)
-      equation
-        t = createEmptyAvlIfNone(left);
-        t = avlTreeAdd(t, key, value);
-      then
-        AVLTREENODE(oval, h, SOME(t), right);
-  end match;
-end avlTreeAdd2;
-
-public function avlTreeGet
-  "Get a value from the binary tree given a key."
-  input AvlTree inAvlTree;
-  input AvlKey inKey;
-  output AvlValue outValue;
-protected
-  AvlKey rkey;
-algorithm
-  AVLTREENODE(value = SOME(AVLTREEVALUE(key = rkey))) := inAvlTree;
-  outValue := avlTreeGet2(inAvlTree, stringCompare(inKey, rkey), inKey);
-end avlTreeGet;
-
-protected function avlTreeGet2
-  "Helper function to avlTreeGet."
-  input AvlTree inAvlTree;
-  input Integer inKeyComp;
-  input AvlKey inKey;
-  output AvlValue outValue;
-algorithm
-  outValue := match(inAvlTree, inKeyComp, inKey)
-    local
-      AvlKey key;
-      AvlValue rval;
-      AvlTree left, right;
-
-    // Found match.
-    case (AVLTREENODE(value = SOME(AVLTREEVALUE(value = rval))), 0, _)
-      then rval;
-
-    // Search to the right.
-    case (AVLTREENODE(right = SOME(right)), 1, key)
-      then avlTreeGet(right, key);
-
-    // Search to the left.
-    case (AVLTREENODE(left = SOME(left)), -1, key)
-      then avlTreeGet(left, key);
-  end match;
-end avlTreeGet2;
-
-public function avlTreeReplace
-  "Replaces the value of an already existing node in the tree with a new value."
-  input AvlTree inAvlTree;
-  input AvlKey inKey;
-  input AvlValue inValue;
-  output AvlTree outAvlTree;
-algorithm
-  outAvlTree := match(inAvlTree, inKey, inValue)
-    local
-      AvlKey key, rkey;
-      AvlValue value;
-
-    case (AVLTREENODE(value = SOME(AVLTREEVALUE(key = rkey))), key, value)
-      then avlTreeReplace2(inAvlTree, stringCompare(key, rkey), key, value);
-
-    else
-      equation
-        Error.addMessage(Error.INTERNAL_ERROR, {"Env.avlTreeReplace failed"});
-      then fail();
-
-  end match;
-end avlTreeReplace;
-
-protected function avlTreeReplace2
-  "Helper function to avlTreeReplace."
-  input AvlTree inAvlTree;
-  input Integer inKeyComp;
-  input AvlKey inKey;
-  input AvlValue inValue;
-  output AvlTree outAvlTree;
-algorithm
-  outAvlTree := match(inAvlTree, inKeyComp, inKey, inValue)
-    local
-      AvlKey key;
-      AvlValue value;
-      Option<AvlTree> left, right;
-      Integer h;
-      AvlTree t;
-      Option<AvlTreeValue> oval;
-
-    // Replace this node.
-    case (AVLTREENODE(value = SOME(_), height = h, left = left, right = right),
-        0, key, value)
-      then AVLTREENODE(SOME(AVLTREEVALUE(key, value)), h, left, right);
-
-    // Insert into right subtree.
-    case (AVLTREENODE(value = oval, height = h, left = left, right = right),
-        1, key, value)
-      equation
-        t = createEmptyAvlIfNone(right);
-        t = avlTreeReplace(t, key, value);
-      then
-        AVLTREENODE(oval, h, left, SOME(t));
-
-    // Insert into left subtree.
-    case (AVLTREENODE(value = oval, height = h, left = left, right = right),
-        -1, key, value)
-      equation
-        t = createEmptyAvlIfNone(left);
-        t = avlTreeReplace(t, key, value);
-      then
-        AVLTREENODE(oval, h, SOME(t), right);
-  end match;
-end avlTreeReplace2;
-
-protected function createEmptyAvlIfNone
-  "Help function to AvlTreeAdd"
-    input Option<AvlTree> t;
-    output AvlTree outT;
-algorithm
-  outT := match(t)
-    case (NONE()) then avlTreeNew();
-    case (SOME(outT)) then outT;
-  end match;
-end createEmptyAvlIfNone;
-
-protected function balance
-  "Balances an AvlTree"
-  input AvlTree bt;
-  output AvlTree outBt;
-protected
-  Integer d;
-algorithm
-  d := differenceInHeight(bt);
-  outBt := doBalance(d, bt);
-end balance;
-
-protected function doBalance
-  "Performs balance if difference is > 1 or < -1"
-  input Integer difference;
-  input AvlTree bt;
-  output AvlTree outBt;
-algorithm
-  outBt := match(difference, bt)
-    case(-1, _) then computeHeight(bt);
-    case( 0, _) then computeHeight(bt);
-    case( 1, _) then computeHeight(bt);
-    // d < -1 or d > 1
-    else doBalance2(difference < 0, bt);
-  end match;
-end doBalance;
-
-protected function doBalance2
-"help function to doBalance"
-  input Boolean inDiffIsNegative;
-  input AvlTree inBt;
-  output AvlTree outBt;
-algorithm
-  outBt := match(inDiffIsNegative,inBt)
-    local AvlTree bt;
-    case(true,bt)
-      equation
-        bt = doBalance3(bt);
-        bt = rotateLeft(bt);
-      then bt;
-    case(false,bt)
-      equation
-        bt = doBalance4(bt);
-        bt = rotateRight(bt);
-      then bt;
-  end match;
-end doBalance2;
-
-protected function doBalance3 "help function to doBalance2"
-  input AvlTree inBt;
-  output AvlTree outBt;
-algorithm
-  outBt := matchcontinue(inBt)
-    local
-      AvlTree rr,bt;
-    case(bt)
-      equation
-        true = differenceInHeight(Util.getOption(rightNode(bt))) > 0;
-        rr = rotateRight(Util.getOption(rightNode(bt)));
-        bt = setRight(bt,SOME(rr));
-      then bt;
-    else inBt;
-  end matchcontinue;
-end doBalance3;
-
-protected function doBalance4 "help function to doBalance2"
-  input AvlTree inBt;
-  output AvlTree outBt;
-algorithm
-  outBt := matchcontinue(inBt)
-    local
-      AvlTree rl,bt;
-    case (bt)
-      equation
-        true = differenceInHeight(Util.getOption(leftNode(bt))) < 0;
-        rl = rotateLeft(Util.getOption(leftNode(bt)));
-        bt = setLeft(bt,SOME(rl));
-      then bt;
-    else inBt;
-  end matchcontinue;
-end doBalance4;
-
-protected function setRight
-  "set right treenode"
-  input AvlTree node;
-  input Option<AvlTree> right;
-  output AvlTree outNode;
-protected
-  Option<AvlTreeValue> value;
-  Option<AvlTree> l;
-  Integer height;
-algorithm
-  AVLTREENODE(value, height, l, _) := node;
-  outNode := AVLTREENODE(value, height, l, right);
-end setRight;
-
-protected function setLeft
-  "set left treenode"
-  input AvlTree node;
-  input Option<AvlTree> left;
-  output AvlTree outNode;
-protected
-  Option<AvlTreeValue> value;
-  Option<AvlTree> r;
-  Integer height;
-algorithm
-  AVLTREENODE(value, height, _, r) := node;
-  outNode := AVLTREENODE(value, height, left, r);
-end setLeft;
-
-protected function leftNode
-  "Retrieve the left subnode"
-  input AvlTree node;
-  output Option<AvlTree> subNode;
-algorithm
-  AVLTREENODE(left = subNode) := node;
-end leftNode;
-
-protected function rightNode
-  "Retrieve the right subnode"
-  input AvlTree node;
-  output Option<AvlTree> subNode;
-algorithm
-  AVLTREENODE(right = subNode) := node;
-end rightNode;
-
-protected function exchangeLeft
-  "help function to balance"
-  input AvlTree inNode;
-  input AvlTree inParent;
-  output AvlTree outParent "updated parent";
-protected
-  AvlTree parent, node;
-algorithm
-  parent := setRight(inParent, leftNode(inNode));
-  parent := balance(parent);
-  node := setLeft(inNode, SOME(parent));
-  outParent := balance(node);
-end exchangeLeft;
-
-protected function exchangeRight
-  "help function to balance"
-  input AvlTree inNode;
-  input AvlTree inParent;
-  output AvlTree outParent "updated parent";
-protected
-  AvlTree parent, node;
-algorithm
-  parent := setLeft(inParent, rightNode(inNode));
-  parent := balance(parent);
-  node := setRight(inNode, SOME(parent));
-  outParent := balance(node);
-end exchangeRight;
-
-protected function rotateLeft
-  "help function to balance"
-  input AvlTree node;
-  output AvlTree outNode "updated node";
-algorithm
-  outNode := exchangeLeft(Util.getOption(rightNode(node)), node);
-end rotateLeft;
-
-protected function rotateRight
-  "help function to balance"
-  input AvlTree node;
-  output AvlTree outNode "updated node";
-algorithm
-  outNode := exchangeRight(Util.getOption(leftNode(node)), node);
-end rotateRight;
-
-protected function differenceInHeight
-  "help function to balance, calculates the difference in height between left
-  and right child"
-  input AvlTree node;
-  output Integer diff;
-protected
-  Option<AvlTree> l, r;
-algorithm
-  AVLTREENODE(left = l, right = r) := node;
-  diff := getHeight(l) - getHeight(r);
-end differenceInHeight;
-
-protected function computeHeight
-  "Compute the height of the AvlTree and store in the node info."
-  input AvlTree bt;
-  output AvlTree outBt;
-protected
-  Option<AvlTree> l,r;
-  Option<AvlTreeValue> v;
-  AvlValue val;
-  Integer hl,hr,height;
-algorithm
-  AVLTREENODE(value = v as SOME(AVLTREEVALUE(value = val)),
-    left = l, right = r) := bt;
-  hl := getHeight(l);
-  hr := getHeight(r);
-  height := intMax(hl, hr) + 1;
-  outBt := AVLTREENODE(v, height, l, r);
-end computeHeight;
-
-protected function getHeight
-  "Retrieve the height of a node"
-  input Option<AvlTree> bt;
-  output Integer height;
-algorithm
-  height := match(bt)
-    case(NONE()) then 0;
-    case(SOME(AVLTREENODE(height = height))) then height;
-  end match;
-end getHeight;
-
-public function printAvlTreeStrPP
-  input AvlTree inTree;
-  output String outString;
-algorithm
-  outString := printAvlTreeStrPP2(SOME(inTree), "");
-end printAvlTreeStrPP;
-
-protected function printAvlTreeStrPP2
-  input Option<AvlTree> inTree;
-  input String inIndent;
-  output String outString;
-algorithm
-  outString := match(inTree, inIndent)
-    local
-      AvlKey rkey;
-      Option<AvlTree> l, r;
-      String s1, s2, res, indent;
-
-    case (NONE(), _) then "";
-
-    case (SOME(AVLTREENODE(value = SOME(AVLTREEVALUE(key = rkey)), left = l, right = r)), _)
-      equation
-        indent = inIndent + "  ";
-        s1 = printAvlTreeStrPP2(l, indent);
-        s2 = printAvlTreeStrPP2(r, indent);
-        res = "\n" + inIndent + rkey + s1 + s2;
-      then
-        res;
-
-    case (SOME(AVLTREENODE(value = NONE(), left = l, right = r)), _)
-      equation
-        indent = inIndent + "  ";
-        s1 = printAvlTreeStrPP2(l, indent);
-        s2 = printAvlTreeStrPP2(r, indent);
-        res = "\n" + s1 + s2;
-      then
-        res;
-  end match;
-end printAvlTreeStrPP2;
 
 annotation(__OpenModelica_Interface="frontend");
 end NFSCodeEnv;

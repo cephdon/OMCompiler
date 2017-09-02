@@ -46,6 +46,8 @@ const char *LOG_STREAM_NAME[SIM_LOG_MAX] = {
   "LOG_DEBUG",
   "LOG_DSS",
   "LOG_DSS_JAC",
+  "LOG_DT",
+  "LOG_DT_CONS",
   "LOG_EVENTS",
   "LOG_EVENTS_V",
   "LOG_INIT",
@@ -63,9 +65,13 @@ const char *LOG_STREAM_NAME[SIM_LOG_MAX] = {
   "LOG_NLS_JAC",
   "LOG_NLS_JAC_TEST",
   "LOG_NLS_RES",
+  "LOG_NLS_EXTRAPOLATE",
   "LOG_RES_INIT",
+  "LOG_RT",
   "LOG_SIMULATION",
   "LOG_SOLVER",
+  "LOG_SOLVER_V",
+  "LOG_SOLVER_CONTEXT",
   "LOG_SOTI",
   "LOG_STATS",
   "LOG_STATS_V",
@@ -78,45 +84,51 @@ const char *LOG_STREAM_NAME[SIM_LOG_MAX] = {
 
 const char *LOG_STREAM_DESC[SIM_LOG_MAX] = {
   "unknown",
-  "this stream is always active",                       /* LOG_STDOUT */
-  "this stream is always active",                       /* LOG_ASSERT */
+  "this stream is always active",                                               /* LOG_STDOUT */
+  "this stream is always active",                                               /* LOG_ASSERT */
 
-  "additional information about dassl solver",          /* LOG_DASSL */
-  "outputs the states at every dassl call",             /* LOG_DASSL_STATES */
-  "additional debug information",                       /* LOG_DEBUG */
-  "outputs information about dynamic state selection",  /* LOG_DSS */
-  "outputs jacobian of the dynamic state selection",    /* LOG_DSS_JAC */
-  "additional information during event iteration",      /* LOG_EVENTS */
-  "verbose logging of event system",                    /* LOG_EVENTS_V */
-  "additional information during initialization",       /* LOG_INIT */
-  "information from Ipopt",                             /* LOG_IPOPT */
-  "more information from Ipopt",                        /* LOG_IPOPT_FULL*/
-  "check jacobian matrix with Ipopt",                   /* LOG_IPOPT_JAC*/
-  "check hessian matrix with Ipopt",                    /* LOG_IPOPT_HESSE*/
-  "print max error in the optimization",                /* LOG_IPOPT_ERROR*/
-  "outputs the jacobian matrix used by dassl",          /* LOG_JAC */
-  "logging for linear systems",                         /* LOG_LS */
-  "verbose logging of linear systems",                  /* LOG_LS_V */
-  "logging for nonlinear systems",                      /* LOG_NLS */
-  "verbose logging of nonlinear systems",               /* LOG_NLS_V */
-  "logging of homotopy solver for nonlinear systems",   /* LOG_NLS_HOMOTOPY */
-  "outputs the jacobian of nonlinear systems",          /* LOG_NLS_JAC */
-  "tests the analytical jacobian of nonlinear systems", /* LOG_NLS_JAC_TEST */
-  "outputs every evaluation of the residual function",  /* LOG_NLS_RES */
-  "outputs residuals of the initialization",            /* LOG_RES_INIT */
-  "additional information about simulation process",    /* LOG_SIMULATION */
-  "additional information about solver process",        /* LOG_SOLVER */
-  "final solution of the initialization",               /* LOG_SOTI */
-  "additional statistics about timer/events/solver",    /* LOG_STATS */
-  "additional statistics for LOG_STATS",                /* LOG_STATS_V */
+  "additional information about dassl solver",                                  /* LOG_DASSL */
+  "outputs the states at every dassl call",                                     /* LOG_DASSL_STATES */
+  "additional debug information",                                               /* LOG_DEBUG */
+  "outputs information about dynamic state selection",                          /* LOG_DSS */
+  "outputs jacobian of the dynamic state selection",                            /* LOG_DSS_JAC */
+  "additional information about dynamic tearing",                               /* LOG_DT */
+  "additional information about dynamic tearing (local and global constraints)",/* LOG_DT_CONS */
+  "additional information during event iteration",                              /* LOG_EVENTS */
+  "verbose logging of event system",                                            /* LOG_EVENTS_V */
+  "additional information during initialization",                               /* LOG_INIT */
+  "information from Ipopt",                                                     /* LOG_IPOPT */
+  "more information from Ipopt",                                                /* LOG_IPOPT_FULL*/
+  "check jacobian matrix with Ipopt",                                           /* LOG_IPOPT_JAC*/
+  "check hessian matrix with Ipopt",                                            /* LOG_IPOPT_HESSE*/
+  "print max error in the optimization",                                        /* LOG_IPOPT_ERROR*/
+  "outputs the jacobian matrix used by dassl",                                  /* LOG_JAC */
+  "logging for linear systems",                                                 /* LOG_LS */
+  "verbose logging of linear systems",                                          /* LOG_LS_V */
+  "logging for nonlinear systems",                                              /* LOG_NLS */
+  "verbose logging of nonlinear systems",                                       /* LOG_NLS_V */
+  "logging of homotopy solver for nonlinear systems",                           /* LOG_NLS_HOMOTOPY */
+  "outputs the jacobian of nonlinear systems",                                  /* LOG_NLS_JAC */
+  "tests the analytical jacobian of nonlinear systems",                         /* LOG_NLS_JAC_TEST */
+  "outputs every evaluation of the residual function",                          /* LOG_NLS_RES */
+  "outputs debug information about extrapolate process",                        /* LOG_NLS_EXTRAPOLATE */
+  "outputs residuals of the initialization",                                    /* LOG_RES_INIT */
+  "additional information regarding real-time processes",                       /* LOG_RT */
+  "additional information about simulation process",                            /* LOG_SIMULATION */
+  "additional information about solver process",                                /* LOG_SOLVER */
+  "verbose information about the integration process",                          /* LOG_SOLVER_V */
+  "context information during the solver process",                              /* LOG_SOLVER_CONTEXT" */
+  "final solution of the initialization",                                       /* LOG_SOTI */
+  "additional statistics about timer/events/solver",                            /* LOG_STATS */
+  "additional statistics for LOG_STATS",                                        /* LOG_STATS_V */
 #ifdef USE_DEBUG_TRACE
-  "enables additional output to trace call stack",      /* LOG_TRACE */
+  "enables additional output to trace call stack",                              /* LOG_TRACE */
 #endif
-  "???",                                                /* LOG_UTIL*/
-  "additional information about the zerocrossings"      /* LOG_ZEROCROSSINGS */
+  "???",                                                                        /* LOG_UTIL*/
+  "additional information about the zerocrossings"                              /* LOG_ZEROCROSSINGS */
 };
 
-static const char *LOG_TYPE_DESC[LOG_TYPE_MAX] = {
+const char *LOG_TYPE_DESC[LOG_TYPE_MAX] = {
   "unknown",
   "info",
   "warning",
@@ -207,18 +219,6 @@ void omc_terminate_function(FILE_INFO info, const char *msg, ...)
   MMC_THROW();
 }
 
-static void printEscapedXML(const char *msg)
-{
-  while (*msg) {
-    if (*msg == '&') fputs("&amp;", stdout);
-    else if (*msg == '<') fputs("&lt;", stdout);
-    else if (*msg == '>') fputs("&gt;", stdout);
-    else if (*msg == '"') fputs("&quot;", stdout);
-    else fputc(*msg, stdout);
-    msg++;
-  }
-}
-
 void messageText(int type, int stream, int indentNext, char *msg, int subline, const int *indexes)
 {
   int i;
@@ -255,73 +255,26 @@ void messageText(int type, int stream, int indentNext, char *msg, int subline, c
   if (indentNext) level[stream]++;
 }
 
-void messageXML(int type, int stream, int indentNext, char *msg, int subline, const int *indexes)
-{
-  printf("<message stream=\"%s\" type=\"%s\" text=\"", LOG_STREAM_NAME[stream], LOG_TYPE_DESC[type]);
-  printEscapedXML(msg);
-  if (indexes) {
-    int i;
-    printf("\">\n");
-    for (i=1; i<=*indexes; i++) {
-      printf("<used index=\"%d\" />\n", indexes[i]);
-    }
-    if (!indentNext) {
-      fputs("</message>\n",stdout);
-    }
-  } else {
-    fputs(indentNext ? "\">\n" : "\" />\n", stdout);
-  }
-  fflush(stdout);
-}
-
 static void messageCloseText(int stream)
 {
   if(ACTIVE_STREAM(stream))
     level[stream]--;
 }
 
-static void messageCloseXML(int stream)
-{
-  if(ACTIVE_STREAM(stream))
-  {
-    fputs("</message>\n", stdout);
-    fflush(stdout);
-  }
-}
-
 static void messageCloseTextWarning(int stream)
 {
-  if(ACTIVE_WARNING_STREAM(stream))
+  if (ACTIVE_WARNING_STREAM(stream)) {
     level[stream]--;
-}
-
-static void messageCloseXMLWarning(int stream)
-{
-  if(ACTIVE_WARNING_STREAM(stream))
-  {
-    fputs("</message>\n", stdout);
-    fflush(stdout);
   }
 }
 
-static void (*messageFunction)(int type, int stream, int indentNext, char *msg, int subline, const int *indexes) = messageText;
+void (*messageFunction)(int type, int stream, int indentNext, char *msg, int subline, const int *indexes) = messageText;
 void (*messageClose)(int stream) = messageCloseText;
 void (*messageCloseWarning)(int stream) = messageCloseTextWarning;
 
-void setStreamPrintXML(int isXML)
-{
-  if (isXML) {
-    messageFunction = messageXML;
-    messageClose = messageCloseXML;
-    messageCloseWarning = messageCloseXMLWarning;
-  } else {
-    messageFunction = messageText;
-    messageClose = messageCloseText;
-    messageCloseWarning = messageCloseTextWarning;
-  }
-}
-
 #define SIZE_LOG_BUFFER 2048
+
+#if !defined(OMC_MINIMAL_LOGGING)
 void va_infoStreamPrint(int stream, int indentNext, const char *format, va_list args)
 {
   if (useStream[stream]) {
@@ -421,6 +374,7 @@ void va_errorStreamPrintWithEquationIndexes(int stream, int indentNext, const in
   vsnprintf(logBuffer, SIZE_LOG_BUFFER, format, args);
   messageFunction(LOG_TYPE_ERROR, stream, indentNext, logBuffer, 0, indexes);
 }
+#endif
 
 #ifdef USE_DEBUG_OUTPUT
 void debugStreamPrint(int stream, int indentNext, const char *format, ...)
@@ -467,29 +421,38 @@ static inline jmp_buf* getBestJumpBuffer(threadData_t *threadData)
 
 void va_throwStreamPrint(threadData_t *threadData, const char *format, va_list args)
 {
+#if !defined(OMC_MINIMAL_LOGGING)
   char logBuffer[SIZE_LOG_BUFFER];
   vsnprintf(logBuffer, SIZE_LOG_BUFFER, format, args);
   messageFunction(LOG_TYPE_DEBUG, LOG_ASSERT, 0, logBuffer, 0, NULL);
+#endif
   threadData = threadData ? threadData : (threadData_t*)pthread_getspecific(mmc_thread_data_key);
   longjmp(*getBestJumpBuffer(threadData), 1);
 }
 
 void throwStreamPrint(threadData_t *threadData, const char *format, ...)
 {
+#if !defined(OMC_MINIMAL_LOGGING)
   va_list args;
   va_start(args, format);
   va_throwStreamPrint(threadData, format, args);
   va_end(args);
+#else
+  threadData = threadData ? threadData : (threadData_t*)pthread_getspecific(mmc_thread_data_key);
+  longjmp(*getBestJumpBuffer(threadData), 1);
+#endif
 }
 
 void throwStreamPrintWithEquationIndexes(threadData_t *threadData, const int *indexes, const char *format, ...)
 {
+#if !defined(OMC_MINIMAL_LOGGING)
   char logBuffer[SIZE_LOG_BUFFER];
   va_list args;
   va_start(args, format);
   vsnprintf(logBuffer, SIZE_LOG_BUFFER, format, args);
   va_end(args);
   messageFunction(LOG_TYPE_DEBUG, LOG_ASSERT, 0, logBuffer, 0, indexes);
+#endif
   threadData = threadData ? threadData : (threadData_t*)pthread_getspecific(mmc_thread_data_key);
   longjmp(*getBestJumpBuffer(threadData), 1);
 }

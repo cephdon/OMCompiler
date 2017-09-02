@@ -3,6 +3,9 @@
  *   @{
 */
 
+
+
+
 #include <math.h>                        ///< mathematical expressions
 #include <stdlib.h>
 #include <limits>
@@ -35,7 +38,7 @@ inline static int sgn (const double &c)
 }
 
 /// Definition of Signum function
-double BOOST_EXTENSION_EXPORT_DECL division (const double &a,const double &b, const char * text);
+double BOOST_EXTENSION_EXPORT_DECL division (const double &a,const double &b, bool throwEx,const char * text);
 
 inline static int modelica_mod_int(int v1, int v2)
 {
@@ -138,6 +141,12 @@ inline static int round (const double &n)
     return (fabs(n)-floor(fabs(n)) < 0.5) ? (int)(sgn(n)*floor(fabs(n))) : (int)(sgn(n)*ceil(fabs(n)));
 }
 
+/// Modelica integer function
+inline static int integer (const double &n)
+{
+    return floor(n);
+}
+
 /// Horner-Schema (William George Horner)
 inline double Phorner(double &x, int degree_P, double* P)
 {
@@ -235,13 +244,34 @@ private:
 };
 
 template <typename T>
-inline bool IsEqual(T x, T y,T t)
+inline bool IsEqual(T x, T y, T t)
 {
-    static close_at_tolerance<T> comp( t /*std::numeric_limits<T>::epsilon()/2*10*/);
+    close_at_tolerance<T> comp( t /*std::numeric_limits<T>::epsilon()/2*10*/);
     return comp(fpt_abs(x),fpt_abs(y));
 };
 
+template <typename T>
+inline bool IsEqual(T x, T y)
+{
+    return x == y;
+};
 
+template <>
+inline bool IsEqual(double x, double y)
+{
+    return IsEqual(x, y, 1e-10);
+};
+
+template <>
+inline bool IsEqual(std::string x, std::string y)
+{
+    return x.compare(y) == 0;
+};
+
+inline bool IsEqual(std::string x, const char* y)
+{
+    return x.compare(y) == 0;
+};
 
 template < typename T >
 struct floatCompare {

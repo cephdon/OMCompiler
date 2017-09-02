@@ -74,8 +74,9 @@
 #include "simulation/results/simulation_result_wall.h"
 #include "simulation/results/simulation_result_ia.h"
 #include "simulation/solver/solver_main.h"
-#include "simulation_info_xml.h"
+#include "simulation_info_json.h"
 #include "modelinfo.h"
+#include "simulation/solver/events.h"
 #include "simulation/solver/model_help.h"
 #include "simulation/solver/mixedSystem.h"
 #include "simulation/solver/linearSystem.h"
@@ -93,42 +94,17 @@ using namespace std;
 #ifndef NO_INTERACTIVE_DEPENDENCY
   Socket sim_communication_port;
   static int sim_communication_port_open = 0;
+  static int isXMLTCP=0;
 #endif
 
 extern "C" {
-
-int terminationTerminate = 0; /* Becomes non-zero when user terminates simulation. */
-FILE_INFO TermInfo;           /* message for termination. */
-
-char* TermMsg;                /* message for termination. */
 
 int sim_noemit = 0;           /* Flag for not emitting data */
 
 const std::string *init_method = NULL; /* method for  initialization. */
 
-/*! \fn void setTermMsg(const char* msg)
- *
- *  prints all values as arguments it need data
- *  and which part of the ring should printed.
- */
-static void setTermMsg(const char *msg, va_list ap)
-{
-  size_t i;
-  static size_t termMsgSize = 0;
-  if(NULL == TermMsg)
-  {
-    termMsgSize = max(strlen(msg)*2+1,(size_t)2048);
-    TermMsg = (char*) malloc(termMsgSize);
-  }
-  i = vsnprintf(TermMsg,termMsgSize,msg,ap);
-  if(i >= termMsgSize)
-  {
-    free(TermMsg);
-    termMsgSize = 2*i+1;
-    TermMsg = (char*)malloc(termMsgSize);
-    vsnprintf(TermMsg,termMsgSize,msg,ap);
-  }
-}
+static int callSolver(DATA* simData, threadData_t *threadData, string init_initMethod, string init_file,
+      double init_time, string outputVariablesAtEnd, int cpuTime, const char *argv_0);
 
 /*! \fn void setGlobalVerboseLevel(int argc, char**argv)
  *
@@ -162,7 +138,7 @@ void setGlobalVerboseLevel(int argc, char**argv)
   {
     string flagList = *flags;
     string flag;
-    unsigned long pos;
+    mmc_uint_t pos;
 
     do
     {
@@ -207,6 +183,10 @@ void setGlobalVerboseLevel(int argc, char**argv)
     useStream[LOG_SOTI] = 1;
 
   /* print LOG_STATS if LOG_SOLVER if active */
+  if(useStream[LOG_SOLVER_V] == 1)
+    useStream[LOG_SOLVER] = 1;
+
+  /* print LOG_STATS if LOG_SOLVER if active */
   if(useStream[LOG_SOLVER] == 1)
     useStream[LOG_STATS] = 1;
 
@@ -238,7 +218,7 @@ void setGlobalVerboseLevel(int argc, char**argv)
   delete flags;
 }
 
-int getNonlinearSolverMethod(int argc, char**argv)
+static int getNonlinearSolverMethod()
 {
   int i;
   const char *cflags = omc_flagValue[FLAG_NLS];
@@ -260,7 +240,7 @@ int getNonlinearSolverMethod(int argc, char**argv)
   return NLS_NONE;
 }
 
-int getlinearSolverMethod(int argc, char**argv)
+static int getlinearSolverMethod()
 {
   int i;
   const char *cflags = omc_flagValue[FLAG_LS];
@@ -282,7 +262,29 @@ int getlinearSolverMethod(int argc, char**argv)
   return LS_NONE;
 }
 
-int getNewtonStrategy(int argc, char**argv)
+static int getlinearSparseSolverMethod()
+{
+  int i;
+  const char *cflags = omc_flagValue[FLAG_LSS];
+  const string *method = cflags ? new string(cflags) : NULL;
+
+  if(!method)
+    return LSS_KLU; /* default method */
+
+  for(i=1; i<LSS_MAX; ++i)
+    if(*method == LSS_NAME[i])
+      return i;
+
+  warningStreamPrint(LOG_STDOUT, 1, "unrecognized option -lss=%s, current options are:", method->c_str());
+  for(i=1; i<LSS_MAX; ++i)
+    warningStreamPrint(LOG_STDOUT, 0, "%-18s [%s]", LSS_NAME[i], LSS_DESC[i]);
+  messageClose(LOG_STDOUT);
+  throwStreamPrint(NULL,"see last warning");
+
+  return LSS_NONE;
+}
+
+static int getNewtonStrategy()
 {
   int i;
   const char *cflags = omc_flagValue[FLAG_NEWTON_STRATEGY];
@@ -304,18 +306,53 @@ int getNewtonStrategy(int argc, char**argv)
   return NEWTON_NONE;
 }
 
+static int getNlsLSSolver()
+{
+  int i;
+  const char *cflags = omc_flagValue[FLAG_NLS_LS];
+  const string *method = cflags ? new string(cflags) : NULL;
+
+  if(!method)
+    return NLS_LS_LAPACK; /* default method */
+
+  for(i=1; i<NLS_LS_MAX; ++i)
+    if(*method == NLS_LS_METHOD[i])
+      return i;
+
+  warningStreamPrint(LOG_STDOUT, 1, "unrecognized option -nls=%s, current options are:", method->c_str());
+  for(i=1; i<NLS_LS_MAX; ++i)
+    warningStreamPrint(LOG_STDOUT, 0, "%-18s [%s]", NLS_LS_METHOD[i], NLS_LS_METHOD_DESC[i]);
+  messageClose(LOG_STDOUT);
+  throwStreamPrint(NULL,"see last warning");
+
+  return NLS_LS_UNKNOWN;
+}
+
+static double getFlagReal(enum _FLAG flag, double res)
+{
+  const char *flagStr = omc_flagValue[flag];
+  char *endptr;
+  if (flagStr==NULL || *flagStr=='\0') {
+    return res;
+  }
+  res = strtod(flagStr, &endptr);
+  if (*endptr) {
+    throwStreamPrint(NULL, "Simulation flag %s expects a real number, got: %s", FLAG_NAME[flag], flagStr);
+  }
+  return res;
+}
+
 /**
  * Read the variable filter and mark variables that should not be part of the result file.
  * This phase is skipped for interactive simulations
  */
-void initializeOutputFilter(MODEL_DATA *modelData, modelica_string variableFilter, int resultFormatHasCheapAliasesAndParameters)
+void initializeOutputFilter(MODEL_DATA *modelData, const char *variableFilter, int resultFormatHasCheapAliasesAndParameters)
 {
 #ifndef _MSC_VER
   regex_t myregex;
   int flags = REG_EXTENDED;
   int rc;
-  std::string varfilter(MMC_STRINGDATA(variableFilter));
-  string tmp = ("^(" + varfilter + ")$");
+  string tmp = ("^(" + string(variableFilter) + ")$");
   const char *filter = tmp.c_str(); // C++ strings are horrible to work with...
 
   if(0 == strcmp(filter, ".*")) { // This matches all variables, so we don't need to do anything
@@ -330,10 +367,10 @@ void initializeOutputFilter(MODEL_DATA *modelData, modelica_string variableFilte
     return;
   }
 
-  for(long i=0; i<modelData->nVariablesReal; i++) if(!modelData->realVarsData[i].filterOutput) {
+  for(mmc_sint_t i=0; i<modelData->nVariablesReal; i++) if(!modelData->realVarsData[i].filterOutput) {
     modelData->realVarsData[i].filterOutput = regexec(&myregex, modelData->realVarsData[i].info.name, 0, NULL, 0) != 0;
   }
-  for(long i=0; i<modelData->nAliasReal; i++) if(!modelData->realAlias[i].filterOutput) {
+  for(mmc_sint_t i=0; i<modelData->nAliasReal; i++) if(!modelData->realAlias[i].filterOutput) {
     if(modelData->realAlias[i].aliasType == 0)  /* variable */ {
       modelData->realAlias[i].filterOutput = regexec(&myregex, modelData->realAlias[i].info.name, 0, NULL, 0) != 0;
       if (0 == modelData->realAlias[i].filterOutput) {
@@ -346,10 +383,10 @@ void initializeOutputFilter(MODEL_DATA *modelData, modelica_string variableFilte
       }
     }
   }
-  for (long i=0; i<modelData->nVariablesInteger; i++) if(!modelData->integerVarsData[i].filterOutput) {
+  for (mmc_sint_t i=0; i<modelData->nVariablesInteger; i++) if(!modelData->integerVarsData[i].filterOutput) {
     modelData->integerVarsData[i].filterOutput = regexec(&myregex, modelData->integerVarsData[i].info.name, 0, NULL, 0) != 0;
   }
-  for (long i=0; i<modelData->nAliasInteger; i++) if(!modelData->integerAlias[i].filterOutput) {
+  for (mmc_sint_t i=0; i<modelData->nAliasInteger; i++) if(!modelData->integerAlias[i].filterOutput) {
     if(modelData->integerAlias[i].aliasType == 0)  /* variable */ {
       modelData->integerAlias[i].filterOutput = regexec(&myregex, modelData->integerAlias[i].info.name, 0, NULL, 0) != 0;
       if (0 == modelData->integerAlias[i].filterOutput) {
@@ -362,10 +399,10 @@ void initializeOutputFilter(MODEL_DATA *modelData, modelica_string variableFilte
       }
     }
   }
-  for (long i=0; i<modelData->nVariablesBoolean; i++) if(!modelData->booleanVarsData[i].filterOutput) {
+  for (mmc_sint_t i=0; i<modelData->nVariablesBoolean; i++) if(!modelData->booleanVarsData[i].filterOutput) {
     modelData->booleanVarsData[i].filterOutput = regexec(&myregex, modelData->booleanVarsData[i].info.name, 0, NULL, 0) != 0;
   }
-  for (long i=0; i<modelData->nAliasBoolean; i++) if(!modelData->booleanAlias[i].filterOutput) {
+  for (mmc_sint_t i=0; i<modelData->nAliasBoolean; i++) if(!modelData->booleanAlias[i].filterOutput) {
     if(modelData->booleanAlias[i].aliasType == 0)  /* variable */ {
       modelData->booleanAlias[i].filterOutput = regexec(&myregex, modelData->booleanAlias[i].info.name, 0, NULL, 0) != 0;
       if (0 == modelData->booleanAlias[i].filterOutput) {
@@ -378,10 +415,10 @@ void initializeOutputFilter(MODEL_DATA *modelData, modelica_string variableFilte
       }
     }
   }
-  for (long i=0; i<modelData->nVariablesString; i++) if(!modelData->stringVarsData[i].filterOutput) {
+  for (mmc_sint_t i=0; i<modelData->nVariablesString; i++) if(!modelData->stringVarsData[i].filterOutput) {
     modelData->stringVarsData[i].filterOutput = regexec(&myregex, modelData->stringVarsData[i].info.name, 0, NULL, 0) != 0;
   }
-  for (long i=0; i<modelData->nAliasString; i++) if(!modelData->stringAlias[i].filterOutput) {
+  for (mmc_sint_t i=0; i<modelData->nAliasString; i++) if(!modelData->stringAlias[i].filterOutput) {
     if(modelData->stringAlias[i].aliasType == 0)  /* variable */ {
       modelData->stringAlias[i].filterOutput = regexec(&myregex, modelData->stringAlias[i].info.name, 0, NULL, 0) != 0;
       if (0 == modelData->stringAlias[i].filterOutput) {
@@ -402,7 +439,7 @@ void initializeOutputFilter(MODEL_DATA *modelData, modelica_string variableFilte
 /**
  * Starts a non-interactive simulation
  */
-int startNonInteractiveSimulation(int argc, char**argv, DATA* data)
+int startNonInteractiveSimulation(int argc, char**argv, DATA* data, threadData_t *threadData)
 {
   TRACE_PUSH
 
@@ -421,16 +458,16 @@ int startNonInteractiveSimulation(int argc, char**argv, DATA* data)
   errno = 0;
   if (omc_flag[FLAG_ALARM]) {
     char *endptr;
-    long alarmVal = strtol(omc_flagValue[FLAG_ALARM],&endptr,10);
+    mmc_sint_t alarmVal = strtol(omc_flagValue[FLAG_ALARM],&endptr,10);
     if (errno || *endptr != 0) {
-      throwStreamPrint(data->threadData, "-alarm takes an integer argument (got '%s')", omc_flagValue[FLAG_ALARM]);
+      throwStreamPrint(threadData, "-alarm takes an integer argument (got '%s')", omc_flagValue[FLAG_ALARM]);
     }
     alarm(alarmVal);
   }
 
   /* calc numStep */
-  data->simulationInfo.numSteps = static_cast<modelica_integer>(round((data->simulationInfo.stopTime - data->simulationInfo.startTime)/data->simulationInfo.stepSize));
-  infoStreamPrint(LOG_SOLVER, 0, "numberOfIntervals = %ld", (long) data->simulationInfo.numSteps);
+  data->simulationInfo->numSteps = static_cast<modelica_integer>(round((data->simulationInfo->stopTime - data->simulationInfo->startTime)/data->simulationInfo->stepSize));
+  infoStreamPrint(LOG_SOLVER, 0, "numberOfIntervals = %ld", (long) data->simulationInfo->numSteps);
 
   { /* Setup the clock */
     enum omc_rt_clock_t clock = OMC_CLOCK_REALTIME;
@@ -453,10 +490,10 @@ int startNonInteractiveSimulation(int argc, char**argv, DATA* data)
 
   if(measure_time_flag) {
     rt_tick(SIM_TIMER_INFO_XML);
-    modelInfoInit(&data->modelData.modelDataXml);
+    modelInfoInit(&data->modelData->modelDataXml);
     rt_accumulate(SIM_TIMER_INFO_XML);
-    //std::cerr << "ModelData with " << data->modelData.modelDataXml.nFunctions << " functions and " << data->modelData.modelDataXml.nEquations << " equations and " << data->modelData.modelDataXml.nProfileBlocks << " profileBlocks\n" << std::endl;
-    rt_init(SIM_TIMER_FIRST_FUNCTION + data->modelData.modelDataXml.nFunctions + data->modelData.modelDataXml.nEquations + data->modelData.modelDataXml.nProfileBlocks + 4 /* sentinel */);
+    //std::cerr << "ModelData with " << data->modelData->modelDataXml.nFunctions << " functions and " << data->modelData->modelDataXml.nEquations << " equations and " << data->modelData->modelDataXml.nProfileBlocks << " profileBlocks\n" << std::endl;
+    rt_init(SIM_TIMER_FIRST_FUNCTION + data->modelData->modelDataXml.nFunctions + data->modelData->modelDataXml.nEquations + data->modelData->modelDataXml.nProfileBlocks + 4 /* sentinel */);
     rt_measure_overhead(SIM_TIMER_TOTAL);
     rt_clear(SIM_TIMER_TOTAL);
     rt_tick(SIM_TIMER_TOTAL);
@@ -469,18 +506,33 @@ int startNonInteractiveSimulation(int argc, char**argv, DATA* data)
   if(create_linearmodel)
   {
     if(lintime == NULL) {
-      data->simulationInfo.stopTime = data->simulationInfo.startTime;
+      data->simulationInfo->stopTime = data->simulationInfo->startTime;
     } else {
-      data->simulationInfo.stopTime = atof(lintime);
+      data->simulationInfo->stopTime = atof(lintime);
     }
-    infoStreamPrint(LOG_STDOUT, 0, "Linearization will performed at point of time: %f", data->simulationInfo.stopTime);
+    infoStreamPrint(LOG_STDOUT, 0, "Linearization will performed at point of time: %f", data->simulationInfo->stopTime);
+  }
+
+  /* set delta x for linearization */
+  if(omc_flag[FLAG_DELTA_X_LINEARIZE]) {
+    numericalDifferentiationDeltaXlinearize = atof(omc_flagValue[FLAG_DELTA_X_LINEARIZE]);
+    infoStreamPrint(LOG_SOLVER, 0, "Set delta x for numerical differentiation of the linearization to %f", numericalDifferentiationDeltaXlinearize);
+  }else{
+    numericalDifferentiationDeltaXlinearize = sqrt(DBL_EPSILON*2e1);
+  }
+
+  /* set delta x for integration methods dassl, ida */
+  if(omc_flag[FLAG_DELTA_X_SOLVER]) {
+    numericalDifferentiationDeltaXsolver = atof(omc_flagValue[FLAG_DELTA_X_SOLVER]);
+    infoStreamPrint(LOG_SOLVER, 0, "Set delta x for numerical differentiation of the integrator to %f", numericalDifferentiationDeltaXsolver);
+  }else{
+    numericalDifferentiationDeltaXsolver = sqrt(DBL_EPSILON);
   }
 
   if(omc_flag[FLAG_S]) {
-    const string *method = new string(omc_flagValue[FLAG_S]);
-    if(method) {
-      data->simulationInfo.solverMethod = mmc_mk_scon(method->c_str());
-      infoStreamPrint(LOG_SOLVER, 0, "overwrite solver method: %s [from command line]", MMC_STRINGDATA(data->simulationInfo.solverMethod));
+    if (omc_flagValue[FLAG_S]) {
+      data->simulationInfo->solverMethod = GC_strdup(omc_flagValue[FLAG_S]);
+      infoStreamPrint(LOG_SOLVER, 0, "overwrite solver method: %s [from command line]", data->simulationInfo->solverMethod);
     }
   }
 
@@ -488,10 +540,10 @@ int startNonInteractiveSimulation(int argc, char**argv, DATA* data)
   const char *result_file = omc_flagValue[FLAG_R];
   string result_file_cstr;
   if(!result_file) {
-    result_file_cstr = string(data->modelData.modelFilePrefix) + string("_res.") + MMC_STRINGDATA(data->simulationInfo.outputFormat);
-    data->modelData.resultFileName = GC_strdup(result_file_cstr.c_str());
+    result_file_cstr = string(data->modelData->modelFilePrefix) + string("_res.") + data->simulationInfo->outputFormat;
+    data->modelData->resultFileName = GC_strdup(result_file_cstr.c_str());
   } else {
-    data->modelData.resultFileName = GC_strdup(result_file);
+    data->modelData->resultFileName = GC_strdup(result_file);
   }
 
   string init_initMethod = "";
@@ -499,7 +551,6 @@ int startNonInteractiveSimulation(int argc, char**argv, DATA* data)
   string init_time_string = "";
   double init_time = 0.0;
   string init_lambda_steps_string = "";
-  int init_lambda_steps = 1;
   string outputVariablesAtEnd = "";
   int cpuTime = omc_flag[FLAG_CPU];
 
@@ -517,20 +568,28 @@ int startNonInteractiveSimulation(int argc, char**argv, DATA* data)
     init_lambda_steps_string = omc_flagValue[FLAG_ILS];
     init_lambda_steps = atoi(init_lambda_steps_string.c_str());
   }
+  if(omc_flag[FLAG_MAX_BISECTION_ITERATIONS]) {
+    maxBisectionIterations = atoi(omc_flagValue[FLAG_MAX_BISECTION_ITERATIONS]);
+    infoStreamPrint(LOG_STDOUT, 0, "Maximum number of bisection iterations changed to %d", maxBisectionIterations);
+  }
+  if(omc_flag[FLAG_MAX_EVENT_ITERATIONS]) {
+    maxEventIterations = atoi(omc_flagValue[FLAG_MAX_EVENT_ITERATIONS]);
+    infoStreamPrint(LOG_STDOUT, 0, "Maximum number of event iterations changed to %d", maxEventIterations);
+  }
   if(omc_flag[FLAG_OUTPUT]) {
     outputVariablesAtEnd = omc_flagValue[FLAG_OUTPUT];
   }
 
-  retVal = callSolver(data, init_initMethod, init_file, init_time, init_lambda_steps, outputVariablesAtEnd, cpuTime);
+  retVal = callSolver(data, threadData, init_initMethod, init_file, init_time, outputVariablesAtEnd, cpuTime, argv[0]);
 
   if (omc_flag[FLAG_ALARM]) {
     alarm(0);
   }
 
   if(0 == retVal && create_linearmodel) {
-    rt_tick(SIM_TIMER_LINEARIZE);
-    retVal = linearize(data);
-    rt_accumulate(SIM_TIMER_LINEARIZE);
+    rt_tick(SIM_TIMER_JACOBIAN);
+    retVal = linearize(data, threadData);
+    rt_accumulate(SIM_TIMER_JACOBIAN);
     infoStreamPrint(LOG_STDOUT, 0, "Linear model is created!");
   }
 
@@ -541,14 +600,14 @@ int startNonInteractiveSimulation(int argc, char**argv, DATA* data)
   measure_time_flag = measure_time_flag_previous;
 
   if(0 == retVal && measure_time_flag) {
-    const string jsonInfo = string(data->modelData.modelFilePrefix) + "_prof.json";
-    const string modelInfo = string(data->modelData.modelFilePrefix) + "_prof.xml";
-    const string plotFile = string(data->modelData.modelFilePrefix) + "_prof.plt";
+    const string jsonInfo = string(data->modelData->modelFilePrefix) + "_prof.json";
+    const string modelInfo = string(data->modelData->modelFilePrefix) + "_prof.xml";
+    const string plotFile = string(data->modelData->modelFilePrefix) + "_prof.plt";
     rt_accumulate(SIM_TIMER_TOTAL);
     const char* plotFormat = omc_flagValue[FLAG_MEASURETIMEPLOTFORMAT];
-    retVal = printModelInfo(data, modelInfo.c_str(), plotFile.c_str(), plotFormat ? plotFormat : "svg",
-        MMC_STRINGDATA(data->simulationInfo.solverMethod), MMC_STRINGDATA(data->simulationInfo.outputFormat), data->modelData.resultFileName) && retVal;
-    retVal = printModelInfoJSON(data, jsonInfo.c_str(), data->modelData.resultFileName) && retVal;
+    retVal = printModelInfo(data, threadData, modelInfo.c_str(), plotFile.c_str(), plotFormat ? plotFormat : "svg",
+        data->simulationInfo->solverMethod, data->simulationInfo->outputFormat, data->modelData->resultFileName) && retVal;
+    retVal = printModelInfoJSON(data, threadData, jsonInfo.c_str(), data->modelData->resultFileName) && retVal;
   }
 
   TRACE_POP
@@ -562,54 +621,54 @@ int startNonInteractiveSimulation(int argc, char**argv, DATA* data)
  *
  *  This function initializes result object to emit data.
  */
-int initializeResultData(DATA* simData, int cpuTime)
+int initializeResultData(DATA* simData, threadData_t *threadData, int cpuTime)
 {
   int resultFormatHasCheapAliasesAndParameters = 0;
   int retVal = 0;
-  long maxSteps = 4 * simData->simulationInfo.numSteps;
-  sim_result.filename = strdup(simData->modelData.resultFileName);
+  mmc_sint_t maxSteps = 4 * simData->simulationInfo->numSteps;
+  sim_result.filename = strdup(simData->modelData->resultFileName);
   sim_result.numpoints = maxSteps;
   sim_result.cpuTime = cpuTime;
-  if (sim_noemit || 0 == strcmp("empty", MMC_STRINGDATA(simData->simulationInfo.outputFormat))) {
+  if (sim_noemit || 0 == strcmp("empty", simData->simulationInfo->outputFormat)) {
     /* Default is set to noemit */
-  } else if(0 == strcmp("csv", MMC_STRINGDATA(simData->simulationInfo.outputFormat))) {
+  } else if(0 == strcmp("csv", simData->simulationInfo->outputFormat)) {
     sim_result.init = omc_csv_init;
     sim_result.emit = omc_csv_emit;
     /* sim_result.writeParameterData = omc_csv_writeParameterData; */
     sim_result.free = omc_csv_free;
-  } else if(0 == strcmp("mat", MMC_STRINGDATA(simData->simulationInfo.outputFormat))) {
+  } else if(0 == strcmp("mat", simData->simulationInfo->outputFormat)) {
     sim_result.init = mat4_init;
     sim_result.emit = mat4_emit;
     sim_result.writeParameterData = mat4_writeParameterData;
     sim_result.free = mat4_free;
     resultFormatHasCheapAliasesAndParameters = 1;
 #if !defined(OMC_MINIMAL_RUNTIME)
-  } else if(0 == strcmp("wall", MMC_STRINGDATA(simData->simulationInfo.outputFormat))) {
+  } else if(0 == strcmp("wall", simData->simulationInfo->outputFormat)) {
     sim_result.init = recon_wall_init;
     sim_result.emit = recon_wall_emit;
     sim_result.writeParameterData = recon_wall_writeParameterData;
     sim_result.free = recon_wall_free;
     resultFormatHasCheapAliasesAndParameters = 1;
-  } else if(0 == strcmp("plt", MMC_STRINGDATA(simData->simulationInfo.outputFormat))) {
+  } else if(0 == strcmp("plt", simData->simulationInfo->outputFormat)) {
     sim_result.init = plt_init;
     sim_result.emit = plt_emit;
     /* sim_result.writeParameterData = plt_writeParameterData; */
     sim_result.free = plt_free;
   }
   //NEW interactive
-  else if(0 == strcmp("ia", MMC_STRINGDATA(simData->simulationInfo.outputFormat))) {
+  else if(0 == strcmp("ia", simData->simulationInfo->outputFormat)) {
     sim_result.init = ia_init;
     sim_result.emit = ia_emit;
     //sim_result.writeParameterData = ia_writeParameterData;
     sim_result.free = ia_free;
 #endif
   } else {
-    cerr << "Unknown output format: " << MMC_STRINGDATA(simData->simulationInfo.outputFormat) << endl;
+    cerr << "Unknown output format: " << simData->simulationInfo->outputFormat << endl;
     return 1;
   }
-  initializeOutputFilter(&(simData->modelData), simData->simulationInfo.variableFilter, resultFormatHasCheapAliasesAndParameters);
-  sim_result.init(&sim_result, simData);
-  infoStreamPrint(LOG_SOLVER, 0, "Allocated simulation result data storage for method '%s' and file='%s'", (char*) MMC_STRINGDATA(simData->simulationInfo.outputFormat), sim_result.filename);
+  initializeOutputFilter(simData->modelData, simData->simulationInfo->variableFilter, resultFormatHasCheapAliasesAndParameters);
+  sim_result.init(&sim_result, simData, threadData);
+  infoStreamPrint(LOG_SOLVER, 0, "Allocated simulation result data storage for method '%s' and file='%s'", (char*) simData->simulationInfo->outputFormat, sim_result.filename);
   return 0;
 }
 
@@ -621,25 +680,24 @@ int initializeResultData(DATA* simData, int cpuTime)
  * "euler" calls an Euler solver
  * "rungekutta" calls a fourth-order Runge-Kutta Solver
  */
-int callSolver(DATA* simData, string init_initMethod, string init_file,
-      double init_time, int lambda_steps, string outputVariablesAtEnd, int cpuTime)
+static int callSolver(DATA* simData, threadData_t *threadData, string init_initMethod, string init_file,
+      double init_time, string outputVariablesAtEnd, int cpuTime, const char *argv_0)
 {
   TRACE_PUSH
   int retVal = -1;
-  long i;
-  long solverID = S_UNKNOWN;
+  mmc_sint_t i;
+  mmc_sint_t solverID = S_UNKNOWN;
   const char* outVars = (outputVariablesAtEnd.size() == 0) ? NULL : outputVariablesAtEnd.c_str();
-  threadData_t *threadData = simData->threadData;
   MMC_TRY_INTERNAL(mmc_jumper)
   MMC_TRY_INTERNAL(globalJumpBuffer)
 
-  if(initializeResultData(simData, cpuTime))
-  {
+  if (initializeResultData(simData, threadData, cpuTime)) {
     TRACE_POP
     return -1;
   }
+  simData->real_time_sync.scaling = getFlagReal(FLAG_RT, 0.0);
 
-  if(std::string("") == MMC_STRINGDATA(simData->simulationInfo.solverMethod)) {
+  if(std::string("") == simData->simulationInfo->solverMethod) {
 #if defined(WITH_DASSL)
     solverID = S_DASSL;
 #else
@@ -647,7 +705,7 @@ int callSolver(DATA* simData, string init_initMethod, string init_file,
 #endif
   } else {
     for(i=1; i<S_MAX; ++i) {
-      if(std::string(SOLVER_METHOD_NAME[i]) == MMC_STRINGDATA(simData->simulationInfo.solverMethod)) {
+      if(std::string(SOLVER_METHOD_NAME[i]) == simData->simulationInfo->solverMethod) {
         solverID = i;
       }
     }
@@ -655,35 +713,35 @@ int callSolver(DATA* simData, string init_initMethod, string init_file,
   /* if no states are present, then we can
    * use euler method, since it does nothing.
    */
-  if (simData->modelData.nStates < 1 && solverID != S_OPTIMIZATION && solverID != S_SYM_EULER) {
+  if (simData->modelData->nStates < 1 && solverID != S_OPTIMIZATION && solverID != S_SYM_SOLVER) {
     solverID = S_EULER;
   }
 
   if(S_UNKNOWN == solverID) {
-    warningStreamPrint(LOG_STDOUT, 0, "unrecognized option -s %s", (char*) simData->simulationInfo.solverMethod);
+    warningStreamPrint(LOG_STDOUT, 0, "unrecognized option -s %s", (char*) simData->simulationInfo->solverMethod);
     warningStreamPrint(LOG_STDOUT, 0, "current options are:");
     for(i=1; i<S_MAX; ++i) {
       warningStreamPrint(LOG_STDOUT, 0, "%-18s [%s]", SOLVER_METHOD_NAME[i], SOLVER_METHOD_DESC[i]);
     }
-    throwStreamPrint(simData->threadData,"see last warning");
+    throwStreamPrint(threadData,"see last warning");
     retVal = 1;
   } else {
     infoStreamPrint(LOG_SOLVER, 0, "recognized solver: %s", SOLVER_METHOD_NAME[solverID]);
     /* special solvers */
 #ifdef _OMC_QSS_LIB
     if(S_QSS == solverID) {
-      retVal = qss_main(argc, argv, simData->simulationInfo.startTime,
-                        simData->simulationInfo.stopTime, simData->simulationInfo.stepSize,
-                        simData->simulationInfo.numSteps, simData->simulationInfo.tolerance, 3);
+      retVal = qss_main(argc, argv, simData->simulationInfo->startTime,
+                        simData->simulationInfo->stopTime, simData->simulationInfo->stepSize,
+                        simData->simulationInfo->numSteps, simData->simulationInfo->tolerance, 3);
     } else /* standard solver interface */
 #endif
-      retVal = solver_main(simData, init_initMethod.c_str(), init_file.c_str(), init_time, lambda_steps, solverID, outVars);
+      retVal = solver_main(simData, threadData, init_initMethod.c_str(), init_file.c_str(), init_time, solverID, outVars, argv_0);
   }
 
   MMC_CATCH_INTERNAL(mmc_jumper)
   MMC_CATCH_INTERNAL(globalJumpBuffer)
 
-  sim_result.free(&sim_result, simData);
+  sim_result.free(&sim_result, simData, threadData);
 
   TRACE_POP
   return retVal;
@@ -693,7 +751,7 @@ int callSolver(DATA* simData, string init_initMethod, string init_file,
 /**
  * Initialization is the same for interactive or non-interactive simulation
  */
-int initRuntimeAndSimulation(int argc, char**argv, DATA *data)
+int initRuntimeAndSimulation(int argc, char**argv, DATA *data, threadData_t *threadData)
 {
   int i;
   initDumpSystem();
@@ -764,32 +822,69 @@ int initRuntimeAndSimulation(int argc, char**argv, DATA *data)
   }
 
   setGlobalVerboseLevel(argc, argv);
-  initializeDataStruc(data);
+  initializeDataStruc(data, threadData);
   if(!data)
   {
     std::cerr << "Error: Could not initialize the global data structure file" << std::endl;
+    EXIT(1);
   }
 
-  data->simulationInfo.nlsMethod = getNonlinearSolverMethod(argc, argv);
-  data->simulationInfo.lsMethod = getlinearSolverMethod(argc, argv);
-  data->simulationInfo.newtonStrategy = getNewtonStrategy(argc, argv);
+  data->simulationInfo->nlsMethod = getNonlinearSolverMethod();
+  data->simulationInfo->lsMethod = getlinearSolverMethod();
+  data->simulationInfo->lssMethod = getlinearSparseSolverMethod();
+  data->simulationInfo->newtonStrategy = getNewtonStrategy();
+  data->simulationInfo->nlsCsvInfomation = omc_flag[FLAG_NLS_INFO];
+  data->simulationInfo->nlsLinearSolver = getNlsLSSolver();
+
+  if(omc_flag[FLAG_LSS_MAX_DENSITY]) {
+    linearSparseSolverMaxDensity = atof(omc_flagValue[FLAG_LSS_MAX_DENSITY]);
+    infoStreamPrint(LOG_STDOUT, 0, "Maximum density for using linear sparse solver changed to %f", linearSparseSolverMaxDensity);
+  }
+  if(omc_flag[FLAG_LSS_MIN_SIZE]) {
+    linearSparseSolverMinSize = atoi(omc_flagValue[FLAG_LSS_MIN_SIZE]);
+    infoStreamPrint(LOG_STDOUT, 0, "Maximum system size for using linear sparse solver changed to %d", linearSparseSolverMinSize);
+  }
+  if(omc_flag[FLAG_NLS_MAX_DENSITY]) {
+    nonlinearSparseSolverMaxDensity = atof(omc_flagValue[FLAG_NLS_MAX_DENSITY]);
+    infoStreamPrint(LOG_STDOUT, 0, "Maximum density for using non-linear sparse solver changed to %f", nonlinearSparseSolverMaxDensity);
+  }
+  if(omc_flag[FLAG_NLS_MIN_SIZE]) {
+    nonlinearSparseSolverMinSize = atoi(omc_flagValue[FLAG_NLS_MIN_SIZE]);
+    infoStreamPrint(LOG_STDOUT, 0, "Maximum system size for using non-linear sparse solver changed to %d", nonlinearSparseSolverMinSize);
+  }
+  if(omc_flag[FLAG_NEWTON_XTOL]) {
+    newtonXTol = atof(omc_flagValue[FLAG_NEWTON_XTOL]);
+    infoStreamPrint(LOG_STDOUT, 0, "Tolerance for updating solution vector in Newton solver changed to %g", newtonXTol);
+  }
+
+  if(omc_flag[FLAG_NEWTON_FTOL]) {
+    newtonFTol = atof(omc_flagValue[FLAG_NEWTON_FTOL]);
+    infoStreamPrint(LOG_STDOUT, 0, "Tolerance for accepting accuracy in Newton solver changed to %g", newtonFTol);
+  }
+
+  if(omc_flag[FLAG_NEWTON_MAX_STEP_FACTOR]) {
+    maxStepFactor = atof(omc_flagValue[FLAG_NEWTON_MAX_STEP_FACTOR]);
+    infoStreamPrint(LOG_STDOUT, 0, "Maximum step size factor for a Newton step changed to %g", newtonFTol);
+  }
+
+  if(omc_flag[FLAG_STEADY_STATE_TOL]) {
+    steadyStateTol = atof(omc_flagValue[FLAG_STEADY_STATE_TOL]);
+    infoStreamPrint(LOG_STDOUT, 0, "Tolerance for steady state detection changed to %g", steadyStateTol);
+  }
 
   rt_tick(SIM_TIMER_INIT_XML);
-  read_input_xml(&(data->modelData), &(data->simulationInfo));
+  read_input_xml(data->modelData, data->simulationInfo);
   rt_accumulate(SIM_TIMER_INIT_XML);
 
   /* initialize static data of mixed/linear/non-linear system solvers */
-  initializeMixedSystems(data);
-  initializeLinearSystems(data);
-  initializeNonlinearSystems(data);
+  initializeMixedSystems(data, threadData);
+  initializeLinearSystems(data, threadData);
+  initializeNonlinearSystems(data, threadData);
 
   sim_noemit = omc_flag[FLAG_NOEMIT];
 
-  // ppriv - NO_INTERACTIVE_DEPENDENCY - for simpler debugging in Visual Studio
-
 #ifndef NO_INTERACTIVE_DEPENDENCY
-  if(omc_flag[FLAG_PORT])
-  {
+  if(omc_flag[FLAG_PORT]) {
     std::istringstream stream(omc_flagValue[FLAG_PORT]);
     int port;
     stream >> port;
@@ -797,12 +892,17 @@ int initRuntimeAndSimulation(int argc, char**argv, DATA *data)
     sim_communication_port_open &= sim_communication_port.create();
     sim_communication_port_open &= sim_communication_port.connect("127.0.0.1", port);
 
-    if(0 != strcmp("ia", MMC_STRINGDATA(data->simulationInfo.outputFormat)))
-    {
-      communicateStatus("Starting", 0.0);
+    if(0 != strcmp("ia", data->simulationInfo->outputFormat)) {
+      communicateStatus("Starting", 0.0, data->simulationInfo->startTime, 0);
     }
   }
+
+  if (isXMLTCP && !sim_communication_port_open) {
+    errorStreamPrint(LOG_STDOUT, 0, "xmltcp log format requires a TCP-port to be passed (and successfully open)");
+    EXIT(1);
+  }
 #endif
+  // ppriv - NO_INTERACTIVE_DEPENDENCY - for simpler debugging in Visual Studio
 
   return 0;
 }
@@ -812,29 +912,15 @@ void SimulationRuntime_printStatus(int sig)
 {
   DATA *data = SimulationRuntime_printStatus_data;
   printf("<status>\n");
-  printf("<model>%s</model>\n", data->modelData.modelFilePrefix);
+  printf("<model>%s</model>\n", data->modelData->modelFilePrefix);
   printf("<phase>UNKNOWN</phase>\n");
-  printf("<currentStepSize>%g</currentStepSize>\n", data->simulationInfo.stepSize);
+  printf("<currentStepSize>%g</currentStepSize>\n", data->simulationInfo->stepSize);
   printf("<oldTime>%.12g</oldTime>\n", data->localData[1]->timeValue);
   printf("<oldTime2>%.12g</oldTime2>\n", data->localData[2]->timeValue);
   printf("<diffOldTime>%g</diffOldTime>\n", data->localData[1]->timeValue-data->localData[2]->timeValue);
   printf("<currentTime>%g</currentTime>\n", data->localData[0]->timeValue);
   printf("<diffCurrentTime>%g</diffCurrentTime>\n", data->localData[0]->timeValue-data->localData[1]->timeValue);
   printf("</status>\n");
-}
-
-void communicateStatus(const char *phase, double completionPercent /*0.0 to 1.0*/)
-{
-#ifndef NO_INTERACTIVE_DEPENDENCY
-  if(sim_communication_port_open)
-  {
-    std::stringstream s;
-    s << (int)(completionPercent*10000) << " " << phase << endl;
-    std::string str(s.str());
-    sim_communication_port.send(str);
-    // cout << str;
-  }
-#endif
 }
 
 void communicateMsg(char id, unsigned int size, const char *data)
@@ -863,12 +949,11 @@ void communicateMsg(char id, unsigned int size, const char *data)
  * -r res.plt write result to file.
  */
 
-int _main_SimulationRuntime(int argc, char**argv, DATA *data)
+int _main_SimulationRuntime(int argc, char**argv, DATA *data, threadData_t *threadData)
 {
   int retVal = -1;
-  threadData_t *threadData = data->threadData;
   MMC_TRY_INTERNAL(globalJumpBuffer)
-    if (initRuntimeAndSimulation(argc, argv, data)) //initRuntimeAndSimulation returns 1 if an error occurs
+    if (initRuntimeAndSimulation(argc, argv, data, threadData)) //initRuntimeAndSimulation returns 1 if an error occurs
       return 1;
 
     /* sighandler_t oldhandler = different type on all platforms... */
@@ -877,13 +962,13 @@ int _main_SimulationRuntime(int argc, char**argv, DATA *data)
     signal(SIGUSR1, SimulationRuntime_printStatus);
 #endif
 
-    retVal = startNonInteractiveSimulation(argc, argv, data);
+    retVal = startNonInteractiveSimulation(argc, argv, data, threadData);
 
-    freeMixedSystems(data);        /* free mixed system data */
-    freeLinearSystems(data);       /* free linear system data */
-    freeNonlinearSystems(data);    /* free nonlinear system data */
+    freeMixedSystems(data, threadData);        /* free mixed system data */
+    freeLinearSystems(data, threadData);       /* free linear system data */
+    freeNonlinearSystems(data, threadData);    /* free nonlinear system data */
 
-    data->callback->callExternalObjectDestructors(data);
+    data->callback->callExternalObjectDestructors(data, threadData);
     deInitializeDataStruc(data);
     fflush(NULL);
   MMC_CATCH_INTERNAL(globalJumpBuffer)
@@ -898,128 +983,180 @@ int _main_SimulationRuntime(int argc, char**argv, DATA *data)
   return retVal;
 }
 
-static void omc_assert_simulation(threadData_t *threadData, FILE_INFO info, const char *msg, ...) __attribute__ ((noreturn));
-static void omc_assert_simulation_withEquationIndexes(threadData_t *threadData, FILE_INFO info, const int *indexes, const char *msg, ...) __attribute__ ((noreturn));
-static void omc_throw_simulation(threadData_t* threadData) __attribute__ ((noreturn));
- static void va_omc_assert_simulation_withEquationIndexes(threadData_t *threadData, FILE_INFO info, const int *indexes, const char *msg, va_list args) __attribute__ ((noreturn));
-
-static void va_omc_assert_simulation_withEquationIndexes(threadData_t *threadData, FILE_INFO info, const int *indexes, const char *msg, va_list args)
+#if !defined(OMC_MINIMAL_RUNTIME)
+const char* prettyPrintNanoSec(int64_t ns, int *v)
 {
-  threadData = threadData ? threadData : (threadData_t*)pthread_getspecific(mmc_thread_data_key);
-  switch (threadData->currentErrorStage)
-  {
-  case ERROR_EVENTSEARCH:
-  case ERROR_SIMULATION:
-    va_errorStreamPrintWithEquationIndexes(LOG_ASSERT, 0, indexes, msg, args);
-    longjmp(*threadData->simulationJumpBuffer,1);
-    break;
-  case ERROR_NONLINEARSOLVER:
-    if(ACTIVE_STREAM(LOG_NLS))
-    {
-      va_errorStreamPrintWithEquationIndexes(LOG_ASSERT, 0, indexes, msg, args);
-    }
-#ifndef OMC_EMCC
-    longjmp(*threadData->simulationJumpBuffer,1);
+  if (ns > 100000000000L || ns < -100000000000L) {
+    *v = ns / 1000000000L;
+    return "s";
+  } if (ns > 100000000L || ns < -100000000L) {
+    *v = ns / 1000000L;
+    return "ms";
+  } else if (ns > 100000L || ns < -100000L) {
+    *v = ns / 1000L;
+    return "µs";
+  } else {
+    *v = ns;
+    return "ns";
+  }
+}
 #endif
-    break;
-  case ERROR_INTEGRATOR:
-    if(ACTIVE_STREAM(LOG_SOLVER))
-    {
-      va_errorStreamPrintWithEquationIndexes(LOG_ASSERT, 0, indexes, msg, args);
+
+#ifndef NO_INTERACTIVE_DEPENDENCY
+static std::stringstream xmlTcpStream;
+static int numOpenTags=0;
+
+static void printEscapedXMLTCP(std::stringstream *s, const char *msg)
+{
+  while (*msg) {
+    if (*msg == '&') {
+      *s << "&amp;";
+    } else if (*msg == '<') {
+      *s << "&lt;";
+    } else if (*msg == '>') {
+      *s << "&gt;";
+    } else if (*msg == '"') {
+      *s << "&quot;";
+    } else {
+      *s << *msg;
     }
-    longjmp(*threadData->simulationJumpBuffer,1);
-    break;
-  case ERROR_OPTIMIZE:
-  default:
-    throwStreamPrint(threadData,"Unhandled Assertion-Error");
+    msg++;
   }
 }
 
-static void omc_assert_simulation(threadData_t *threadData, FILE_INFO info, const char *msg, ...)
+static inline void sendXMLTCPIfClosed()
 {
-  va_list args;
-  va_start(args, msg);
-  va_omc_assert_simulation_withEquationIndexes(threadData, info, NULL, msg, args);
-  va_end(args);
-}
-
-static void omc_assert_simulation_withEquationIndexes(threadData_t *threadData, FILE_INFO info, const int *indexes, const char *msg, ...)
-{
-  va_list args;
-  va_start(args, msg);
-  va_omc_assert_simulation_withEquationIndexes(threadData, info, indexes, msg, args);
-  va_end(args);
-}
-
-
-static void va_omc_assert_warning_simulation(FILE_INFO info, const int *indexes, const char *msg, va_list args)
-{
-  va_warningStreamPrintWithEquationIndexes(LOG_ASSERT, 0, indexes, msg, args);
-}
-
-static void omc_assert_warning_simulation(FILE_INFO info, const char *msg, ...)
-{
-  va_list args;
-  va_start(args, msg);
-  va_omc_assert_warning_simulation(info, NULL, msg, args);
-  va_end(args);
-}
-
-static void omc_assert_warning_simulation_withEquationIndexes(FILE_INFO info, const int *indexes, const char *msg, ...)
-{
-  va_list args;
-  va_start(args, msg);
-  va_omc_assert_warning_simulation(info, indexes, msg, args);
-  va_end(args);
-}
-
-static void omc_terminate_simulation(FILE_INFO info, const char *msg, ...)
-{
-  va_list ap;
-  va_start(ap,msg);
-  terminationTerminate = 1;
-  setTermMsg(msg,ap);
-  va_end(ap);
-  TermInfo = info;
-}
-
-/*
- * adrpo: workaround function to call setTermMsg with empty va_list!
- *        removes the uninitialized warning for va_list variable.
- */
-void setTermMsg_empty_va_list(const char *msg, ...) {
-  va_list dummy;
-  va_start(dummy, msg);
-  setTermMsg(msg, dummy);
-  va_end(dummy);
-}
-
-static void omc_throw_simulation(threadData_t* threadData)
-{
-  setTermMsg_empty_va_list("Assertion triggered by external C function");
-  set_struct(FILE_INFO, TermInfo, omc_dummyFileInfo);
-  threadData = threadData ? threadData : (threadData_t*)pthread_getspecific(mmc_thread_data_key);
-  longjmp(*threadData->globalJumpBuffer, 1);
-}
-
-void (*omc_assert)(threadData_t*, FILE_INFO info, const char *msg, ...)  __attribute__ ((noreturn)) = omc_assert_simulation;
-void (*omc_assert_withEquationIndexes)(threadData_t*, FILE_INFO info, const int *indexes, const char *msg, ...)  __attribute__ ((noreturn)) = omc_assert_simulation_withEquationIndexes;
-
-void (*omc_assert_warning_withEquationIndexes)(FILE_INFO info, const int *indexes, const char *msg, ...) = omc_assert_warning_simulation_withEquationIndexes;
-void (*omc_assert_warning)(FILE_INFO info, const char *msg, ...) = omc_assert_warning_simulation;
-void (*omc_terminate)(FILE_INFO info, const char *msg, ...) = omc_terminate_simulation;
-void (*omc_throw)(threadData_t*) __attribute__ ((noreturn)) = omc_throw_simulation;
-
-void parseVariableStr(char* variableStr)
-{
-  /* TODO! FIXME!: support also quoted identifiers containing comma: , */
-  unsigned int i = 0, insideArray = 0;
-  for (i = 0; i < strlen(variableStr); i++)
-  {
-    if (variableStr[i] == '[') { insideArray = 1; }
-    if (variableStr[i] == ']') { insideArray = 0; }
-    if ((insideArray == 0) && (variableStr[i] == ',')) { variableStr[i] = '!'; }
+  if (numOpenTags==0) {
+    sim_communication_port.send(xmlTcpStream.str());
+    xmlTcpStream.str("");
   }
+}
+
+static void messageXMLTCP(int type, int stream, int indentNext, char *msg, int subline, const int *indexes)
+{
+  numOpenTags++;
+  xmlTcpStream << "<message stream=\"" << LOG_STREAM_NAME[stream] << "\" type=\"" << LOG_TYPE_DESC[type] << "\" text=\"";
+  printEscapedXMLTCP(&xmlTcpStream, msg);
+  if (indexes) {
+    int i;
+    xmlTcpStream << "\">\n";
+    for (i=1; i<=*indexes; i++) {
+      xmlTcpStream << "<used index=\"" << indexes[i] << "\" />\n";
+    }
+    if (!indentNext) {
+      numOpenTags--;
+      xmlTcpStream << "</message>\n";
+    }
+  } else {
+    if (indentNext) {
+      xmlTcpStream << "\">\n";
+    } else {
+      numOpenTags--;
+      xmlTcpStream << "\" />\n";
+    }
+  }
+  sendXMLTCPIfClosed();
+}
+
+static void messageCloseXMLTCP(int stream)
+{
+  if (ACTIVE_STREAM(stream)) {
+    numOpenTags--;
+    xmlTcpStream << "</message>\n";
+    sendXMLTCPIfClosed();
+  }
+}
+
+static void messageCloseXMLTCPWarning(int stream)
+{
+  if (ACTIVE_WARNING_STREAM(stream)) {
+    numOpenTags--;
+    xmlTcpStream << "</message>\n";
+    sendXMLTCPIfClosed();
+  }
+}
+#endif
+
+static void printEscapedXML(const char *msg)
+{
+  while (*msg) {
+    if (*msg == '&') fputs("&amp;", stdout);
+    else if (*msg == '<') fputs("&lt;", stdout);
+    else if (*msg == '>') fputs("&gt;", stdout);
+    else if (*msg == '"') fputs("&quot;", stdout);
+    else fputc(*msg, stdout);
+    msg++;
+  }
+}
+
+static void messageXML(int type, int stream, int indentNext, char *msg, int subline, const int *indexes)
+{
+  printf("<message stream=\"%s\" type=\"%s\" text=\"", LOG_STREAM_NAME[stream], LOG_TYPE_DESC[type]);
+  printEscapedXML(msg);
+  if (indexes) {
+    int i;
+    printf("\">\n");
+    for (i=1; i<=*indexes; i++) {
+      printf("<used index=\"%d\" />\n", indexes[i]);
+    }
+    if (!indentNext) {
+      fputs("</message>\n",stdout);
+    }
+  } else {
+    fputs(indentNext ? "\">\n" : "\" />\n", stdout);
+  }
+  fflush(stdout);
+}
+
+static void messageCloseXML(int stream)
+{
+  if (ACTIVE_STREAM(stream)) {
+    fputs("</message>\n", stdout);
+    fflush(stdout);
+  }
+}
+
+static void messageCloseXMLWarning(int stream)
+{
+  if (ACTIVE_WARNING_STREAM(stream)) {
+    fputs("</message>\n", stdout);
+    fflush(stdout);
+  }
+}
+
+void setStreamPrintXML(int isXML)
+{
+  if (isXML==1) {
+    messageFunction = messageXML;
+    messageClose = messageCloseXML;
+    messageCloseWarning = messageCloseXMLWarning;
+#ifndef NO_INTERACTIVE_DEPENDENCY
+  } else if (isXML==2) {
+    messageFunction = messageXMLTCP;
+    messageClose = messageCloseXMLTCP;
+    messageCloseWarning = messageCloseXMLTCPWarning;
+    isXMLTCP = 1;
+#endif
+  } else {
+    /* Already set... */
+  }
+}
+
+void communicateStatus(const char *phase, double completionPercent /*0.0 to 1.0*/, double currentTime, double currentStepSize)
+{
+#ifndef NO_INTERACTIVE_DEPENDENCY
+  if (sim_communication_port_open && isXMLTCP) {
+    std::stringstream s;
+    s << "<status phase=\"" << phase << "\" currentStepSize=\"" << currentStepSize << "\" time=\"" << currentTime << "\" progress=\"" << (int)(completionPercent*10000) << "\" />" << std::endl;
+    std::string str(s.str());
+    sim_communication_port.send(str);
+  } else if (sim_communication_port_open) {
+    std::stringstream s;
+    s << (int)(completionPercent*10000) << " " << phase << endl;
+    std::string str(s.str());
+    sim_communication_port.send(str);
+  }
+#endif
 }
 
 } // extern "C"

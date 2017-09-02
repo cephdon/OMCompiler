@@ -33,13 +33,15 @@ encapsulated package Sorting
 " file:        Sorting.mo
   package:     Sorting
 
-  RCS: $Id$
 "
 
-public import BackendDAE;
+public
+import BackendDAE;
 
-protected import BackendDump;
-protected import Matching;
+protected
+import BackendDump;
+import GC;
+import Matching;
 
 public function Tarjan "author: lochel
   This sorting algorithm only considers equations e that have a matched variable v with e = ass1[v]."
@@ -68,6 +70,9 @@ algorithm
       (stack, index, outComponents) := StrongConnect(m, ass1, eqn, stack, index, number, lowlink, onStack, outComponents);
     end if;
   end for;
+  GC.free(number);
+  GC.free(lowlink);
+  GC.free(onStack);
 
   outComponents := listReverse(outComponents);
 end Tarjan;
@@ -118,7 +123,7 @@ algorithm
       arrayUpdate(onStack, eqn2, false);
       SCC := eqn2::SCC;
     end while;
-    outComponents := listReverse(SCC)::outComponents;
+    outComponents := MetaModelica.Dangerous.listReverseInPlace(SCC)::outComponents;
   end if;
 end StrongConnect;
 
@@ -195,7 +200,7 @@ algorithm
       arrayUpdate(onStack, eqn2, false);
       SCC := eqn2::SCC;
     end while;
-    outComponents := listReverse(SCC)::outComponents;
+    outComponents := MetaModelica.Dangerous.listReverseInPlace(SCC)::outComponents;
   end if;
 end StrongConnectTransposed;
 

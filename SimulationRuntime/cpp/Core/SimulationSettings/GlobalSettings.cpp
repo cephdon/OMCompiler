@@ -12,16 +12,17 @@ GlobalSettings::GlobalSettings()
   : _startTime(0.0)
   , _endTime(5.0)
   , _hOutput(0.001)
-  , _resultsOutput(true)
+  , _emitResults(EMIT_ALL)
   , _infoOutput(true)
   , _selected_solver("Euler")
-  , _selected_lin_solver("Newton")
+  , _selected_lin_solver("linearSolver")
   , _selected_nonlin_solver("Newton")
   , _resultsfile_name("results.csv")
   , _endless_sim(false)
-  , _outputFormat(OF_EMPTY)
+  , _nonLinSolverContinueOnError(false)
   , _outputPointType(OPT_ALL)
   , _alarm_time(0)
+  , _outputFormat(MAT)
 {
 }
 
@@ -72,16 +73,6 @@ void GlobalSettings::useEndlessSim(bool endles)
   _endless_sim = endles;
 }
 
-OutputFormat GlobalSettings::getOutputFormat()
-{
-  return _outputFormat;
-}
-
-void GlobalSettings::setOutputFormat(OutputFormat format)
-{
-  _outputFormat = format;
-}
-
 OutputPointType GlobalSettings::getOutputPointType()
 {
   return _outputPointType;
@@ -102,15 +93,15 @@ void GlobalSettings::setLogSettings(LogSettings set)
   _log_settings = set;
 }
 
-///< Write out results ([false,true]; default: true)
-bool GlobalSettings::getResultsOutput()
+///< Write out results (default: EMIT_ALL)
+EmitResults GlobalSettings::getEmitResults()
 {
-  return _resultsOutput;
+  return _emitResults;
 }
 
-void GlobalSettings::setResultsOutput(bool output)
+void GlobalSettings::setEmitResults(EmitResults emitResults)
 {
-  _resultsOutput = output;
+  _emitResults = emitResults;
 }
 
 void GlobalSettings::setResultsFileName(string name)
@@ -200,4 +191,33 @@ unsigned int GlobalSettings::getAlarmTime()
 {
   return _alarm_time;
 }
+
+void GlobalSettings::setNonLinearSolverContinueOnError(bool value)
+{
+  _nonLinSolverContinueOnError = value;
+}
+
+bool GlobalSettings::getNonLinearSolverContinueOnError()
+{
+  return _nonLinSolverContinueOnError;
+}
+
+void GlobalSettings::setSolverThreads(int val)
+{
+  _solverThreads = val;
+}
+
+int GlobalSettings::getSolverThreads()
+{
+  return _solverThreads;
+}
+
+ OutputFormat GlobalSettings::getOutputFormat()
+ {
+     return _outputFormat;
+ }
+  void GlobalSettings::setOutputFormat(OutputFormat outputFormat)
+  {
+      _outputFormat = outputFormat;
+  }
 /** @} */ // end of coreSimulationSettings

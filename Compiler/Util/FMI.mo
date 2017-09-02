@@ -34,6 +34,8 @@ encapsulated package FMI
   package:     FMI
   description: This file contains FMI's import specific function, which are implemented in C."
 
+protected import List;
+
 public uniontype Info
   record INFO
     String fmiVersion;
@@ -231,6 +233,17 @@ algorithm
   end match;
 end checkFMIVersion;
 
+public function isFMIVersion10 "Checks if the FMI version is 1.0."
+  input String inFMUVersion;
+  output Boolean success;
+algorithm
+  success := match (inFMUVersion)
+    case ("1") then true;
+    case ("1.0") then true;
+    else false;
+  end match;
+end isFMIVersion10;
+
 public function isFMIVersion20 "Checks if the FMI version is 2.0."
   input String inFMUVersion;
   output Boolean success;
@@ -249,9 +262,39 @@ algorithm
   success := match (inFMIType)
     case ("me") then true;
     case ("cs") then true;
+    case ("me_cs") then true;
     else false;
   end match;
 end checkFMIType;
+
+public function canExportFMU
+  input String inFMUVersion;
+  input String inFMIType;
+  output Boolean success;
+algorithm
+  success := match (inFMUVersion, inFMIType)
+    case ("1", "me") then true;
+    case ("1.0", "me") then true;
+    case ("2", "me") then true;
+    case ("2.0", "me") then true;
+    case ("2", "cs") then true;
+    case ("2.0", "cs") then true;
+    case ("2", "me_cs") then true;
+    case ("2.0", "me_cs") then true;
+    else false;
+  end match;
+end canExportFMU;
+
+public function isFMIMEType "Checks if FMU type is model exchange"
+  input String inFMIType;
+  output Boolean success;
+algorithm
+  success := match (inFMIType)
+    case ("me") then true;
+    case ("me_cs") then true;
+    else false;
+  end match;
+end isFMIMEType;
 
 public function isFMICSType "Checks if FMU type is co-simulation"
   input String inFMIType;
@@ -259,6 +302,7 @@ public function isFMICSType "Checks if FMU type is co-simulation"
 algorithm
   success := match (inFMIType)
     case ("cs") then true;
+    case ("me_cs") then true;
     else false;
   end match;
 end isFMICSType;
@@ -268,14 +312,12 @@ public function getEnumerationTypeFromTypes
   input String inBaseType;
   output String outEnumerationType;
 algorithm
-  outEnumerationType := matchcontinue (inTypeDefinitionsList, inBaseType)
+  outEnumerationType := match (inTypeDefinitionsList, inBaseType)
     local
       list<TypeDefinitions> xs;
       String name_;
       String baseType;
-    case ((ENUMERATIONTYPE(name = name_) :: _), baseType)
-      equation
-        true = stringEqual(name_, baseType);
+    case ((ENUMERATIONTYPE(name = name_) :: _), baseType) guard stringEqual(name_, baseType)
       then
         name_;
     case ((_ :: xs), baseType)
@@ -284,8 +326,42 @@ algorithm
       then
         name_;
     case ({}, _) then "";
-  end matchcontinue;
+  end match;
 end getEnumerationTypeFromTypes;
+
+public function filterModelVariables
+  input list<ModelVariables> inModelVariables;
+  input String tipe;
+  input String variableCausality;
+  output list<ModelVariables> outModelVariables;
+algorithm
+  outModelVariables := List.filter2OnTrue(inModelVariables, filterModelVariable, tipe, variableCausality);
+end filterModelVariables;
+
+protected function filterModelVariable
+  input ModelVariables modelVar;
+  input String tipe;
+  input String variableCausality;
+  output Boolean result;
+algorithm
+  result := match modelVar
+    local
+      String causality;
+    case REALVARIABLE(causality=causality)
+      guard tipe == "real" and causality == variableCausality
+        then true;
+    case INTEGERVARIABLE(causality=causality)
+      guard tipe == "integer" and causality == variableCausality
+        then true;
+    case BOOLEANVARIABLE(causality=causality)
+      guard tipe == "boolean" and causality == variableCausality
+        then true;
+    case STRINGVARIABLE(causality=causality)
+      guard tipe == "string" and causality == variableCausality
+        then true;
+    else then false;
+  end match;
+end filterModelVariable;
 
 annotation(__OpenModelica_Interface="util");
 end FMI;

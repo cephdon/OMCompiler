@@ -15,9 +15,9 @@ settingsStr :=
   "// " + configure + "\n" +
   "// " + systemInfo
   ;
-setCommandLineOptions("+d=nogen");
+setCommandLineOptions("-d=nogen");
 if not regularFileExists("CustomCommands.mos") then
-  customCommands := "setCommandLineOptions(\"+d=nogen,initialization,backenddaeinfo,discreteinfo,stateselection\");
+  customCommands := "setCommandLineOptions(\"-d=nogen,initialization,backenddaeinfo,discreteinfo,stateselection,execstat\");
 setMatchingAlgorithm(\"PFPlusExt\");
 setIndexReductionMethod(\"dynamicStateSelection\");";
   writeFile("CustomCommands.mos",customCommands);
@@ -30,14 +30,18 @@ referenceFiles:=getInstallationDirectoryPath()+"/../testsuite/ReferenceFiles/msl
 referenceFileExtension:="mat";
 referenceFileNameDelimiter:=".";
 
+sortFiles:=true;
 ulimitOmc:="660"; // 11 minutes to generate the C-code
 ulimitExe:="480"; // 8 additional minutes to initialize and run the simulation
 ulimitMemory:="16000000";  // ~16GB memory at most
+extraSimFlags:=""; // no extra sim flags
 javascript := false;
-simFlags := "-abortSlowSimulation -alarm=" + ulimitExe;
 customLibrary := false;
 
 runScript("CustomCommands.mos");
+
+simFlags:="-abortSlowSimulation -alarm=" + ulimitExe;
+simFlags:=simFlags + " " + extraSimFlags;
 
 customCommandsStr := if regularFileExists("CustomCommands.mos") then ("Flags: <pre>" + escapeXML(readFile("CustomCommands.mos")) + "</pre>") else "";
 
@@ -47,7 +51,7 @@ library:=$TypeName(Modelica);
 libraryVersion:="default";
 end if;
 
-setCommandLineOptions({"+g=Modelica","+d=nogen"});
+setCommandLineOptions({"-g=Modelica","-d=nogen"});
 OpenModelica.Scripting.Internal.Time.timerTick(OpenModelica.Scripting.Internal.Time.RT_CLOCK_USER_RESERVED);
 log:="BuildModelRecursive.html";
 default_tolerance:=1e-6;
@@ -77,7 +81,9 @@ loadModelCommand:="\n"+customCommands+"\nloadModel("+libraryString+",{\""+librar
 omc:=getInstallationDirectoryPath()+"/bin/omc";
 dygraphs:=getInstallationDirectoryPath()+"/share/doc/omc/testmodels/dygraph-combined.js";
 
-a:={typeNameString(x) for x guard isExperiment(x) in getClassNames(library,recursive=true,sort=true)};
+a:={typeNameString(x)
+    for x guard isExperiment(x) and not regexBool(typeNameString(x), "^Modelica_Synchronous\\.WorkInProgress")
+    in getClassNames(library,recursive=true,sort=sortFiles)};
 getErrorString();
 
 // writeFile("x",sum(s + "\n" for s in a));
@@ -98,15 +104,15 @@ echo(false);
 alarm("+ulimitOmc+");
 loadString(\"
 function cell
-  input Real time;
+  input Real elapsedTime;
   input Boolean greenOnOk := false;
   input String greenColor := \\\"#00FF00\\\";
   input String mdFile := \\\"\\\";
   output String str;
 algorithm
   str := if mdFile == \\\"\\\" then \\\"\\\" else \\\" <a href=\\\\\\\"files/mdpad_local.html?\\\"+mdFile+\\\"\\\\\\\"><img width=\\\\\\\"16px\\\\\\\" src=\\\\\\\"files/Modelica.Icons.Example.svg\\\\\\\"></img></a>\\\";
-  str := if time==-1.0 then \\\"<td bgcolor=\\\\\\\"#FF0000\\\\\\\">&nbsp;</td>\\\" else ((if greenOnOk then \\\"<td bgcolor=\\\\\\\"\\\" + greenColor + \\\"\\\\\\\">\\\" else \\\"<td>\\\") +
-    OpenModelica.Scripting.Internal.Time.readableTime(if time < 1e-5 then 0 else time)+str+\\\"</td>\\\");
+  str := if elapsedTime==-1.0 then \\\"<td bgcolor=\\\\\\\"#FF0000\\\\\\\">&nbsp;</td>\\\" else ((if greenOnOk then \\\"<td bgcolor=\\\\\\\"\\\" + greenColor + \\\"\\\\\\\">\\\" else \\\"<td>\\\") +
+    OpenModelica.Scripting.Internal.Time.readableTime(elapsedTime)+str+\\\"</td>\\\");
 end cell;
 function length input String str; output Integer len; external \\\"C\\\" len=ModelicaStrings_length(str); end length;
 function substring input String str; input Integer i1,i2; output String out; external \\\"C\\\" out=ModelicaStrings_substring(str,i1,i2); end substring;
@@ -121,7 +127,7 @@ algorithm
   out := matches[2];
 end csvFileToVariable;
 function testcase
-  input Real time;
+  input Real elapsedTime;
   input Boolean success;
   input String errNoXMLLong;
   output String str;
@@ -129,7 +135,7 @@ protected
   String errXML;
 algorithm
   errXML := OpenModelica.Scripting.escapeXML(firstPart(errNoXMLLong,16*1024)); // 16 kB log per test should be enough; increase if there is a good reason to do so
-  str:=\\\"<testcase name=\\\\\\\""+s+"\\\\\\\" time=\\\\\\\"\\\"+String(time)+\\\"\\\\\\\">\\\"+(
+  str:=\\\"<testcase name=\\\\\\\""+s+"\\\\\\\" elapsedTime=\\\\\\\"\\\"+String(elapsedTime)+\\\"\\\\\\\">\\\"+(
     if not success then \\\"<error type=\\\\\\\"Failure\\\\\\\" />\\\"
     else \\\"\\\"
   )+(
@@ -184,7 +190,7 @@ elseif referenceExists then
   variableFilter := sum(stringReplace(stringReplace(stringReplace(stringReplace(s,\"[\",\".\"),\"]\",\".\"),\"(\",\".\"),\")\",\".\") + \"|\" for s in vars);
   numCompared := size(vars,1);
   emit_protected := \" -emit_protected\";
-  print(variableFilter + \"\n\");
+  /* print(variableFilter + \"\n\"); */
 else
   variableFilter := \"\";
   outputFormat := \"empty\";
@@ -213,12 +219,13 @@ if err <> \"\" then
   writeFile(errFile,err);
 end if;
 
-frontend :=OpenModelica.Scripting.Internal.Time.timerTock(OpenModelica.Scripting.Internal.Time.RT_CLOCK_FRONTEND);
-backend  :=OpenModelica.Scripting.Internal.Time.timerTock(OpenModelica.Scripting.Internal.Time.RT_CLOCK_BACKEND);
-simcode  :=OpenModelica.Scripting.Internal.Time.timerTock(OpenModelica.Scripting.Internal.Time.RT_CLOCK_SIMCODE);
-templates:=OpenModelica.Scripting.Internal.Time.timerTock(OpenModelica.Scripting.Internal.Time.RT_CLOCK_TEMPLATES);
-total    :=OpenModelica.Scripting.Internal.Time.timerTock(OpenModelica.Scripting.Internal.Time.RT_CLOCK_SIMULATE_TOTAL);
 build    :=OpenModelica.Scripting.Internal.Time.timerTock(OpenModelica.Scripting.Internal.Time.RT_CLOCK_BUILD_MODEL);
+total    :=OpenModelica.Scripting.Internal.Time.timerTock(OpenModelica.Scripting.Internal.Time.RT_CLOCK_SIMULATE_TOTAL);
+templates:=OpenModelica.Scripting.Internal.Time.timerTock(OpenModelica.Scripting.Internal.Time.RT_CLOCK_TEMPLATES);
+simcode  :=OpenModelica.Scripting.Internal.Time.timerTock(OpenModelica.Scripting.Internal.Time.RT_CLOCK_SIMCODE);
+backend  :=OpenModelica.Scripting.Internal.Time.timerTock(OpenModelica.Scripting.Internal.Time.RT_CLOCK_BACKEND);
+frontend :=OpenModelica.Scripting.Internal.Time.timerTock(OpenModelica.Scripting.Internal.Time.RT_CLOCK_FRONTEND);
+
 frontend :=if backend <> -1.0 then frontend-backend else frontend;
 backend  :=if simcode <> -1.0 then backend-simcode else backend;
 simcode  :=if templates <> -1.0 then simcode-templates else simcode;
@@ -397,7 +404,7 @@ a.messagesError {color:#FF0000;}
 a.messagesWarning {color:#FFCC66;}
 </style>
 </head><body>" + str);
-writeFile(log,"<table><tr><th>Model</th>"+(if referenceFiles == "" then "" else "<th>Verified</th>")+"<th>Simulate</th><th>Total buildModel</th><th>Frontend</th><th>Backend</th><th>SimCode</th><th>Templates</th><th>Compile</th></tr>\n",append=true);getErrorString();
+writeFile(log,"<table border=\"1\"><tr><th>Model</th>"+(if referenceFiles == "" then "" else "<th>Verified</th>")+"<th>Simulate</th><th>Total buildModel</th><th>Frontend</th><th>Backend</th><th>SimCode</th><th>Templates</th><th>Compile</th></tr>\n",append=true);getErrorString();
 writeFile(log,sum(readFile(s + ".stat") + "\n" for s in a),append=true);getErrorString();
 writeFile(log,"</table><hr /><p><a href=\"BuildModelRecursive.tar.gz\">Offline version</a></p></body></html>",append=true);getErrorString();
 writeFile("files/" + typeNameString(library) + ".classes",sum(typeNameString(c) + "\n" for c in getClassNames(library, recursive=true)));
@@ -415,7 +422,7 @@ system("chmod go+r BuildModelRecursive.tar.gz");
 /* Some useful CustomCommands.mos examples:
 
 // MSL regression testing suite:
-setCommandLineOptions("+d=nogen,initialization,backenddaeinfo,discreteinfo,stateselection");
+setCommandLineOptions("-d=nogen,initialization,backenddaeinfo,discreteinfo,stateselection");
 setMatchingAlgorithm("PFPlusExt");
 setIndexReductionMethod("dynamicStateSelection");
 

@@ -32,32 +32,34 @@
 encapsulated package Matching
 " file:        Matching.mo
   package:     Matching
-  description: Matching contains functions for matching algorithms
-
-  RCS: $Id: Matching.mo $"
+  description: Matching contains functions for matching algorithms"
 
 
-public import BackendDAE;
-public import BackendDAEFunc;
-public import DAE;
 
-protected import Array;
-protected import BackendDAEEXT;
-protected import BackendDAEUtil;
-protected import BackendDump;
-protected import BackendEquation;
-protected import BackendVariable;
-protected import ClockIndexes;
-protected import Config;
-protected import DAEUtil;
-protected import Debug;
-protected import DumpGraphML;
-protected import Error;
-protected import Flags;
-protected import IndexReduction;
-protected import List;
-protected import Util;
-protected import System;
+import BackendDAE;
+import BackendDAEFunc;
+import DAE;
+
+protected
+
+import Array;
+import BackendDAEEXT;
+import BackendDAEUtil;
+import BackendDump;
+import BackendEquation;
+import BackendVariable;
+import ClockIndexes;
+import Config;
+import Debug;
+import DumpGraphML;
+import ElementSource;
+import Error;
+import Flags;
+import IndexReduction;
+import List;
+import MetaModelica.Dangerous;
+import Util;
+import System;
 
 // =============================================================================
 // just a matching algorithm
@@ -90,11 +92,15 @@ public function RegularMatching "
 protected
   Integer i, j;
   array<Boolean> eMark, vMark;
+  array<Integer> eMarkIx, vMarkIx;
+  Integer eMarkN=0, vMarkN=0;
 algorithm
   ass2 := arrayCreate(nEqns, -1);
   ass1 := arrayCreate(nVars, -1);
   vMark := arrayCreate(nVars, false);
   eMark := arrayCreate(nEqns, false);
+  vMarkIx := arrayCreate(nVars, 0);
+  eMarkIx := arrayCreate(nEqns, 0);
 
   i := 1;
   while i<=nEqns and outPerfectMatching loop
@@ -102,9 +108,9 @@ algorithm
     if (j>0 and ass1[j] == i) then
       outPerfectMatching :=true;
     else
-      Array.setRange(1, nVars, vMark, false);
-      Array.setRange(1, nEqns, eMark, false);
-      outPerfectMatching := BBPathFound(i, m, eMark, vMark, ass1, ass2);
+      clearArrayWithKnownSetIndexes(eMark, eMarkIx, eMarkN);
+      clearArrayWithKnownSetIndexes(vMark, vMarkIx, vMarkN);
+      (outPerfectMatching,eMarkN,vMarkN) := BBPathFound(i, m, eMark, vMark, ass1, ass2, eMarkIx, vMarkIx, 0, 0);
     end if;
     i := i+1;
   end while;
@@ -127,6 +133,8 @@ protected
   Integer nVars, nEqns, j;
   array<Integer> ass1, ass2;
   array<Boolean> eMark, vMark;
+  array<Integer> eMarkIx, vMarkIx;
+  Integer eMarkN=0, vMarkN=0;
   BackendDAE.EquationArray eqns;
   BackendDAE.Variables vars;
   list<Integer> mEqns;
@@ -145,15 +153,17 @@ algorithm
   //end if;
   vMark := arrayCreate(nVars, false);
   eMark := arrayCreate(nEqns, false);
+  vMarkIx := arrayCreate(nVars, 0);
+  eMarkIx := arrayCreate(nEqns, 0);
   i := 1;
   while i<=nEqns and success loop
     j := ass2[i];
     if ((j>0) and ass1[j] == i) then
       success :=true;
     else
-      Array.setRange(1, nVars, vMark, false);
-      Array.setRange(1, nEqns, eMark, false);
-      success := BBPathFound(i, m, eMark, vMark, ass1, ass2);
+      clearArrayWithKnownSetIndexes(eMark, eMarkIx, eMarkN);
+      clearArrayWithKnownSetIndexes(vMark, vMarkIx, vMarkN);
+      (success,eMarkN,vMarkN) := BBPathFound(i, m, eMark, vMark, ass1, ass2, eMarkIx, vMarkIx, 0, 0);
       if not success then
         mEqns := {};
         for j in 1:nEqns loop
@@ -189,9 +199,17 @@ protected function BBPathFound
   input array<Boolean> vMark;
   input array<Integer> ass1 "eqn := ass1[var]";
   input array<Integer> ass2 "var := ass2[eqn]";
+  input array<Integer> eMarkIx;
+  input array<Integer> vMarkIx;
   output Boolean success=false;
+  input output Integer eMarkN, vMarkN;
 algorithm
+  if arrayGet(eMark, i) then
+    return;
+  end if;
   arrayUpdate(eMark, i, true);
+  eMarkN := eMarkN+1;
+  arrayUpdate(eMarkIx, eMarkN, i);
 
   for j in m[i] loop
     // negative entries in adjacence matrix belong to states!!!
@@ -207,7 +225,9 @@ algorithm
     // negative entries in adjacence matrix belong to states!!!
     if (j>0 and not vMark[j]) then
       arrayUpdate(vMark, j, true);
-      success := BBPathFound(ass1[j], m, eMark, vMark, ass1, ass2);
+      vMarkN := vMarkN+1;
+      arrayUpdate(vMarkIx, vMarkN, j);
+      (success, eMarkN, vMarkN) := BBPathFound(ass1[j], m, eMark, vMark, ass1, ass2, eMarkIx, vMarkIx, eMarkN, vMarkN);
       if success then
         arrayUpdate(ass1, j, i);
         arrayUpdate(ass2, i, j);
@@ -404,7 +424,7 @@ algorithm
          u1=u2 is kept. This is not the case for the original pantilides algorithm, where
          the original equation is removed from the system.";
         eqns = BackendEquation.getEqnsFromEqSystem(syst);
-        nf_1 = BackendDAEUtil.equationSize(eqns) "and try again, restarting. This could be optimized later. It should not
+        nf_1 = BackendEquation.equationArraySize(eqns) "and try again, restarting. This could be optimized later. It should not
                                    be necessary to restart the matching, according to Bernard Bachmann. Instead one
                                    could continue the matching as usual. This was tested (2004-11-22) and it does not
                                    work to continue without restarting.
@@ -545,7 +565,7 @@ protected
   list<Integer> vars,vars_1;
 algorithm
   vars := BackendDAEUtil.varsInEqn(m, i);
-  vars_1 := List.filter1(vars, isNotVMarked, (imark, vmark));
+  vars_1 := List.filter1OnTrue(vars, isNotVMarked, (imark, vmark));
  (outAssignments1,outAssignments2) := forallUnmarkedVarsInEqnBody(m, mt, i, imark, emark, vmark, vars_1, ass1, ass2);
 end forallUnmarkedVarsInEqn;
 
@@ -554,12 +574,13 @@ protected function isNotVMarked
   This function succeds for variables that are not marked."
   input Integer i;
   input tuple<Integer,array<Integer>> inTpl;
+  output Boolean outB;
 protected
   Integer imark;
   array<Integer> vmark;
 algorithm
   (imark,vmark) := inTpl;
-  false := intEq(imark,vmark[i]);
+  outB := not intEq(imark,vmark[i]);
 end isNotVMarked;
 
 protected function forallUnmarkedVarsInEqnBody
@@ -4136,7 +4157,7 @@ algorithm
         unmatched1 = getUnassigned(nv, ass2, {});
         var_str = BackendDump.dumpMarkedVars(isyst, unmatched1);
         source = BackendEquation.markedEquationSource(isyst, listHead(unmatched1));
-        info = DAEUtil.getElementSourceFileInfo(source);
+        info = ElementSource.getElementSourceFileInfo(source);
         Error.addSourceMessage(Error.STRUCT_SINGULAR_SYSTEM, {eqn_str,var_str}, info);
       then
         fail();
@@ -4715,7 +4736,7 @@ algorithm
   row_degrees := arrayCreate(ne,0);
   onerows := getOneRows(ne,mT,row_degrees,{});
   onecolums := getOneRows(nv,m,col_degrees,{});
-  randarr := listArray(List.intRange(ne));
+  randarr := Array.createIntRange(ne);
   setrandArray(ne,randarr);
   ks_rand_cheapmatching1(1,ne,onecolums,onerows,col_degrees,row_degrees,randarr,m,mT,ass1,ass2);
   outUnMatched := getUnassigned(ne,ass1,{});
@@ -5556,10 +5577,10 @@ algorithm
   (outAss1,outAss2,osyst,oshared,outArg):=
   match (meqns,internalCall,algIndx,cheapMatching,clearMatching,isyst,ishared,nv,ne,ass1,ass2,inMatchingOptions,sssHandler,inArg)
     local
-      BackendDAE.IncidenceMatrix m,mt;
+      BackendDAE.IncidenceMatrix m,mt, m1,m1t;
       Integer nv_1,ne_1,memsize;
-      list<Integer> unmatched1;
-      list<list<Integer>> meqns1;
+      list<Integer> unmatched1, meqs_short;
+      list<list<Integer>> meqns1, meqns1_0;
       BackendDAE.StructurallySingularSystemHandlerArg arg,arg1;
       BackendDAE.EqSystem syst;
       BackendDAE.Shared shared;
@@ -5573,7 +5594,20 @@ algorithm
         BackendDAEEXT.matching(nv,ne,algIndx,cheapMatching,1.0,clearMatching);
         BackendDAEEXT.getAssignment(ass1,ass2);
         unmatched1 = getUnassigned(ne, ass1, {});
-        meqns1 = getEqnsforIndexReduction(unmatched1,ne,m,mt,ass1,ass2,inArg);
+          //BackendDump.dumpEqSystem(isyst, "EQSYS");
+        if Flags.isSet(Flags.BLT_DUMP) then print("unmatched equations: "+stringDelimitList(List.map(unmatched1,intString),", ")+"\n\n"); end if;
+
+        // remove some edges which do not have to be traversed when finding the MSSS
+        m1 = arrayCopy(m);
+        m1t = arrayCopy(mt);
+        (m1,m1t) = removeEdgesForNoDerivativeFunctionInputs(m1,m1t,isyst,ishared);
+        meqns1 = getEqnsforIndexReduction(unmatched1,ne,m1,m1t,ass1,ass2,inArg);
+        if Flags.isSet(Flags.BLT_DUMP) then print("MSS subsets: "+stringDelimitList(List.map(meqns1,Util.intLstString),"\n ")+"\n"); end if;
+
+        //Debug information
+          //if listLength(List.flatten(meqns1)) >= 5 then meqs_short = List.firstN(List.flatten(meqns1),5); else meqs_short = List.flatten(meqns1); end if;
+          //BackendDump.dumpBipartiteGraphEqSystem(isyst,ishared,"MSSS_"+stringDelimitList(List.map(meqs_short,intString),"_"));
+
         (ass1_1,ass2_1,syst,shared,arg) = matchingExternal(meqns1,true,algIndx,-1,0,isyst,ishared,nv,ne,ass1,ass2,inMatchingOptions,sssHandler,inArg);
       then
         (ass1_1,ass2_1,syst,shared,arg);
@@ -5598,6 +5632,50 @@ algorithm
 
   end match;
 end matchingExternal;
+
+protected function removeEdgesForNoDerivativeFunctionInputs"when gathering the minimal structurally singular subsets from the unmatches equations,
+some edges dont have to be considered e.g. edges between a function call and an input variable if the input variable will not be derived when deriving the function
+author: Waurich TUD 10-2015"
+  input BackendDAE.IncidenceMatrix m;
+  input BackendDAE.IncidenceMatrixT mt;
+  input BackendDAE.EqSystem sys;
+  input BackendDAE.Shared shared;
+  output BackendDAE.IncidenceMatrix mOut;
+  output BackendDAE.IncidenceMatrixT mtOut;
+protected
+  Boolean hasNoDerAnno;
+  Integer idx, varIdx;
+  list<Integer> varIdxs, row;
+  BackendDAE.EquationArray eqs;
+  BackendDAE.Variables vars;
+  DAE.FunctionTree functionTree;
+  list<DAE.ComponentRef> noDerInputs;
+algorithm
+  vars := sys.orderedVars;
+  eqs := sys.orderedEqs;
+  functionTree := shared.functionTree;
+  idx := 1;
+  for eq in BackendEquation.equationList(eqs) loop
+    (hasNoDerAnno,noDerInputs) := BackendDAEUtil.isFuncCallWithNoDerAnnotation(eq,functionTree);
+    if hasNoDerAnno then
+      (_,varIdxs) := BackendVariable.getVarLst(noDerInputs,vars);
+        //print("remove edges between eq: "+intString(idx)+" and vars "+stringDelimitList(List.map(varIdxs,intString),", ")+"\n");
+      //update m
+      row := m[idx];
+      (_,row,_) := List.intersection1OnTrue(row,varIdxs,intEq);
+      arrayUpdate(m,idx,row);
+      //update mt
+      for varIdx in varIdxs loop
+        row := arrayGet(m,varIdx);
+        row := List.deleteMember(row,idx);
+        arrayUpdate(mt,varIdx,row);
+      end for;
+    end if;
+    idx := idx+1;
+  end for;
+  mOut := m;
+  mtOut := mt;
+end removeEdgesForNoDerivativeFunctionInputs;
 
 protected function countincidenceMatrixElementEntries
   input Integer i;
@@ -5656,12 +5734,9 @@ public function reachableEquations "author: lochel
   output list<Integer> outEqNodes;
 protected
   Integer var;
-  list<Integer> reachable;
 algorithm
   var := ass2[eqn] "get the variable that is solved in given equation";
-  reachable := if var > 0 then mT[var] else {} "get the equations that depend on that variable";
-  reachable := List.select(reachable, Util.intGreaterZero) "just keep positive integers";
-  outEqNodes := List.removeOnTrue(eqn, intEq, reachable);
+  outEqNodes := if var > 0 then list(e for e guard(e > 0 and e <> eqn) in mT[var]) else {} "get the equations that depend on that variable";
 end reachableEquations;
 
 public function incomingEquations "author: lochel
@@ -5671,12 +5746,8 @@ public function incomingEquations "author: lochel
   input BackendDAE.IncidenceMatrix m;
   input array<Integer> ass1 "eqn := ass1[var]";
   output list<Integer> outEqNodes;
-protected
-  list<Integer> vars;
 algorithm
-  vars := List.select(m[eqn], Util.intGreaterZero) "just keep positive integers";
-  outEqNodes := list(ass1[var] for var guard(ass1[var] > 0) in vars);
-  outEqNodes := List.removeOnTrue(eqn, intEq, outEqNodes);
+  outEqNodes := list(ass1[var] for var guard(var > 0 and ass1[var] <> eqn and ass1[var] > 0) in m[eqn]);
 end incomingEquations;
 
 public function isAssigned
@@ -6251,7 +6322,7 @@ algorithm
   end matchcontinue;
 end testMatchingAlgorithms1;
 
-public function testMatchingAlgorithm
+protected function testMatchingAlgorithm
 "function testMatchingAlgorithm, tests a specific matching algorithm
  author: Frenkel TUD 2012-04"
   input Integer index;
@@ -6283,32 +6354,22 @@ public function testExternMatchingAlgorithms1
   input Integer cheapId;
   input Integer nv;
   input Integer ne;
+protected
+  String str;
+  Integer matchingAlgorithm;
+  Real t;
 algorithm
-  _ :=
-  matchcontinue (matchingAlgorithms,cheapId,nv,ne)
-      local
-        list<tuple<String,Integer>> rest;
-        String str;
-        Integer matchingAlgorithm;
-        Real t;
-    case ({},_,_,_)
-      then ();
-    case ((str,matchingAlgorithm)::rest,_,_,_)
-      equation
-        System.realtimeTick(ClockIndexes.RT_PROFILER0);
-        testExternMatchingAlgorithm(10,matchingAlgorithm,cheapId,nv,ne);
-        t = System.realtimeTock(ClockIndexes.RT_PROFILER0);
-        print(str + realString(realDiv(t,10.0)) + "\n");
-        testExternMatchingAlgorithms1(rest,cheapId,nv,ne);
-      then
-        ();
-    case ((str,_)::rest,_,_,_)
-      equation
-        print(str + "failed!\n");
-        testExternMatchingAlgorithms1(rest,cheapId,nv,ne);
-      then
-        ();
-  end matchcontinue;
+  for alg in matchingAlgorithms loop
+    (str,matchingAlgorithm) := alg;
+    try
+      System.realtimeTick(ClockIndexes.RT_PROFILER0);
+      testExternMatchingAlgorithm(10,matchingAlgorithm,cheapId,nv,ne);
+      t := System.realtimeTock(ClockIndexes.RT_PROFILER0);
+      print(str + realString(realDiv(t,10.0)) + "\n");
+    else
+      print(str + "failed!\n");
+    end try;
+  end for;
 end testExternMatchingAlgorithms1;
 
 public function testExternMatchingAlgorithm
@@ -6352,12 +6413,12 @@ algorithm
      equation
        ne = BackendDAEUtil.systemSize(isyst);
        nv = BackendVariable.daenumVariables(isyst);
-       randarr = listArray(List.intRange(ne));
+       randarr = Array.createIntRange(ne);
        setrandArray(ne, randarr);
-       randarr1 = listArray(List.intRange(nv));
+       randarr1 = Array.createIntRange(nv);
        setrandArray(nv, randarr1);
        syst.orderedEqs = randSortSystem1( ne, 0, randarr, eqns, BackendEquation.listEquation({}),
-                                          BackendEquation.equationNth1, BackendEquation.addEquation );
+                                          BackendEquation.get, BackendEquation.add );
        syst.orderedVars = randSortSystem1( nv, 0, randarr1, vars, BackendVariable.emptyVars(),
                                            BackendVariable.getVarAt, BackendVariable.addVar );
        (syst, _, _) = BackendDAEUtil.getIncidenceMatrix( BackendDAEUtil.clearEqSyst(syst), BackendDAE.NORMAL(), NONE() );
@@ -6439,7 +6500,7 @@ algorithm
   vars := List.fold1(unmatched,getAssignedVars,inAssignments1,vars);
   var_str := BackendDump.dumpMarkedVars(isyst, vars);
   source := BackendEquation.markedEquationSource(isyst, listHead(unmatched1));
-  info := DAEUtil.getElementSourceFileInfo(source);
+  info := ElementSource.getElementSourceFileInfo(source);
   Error.addSourceMessage(Error.STRUCT_SINGULAR_SYSTEM, {eqn_str,var_str}, info);
 end singularSystemError;
 
@@ -6456,6 +6517,30 @@ algorithm
   b := intGt(i,0);
   oAcc := List.consOnTrue(b,i,iAcc);
 end getAssignedVars;
+
+protected function clearArrayWithKnownSetIndexes "Sets elements of arr in arrIx[1:n] to false; if n>0.3*size(arr), clear all of them"
+  input array<Boolean> arr;
+  input array<Integer> arrIx;
+  input Integer n;
+protected
+  constant Boolean debug = false;
+algorithm
+  if n>0.3*arrayLength(arr) then
+    for i in 1:arrayLength(arr) loop
+      Dangerous.arrayUpdateNoBoundsChecking(arr, i, false);
+    end for;
+  else
+    true := n <= arrayLength(arrIx);
+    for i in 1:n loop
+      Dangerous.arrayUpdate(arr, Dangerous.arrayGetNoBoundsChecking(arrIx, i), false);
+    end for;
+  end if;
+  if debug then
+    for e in 1:arrayLength(arr) loop
+      Error.assertion(not arrayGet(arr,e), "clearArrayWithKnownSetIndexes failed: " + String(e) + " n=" + String(n)+" ixs="+stringDelimitList(list(String(arrayGet(arrIx,i)) for i in 1:n),","), sourceInfo());
+    end for;
+  end if;
+end clearArrayWithKnownSetIndexes;
 
 annotation(__OpenModelica_Interface="backend");
 end Matching;

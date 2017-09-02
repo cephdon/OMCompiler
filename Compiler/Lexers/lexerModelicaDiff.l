@@ -1,5 +1,9 @@
 %{
 import DiffAlgorithm;
+protected
+import Error;
+import StringUtil;
+public
 %}
 
 %x c_comment
@@ -7,12 +11,15 @@ import DiffAlgorithm;
 %x c_string
 
 whitespace1  [ \t]+
-whitespace2  \n
+whitespace2  \r?\n
 letter       [a-zA-Z]
 wild         [_]
+nondigit     [_a-zA-Z]
+qchar        []_a-zA-Z0-9!#$%&()*+,./:;<>=?@[^{}| \-]
+sescape      "\\"['"=abfnryv\\]
 digit        [0-9]
+digitnondigit [_a-zA-Z0-9]
 digits       {digit}+
-ident        (({letter}|{wild})|['\'']({letter}|{digit}|[-*+/^=])*['\''])({letter}|{digit}|{wild})*
 exponent     ([e]|[E])([+]|[-])?{digits}
 real         {digits}[\.]({digits})?({exponent})?
 real2        {digits}{exponent}
@@ -31,9 +38,9 @@ initialalgorithm  "initial"{whitespace}"algorithm"
 {real}      return UNSIGNED_REAL;
 {real2}     return UNSIGNED_REAL;
 {real3}     return UNSIGNED_REAL;
-"algorithm" return T_ALGORITHM;
-"and" return T_AND;
-"annotation" return T_ANNOTATION;
+"algorithm" return ALGORITHM;
+"and" return AND;
+"annotation" return ANNOTATION;
 "block" return BLOCK;
 "class" return CLASS;
 "connect" return CONNECT;
@@ -46,7 +53,7 @@ initialalgorithm  "initial"{whitespace}"algorithm"
 "else" return ELSE;
 "elseif" return ELSEIF;
 "elsewhen" return ELSEWHEN;
-"end" return T_END;
+"end" return END;
 "enumeration" return ENUMERATION;
 "equation" return EQUATION;
 "encapsulated" return ENCAPSULATED;
@@ -54,26 +61,26 @@ initialalgorithm  "initial"{whitespace}"algorithm"
 "extends" return EXTENDS;
 "constrainedby" return CONSTRAINEDBY;
 "external" return EXTERNAL;
-"false" return T_FALSE;
+"false" return FALSE;
 "final" return FINAL;
 "flow" return FLOW;
 "for" return FOR;
 "function" return FUNCTION;
 "if" return IF;
 "import" return IMPORT;
-"in" return T_IN;
-"initial" return T_INITIAL;
+"in" return IN;
+"initial" return INITIAL;
 "inner" return INNER;
-"input" return T_INPUT;
+"input" return INPUT;
 "loop" return LOOP;
 "model" return MODEL;
-"not" return T_NOT;
-"outer" return T_OUTER;
+"not" return NOT;
+"outer" return OUTER;
 "operator" return OPERATOR;
 "overload" return OVERLOAD;
-"or" return T_OR;
-"output" return T_OUTPUT;
-"package" return T_PACKAGE;
+"or" return OR;
+"output" return OUTPUT;
+"package" return PACKAGE;
 "parameter" return PARAMETER;
 "partial" return PARTIAL;
 "protected" return PROTECTED;
@@ -83,7 +90,7 @@ initialalgorithm  "initial"{whitespace}"algorithm"
 "replaceable" return REPLACEABLE;
 "results" return RESULTS;
 "then" return THEN;
-"true" return T_TRUE;
+"true" return TRUE;
 "type" return TYPE;
 "when" return WHEN;
 "while" return WHILE;
@@ -107,7 +114,7 @@ initialalgorithm  "initial"{whitespace}"algorithm"
 
 "pure" return PURE;
 "impure" return IMPURE;
-"optimization" return T_OPTIMIZATION;
+"optimization" return OPTIMIZATION;
 
 ".+" return PLUS_EW;
 ".-" return MINUS_EW;
@@ -133,7 +140,10 @@ initialalgorithm  "initial"{whitespace}"algorithm"
 
 "\." return DOT;
 
-{ident}      return IDENT;
+{nondigit}{digitnondigit}* return IDENT;
+
+"'"({qchar}|{sescape})+"'"  return IDENT;
+
 {digits}     return UNSIGNED_INTEGER;
 
 "\""       {
@@ -189,18 +199,35 @@ algorithm
     return;
   end if;
   b := match ida
-    case TokenId.IDENT then tokenContent(ta)==tokenContent(tb);
-    case TokenId.UNSIGNED_INTEGER then tokenContent(ta)==tokenContent(tb);
+    case TokenId.IDENT then tokenContentEq(ta,tb);
+    case TokenId.UNSIGNED_INTEGER then tokenContentEq(ta,tb);
     case TokenId.UNSIGNED_REAL
       then stringReal(tokenContent(ta))==stringReal(tokenContent(tb));
     case TokenId.BLOCK_COMMENT
       then valueEq(blockCommentCanonical(ta),blockCommentCanonical(tb));
-    case TokenId.LINE_COMMENT then tokenContent(ta)==tokenContent(tb);
-    case TokenId.STRING then tokenContent(ta)==tokenContent(tb);
+    case TokenId.LINE_COMMENT then tokenContentEq(ta,tb);
+    case TokenId.STRING
+      algorithm
+        b := tokenContentEq(ta,tb);
+        if not b then
+          b := if 0<>StringUtil.findChar(tokenContent(ta), stringCharInt("\n")) then valueEq(blockCommentCanonical(ta),blockCommentCanonical(tb)) else false;
+        end if;
+      then b;
     case TokenId.WHITESPACE then true; // tokenContent(ta)==tokenContent(tb);
     else true;
   end match;
 end modelicaDiffTokenEq;
+
+function modelicaDiffTokenWhitespace
+  import LexerModelicaDiff.{Token,TokenId};
+  input Token t;
+  output Boolean b;
+protected
+  LexerModelicaDiff.TokenId id;
+algorithm
+  LexerModelicaDiff.TOKEN(id=id) := t;
+  b := id==TokenId.BLOCK_COMMENT or id==TokenId.LINE_COMMENT or id==TokenId.WHITESPACE or id==TokenId.NEWLINE;
+end modelicaDiffTokenWhitespace;
 
 function filterModelicaDiff
   import LexerModelicaDiff.{Token,TokenId,tokenContent,TOKEN};
@@ -262,8 +289,50 @@ algorithm
   while not listEmpty(simpleDiff) loop
     (lastIsNewline,simpleDiff,tmp) := match simpleDiff
       local
-        tuple<Diff, Token> e;
-        Token t;
+        tuple<Diff, Token> e,e1,e2;
+        Token t,t1,t2,tk3,tk4,tk5;
+        TokenId t3,t4,t5;
+        Diff d1,d2,d3,d4,d5;
+      // Do not delete whitespace in-between two tokens
+      case (e1 as (Diff.Equal,_))::(Diff.Delete,t1 as TOKEN(id=TokenId.NEWLINE))::(Diff.Delete,t2 as TOKEN(id=TokenId.WHITESPACE))::(e2 as (Diff.Equal,_))::rest then (false,e1::(Diff.Equal,t1)::(Diff.Equal,t2)::e2::rest,tmp);
+      case (e1 as (Diff.Equal,_))::(Diff.Delete,t as TOKEN(id=TokenId.WHITESPACE))::(e2 as (Diff.Equal,_))::rest then (false,e1::(Diff.Equal,t)::e2::rest,tmp);
+      case (e1 as (Diff.Equal,TOKEN(id=t3)))::rest
+        guard t3<>TokenId.WHITESPACE and t3<>TokenId.NEWLINE and deleteWhitespaceFollowedByEqualNonWhitespace(rest)
+        algorithm
+          (_,rest) := deleteWhitespaceFollowedByEqualNonWhitespace(rest);
+        then (false,e1::rest,tmp);
+
+      // Do not delete+add the same token just because there is whitespace added
+      case (d1,t1)::(Diff.Add,TOKEN(id=t3))::(Diff.Add,TOKEN(id=t4))::(Diff.Add,TOKEN(id=t5))::(d2,t2)::rest
+        guard ((d1==Diff.Add and d2==Diff.Delete) or (d2==Diff.Add and d1==Diff.Delete)) and modelicaDiffTokenEq(t1,t2)
+               and (t3==TokenId.NEWLINE or t3 == TokenId.WHITESPACE) and (t4==TokenId.NEWLINE or t4 == TokenId.WHITESPACE) and (t5==TokenId.NEWLINE or t5 == TokenId.WHITESPACE)
+        then (false,(Diff.Equal,t1)::rest,tmp);
+      case (d1,t1)::(Diff.Add,TOKEN(id=t3))::(Diff.Add,TOKEN(id=t4))::(d2,t2)::rest
+        guard ((d1==Diff.Add and d2==Diff.Delete) or (d2==Diff.Add and d1==Diff.Delete)) and modelicaDiffTokenEq(t1,t2)
+               and (t3==TokenId.NEWLINE or t3 == TokenId.WHITESPACE) and (t4==TokenId.NEWLINE or t4 == TokenId.WHITESPACE)
+        then (false,(Diff.Equal,t1)::rest,tmp);
+      case (d1,t1)::(Diff.Add,TOKEN(id=t3))::(d2,t2)::rest
+        guard ((d1==Diff.Add and d2==Diff.Delete) or (d2==Diff.Add and d1==Diff.Delete)) and modelicaDiffTokenEq(t1,t2)
+               and (t3==TokenId.NEWLINE or t3 == TokenId.WHITESPACE)
+        then (false,(Diff.Equal,t1)::rest,tmp);
+
+      // Odd case of Delete token + equals whitespace + Add token again... Do Equal token + equal whitespace
+      case (d1,t1)::(d3,tk3 as TOKEN(id=t3))::(d4,tk4 as TOKEN(id=t4))::(d5,tk5 as TOKEN(id=t5))::(d2,t2)::rest
+        guard ((d1==Diff.Add and d2==Diff.Delete) or (d2==Diff.Add and d1==Diff.Delete)) and modelicaDiffTokenEq(t1,t2)
+               and (d3==Diff.Equal or d3==Diff.Delete) and (d4==Diff.Equal or d4==Diff.Delete) and (d5==Diff.Equal or d5==Diff.Delete)
+               and (t3==TokenId.NEWLINE or t3 == TokenId.WHITESPACE) and (t4==TokenId.NEWLINE or t4 == TokenId.WHITESPACE) and (t5==TokenId.NEWLINE or t5 == TokenId.WHITESPACE)
+        then (false,(Diff.Equal,t1)::(Diff.Equal,tk3)::(Diff.Equal,tk4)::(Diff.Equal,tk5)::rest,tmp);
+      case (d1,t1)::(d3,tk3 as TOKEN(id=t3))::(d4,tk4 as TOKEN(id=t4))::(d2,t2)::rest
+        guard ((d1==Diff.Add and d2==Diff.Delete) or (d2==Diff.Add and d1==Diff.Delete)) and modelicaDiffTokenEq(t1,t2)
+               and (d3==Diff.Equal or d3==Diff.Delete) and (d4==Diff.Equal or d4==Diff.Delete)
+               and (t3==TokenId.NEWLINE or t3 == TokenId.WHITESPACE) and (t4==TokenId.NEWLINE or t4 == TokenId.WHITESPACE)
+        then (false,(Diff.Equal,t1)::(Diff.Equal,tk3)::(Diff.Equal,tk4)::rest,tmp);
+      case (d1,t1)::(d3,tk3 as TOKEN(id=t3))::(d2,t2)::rest
+        guard ((d1==Diff.Add and d2==Diff.Delete) or (d2==Diff.Add and d1==Diff.Delete)) and modelicaDiffTokenEq(t1,t2)
+               and (d3==Diff.Equal or d3==Diff.Delete)
+               and (t3==TokenId.NEWLINE or t3 == TokenId.WHITESPACE)
+        then (false,(Diff.Equal,t1)::(Diff.Equal,tk3)::rest,tmp);
+
       case (Diff.Add,TOKEN(id=TokenId.NEWLINE))::(Diff.Add,TOKEN(id=TokenId.WHITESPACE))::(rest as (_,TOKEN(id=TokenId.NEWLINE))::_)
         then (false,rest,tmp);
       case (Diff.Add,TOKEN(id=TokenId.NEWLINE))::(rest as (_,TOKEN(id=TokenId.NEWLINE))::_)
@@ -358,5 +427,77 @@ algorithm
   // Canonical representation trims whitespace from each line
   lines := list(System.trim(s) for s in System.strtok(tokenContent(t),"\n"));
 end blockCommentCanonical;
+
+function deleteWhitespaceFollowedByEqualNonWhitespace
+  import LexerModelicaDiff.{Token,TokenId,TOKEN};
+  import DiffAlgorithm.Diff;
+  input list<tuple<Diff, Token>> inRest;
+  output Boolean b;
+  output list<tuple<Diff, Token>> result;
+protected
+  tuple<Diff, Token> head;
+  Diff diff;
+  Token t;
+  TokenId id;
+  list<tuple<Diff, Token>> rest;
+  Boolean foundWS=false, foundNL=false;
+algorithm
+  rest := inRest;
+  result := {};
+  while not listEmpty(rest) loop
+    (head as (diff,t as TOKEN(id=id))) := listHead(rest);
+    if diff <> Diff.Delete then
+      break;
+    end if;
+    rest := listRest(rest);
+    if id==TokenId.WHITESPACE and not foundWS then
+      foundWS := true;
+      result := (Diff.Equal,t)::result;
+    elseif id==TokenId.NEWLINE then
+      foundNL := true;
+      break;
+    else
+      result := head :: result;
+    end if;
+  end while;
+  if (not foundWS) or foundNL then
+    // If we find a newline, we probably went too far.
+    b := false;
+    result := {};
+    return;
+  end if;
+  _ := match rest
+    case (Diff.Equal,t)::_ then ();
+    else
+      algorithm
+        b := false;
+        result := {};
+        return;
+      then fail();
+  end match;
+  b := true;
+  for i in result loop
+    rest := i::rest;
+  end for;
+  result := rest;
+end deleteWhitespaceFollowedByEqualNonWhitespace;
+
+function reportErrors
+  import LexerModelicaDiff.{Token,TokenId,tokenContent,tokenSourceInfo};
+  input list<Token> tokens;
+protected
+  Integer i=0;
+algorithm
+  for t in tokens loop
+    i := i+1;
+    if i>10 then
+      Error.addMessage(Error.SCANNER_ERROR_LIMIT, {});
+    end if;
+    Error.addSourceMessage(Error.SCANNER_ERROR, {tokenContent(t)}, tokenSourceInfo(t));
+  end for;
+  if not listEmpty(tokens) then
+    fail();
+  end if;
+end reportErrors;
 
 annotation(__OpenModelica_Interface="backend");

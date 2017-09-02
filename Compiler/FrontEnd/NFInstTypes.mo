@@ -34,13 +34,12 @@ encapsulated package NFInstTypes
   package:     NFInstTypes
   description: Types used by NFInst.
 
-  RCS: $Id$
 
   Types used by NFInst.
 "
 
 public import Absyn;
-public import NFConnect2;
+//public import NFConnect2;
 public import DAE;
 public import NFInstPrefix;
 public import SCode;
@@ -284,10 +283,10 @@ public uniontype Equation
 
   record CONNECT_EQUATION
     DAE.ComponentRef lhs "The left hand side component.";
-    NFConnect2.Face lhsFace "The face of the lhs component, inside or outside.";
+    //NFConnect2.Face lhsFace "The face of the lhs component, inside or outside.";
     DAE.Type lhsType     "The type of the lhs component.";
     DAE.ComponentRef rhs "The right hand side component.";
-    NFConnect2.Face rhsFace "The face of the rhs component, inside or outside.";
+    //NFConnect2.Face rhsFace "The face of the rhs component, inside or outside.";
     DAE.Type rhsType     "The type of the rhs component.";
     Prefix prefix;
     SourceInfo info;

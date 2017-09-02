@@ -63,12 +63,12 @@ static inline void overwriteTimeGridModel(OptDataTime * time, long double c[], c
 /* pick up model data
  * author: Vitalij Ruge
  */
-int pickUpModelData(DATA* data, SOLVER_INFO* solverInfo)
+int pickUpModelData(DATA* data, threadData_t *threadData, SOLVER_INFO* solverInfo)
 {
-  const int nReal = data->modelData.nVariablesReal;
-  const int nBoolean = data->modelData.nVariablesBoolean;
-  const int nInteger = data->modelData.nVariablesInteger;
-  const int nRelations =  data->modelData.nRelations;
+  const int nReal = data->modelData->nVariablesReal;
+  const int nBoolean = data->modelData->nVariablesBoolean;
+  const int nInteger = data->modelData->nVariablesInteger;
+  const int nRelations =  data->modelData->nRelations;
 
   int i, j;
   OptData *optData =  (OptData*) solverInfo->solverData;
@@ -90,6 +90,7 @@ int pickUpModelData(DATA* data, SOLVER_INFO* solverInfo)
       optData->v[i][j] = (modelica_real*)malloc(nReal*sizeof(modelica_real));
   }
   optData->data = data;
+  optData->threadData = threadData;
 
   optData->v0 = (modelica_real*)malloc(nReal*sizeof(modelica_real));
   memcpy(optData->v0, data->localData[0]->realVars, nReal*sizeof(modelica_real));
@@ -107,22 +108,22 @@ int pickUpModelData(DATA* data, SOLVER_INFO* solverInfo)
   memcpy(optData->b0, data->localData[0]->booleanVars, nBoolean*sizeof(modelica_boolean));
 
   optData->re = (modelica_boolean*)malloc(nRelations*sizeof(modelica_boolean));
-  memcpy(optData->re, data->simulationInfo.relations, nRelations*sizeof(modelica_boolean));
+  memcpy(optData->re, data->simulationInfo->relations, nRelations*sizeof(modelica_boolean));
 
   optData->i0Pre = (modelica_integer*)malloc(nInteger*sizeof(modelica_integer));
-  memcpy(optData->i0Pre, data->simulationInfo.integerVarsPre, nInteger*sizeof(modelica_integer));
+  memcpy(optData->i0Pre, data->simulationInfo->integerVarsPre, nInteger*sizeof(modelica_integer));
 
   optData->b0Pre = (modelica_boolean*)malloc(nBoolean*sizeof(modelica_boolean));
-  memcpy(optData->b0Pre, data->simulationInfo.booleanVarsPre, nBoolean*sizeof(modelica_boolean));
+  memcpy(optData->b0Pre, data->simulationInfo->booleanVarsPre, nBoolean*sizeof(modelica_boolean));
 
   optData->v0Pre = (modelica_real*)malloc(nReal*sizeof(modelica_real));
-  memcpy(optData->v0Pre, data->simulationInfo.realVarsPre, nReal*sizeof(modelica_real));
+  memcpy(optData->v0Pre, data->simulationInfo->realVarsPre, nReal*sizeof(modelica_real));
 
   optData->rePre = (modelica_boolean*)malloc(nRelations*sizeof(modelica_boolean));
-  memcpy(optData->rePre, data->simulationInfo.relationsPre, nRelations*sizeof(modelica_boolean));
+  memcpy(optData->rePre, data->simulationInfo->relationsPre, nRelations*sizeof(modelica_boolean));
 
   optData->storeR = (modelica_boolean*)malloc(nRelations*sizeof(modelica_boolean));
-  memcpy(optData->storeR, data->simulationInfo.storedRelations, nRelations*sizeof(modelica_boolean));
+  memcpy(optData->storeR, data->simulationInfo->storedRelations, nRelations*sizeof(modelica_boolean));
 
   printSomeModelInfos(&optData->bounds, &optData->dim, data);
 
@@ -133,35 +134,38 @@ int pickUpModelData(DATA* data, SOLVER_INFO* solverInfo)
  * author: Vitalij Ruge
  */
 static inline void pickUpDim(OptDataDim * dim, DATA* data, OptDataTime * time){
-
   char * cflags = NULL;
   cflags = (char*)omc_flagValue[FLAG_OPTIMIZER_NP];
-  if(cflags){
+  if (cflags) {
     dim->np = atoi(cflags);
-    if(dim->np != 1 && dim->np!=3){
+    if (dim->np != 1 && dim->np!=3) {
       warningStreamPrint(LOG_STDOUT, 0, "FLAG_OPTIZER_NP is %i. Currently optimizer support only 1 and 3.\nFLAG_OPTIZER_NP set of 3", dim->np);
       dim->np = 3;
     }
-  }else
+  } else {
     dim->np = 3; /*ToDo*/
-  dim->nx = data->modelData.nStates;
-  dim->nu = data->modelData.nInputVars;
+  }
+  dim->nx = data->modelData->nStates;
+  dim->nu = data->modelData->nInputVars;
   dim->nv = dim->nx + dim->nu;
-  dim->nc = data->modelData.nOptimizeConstraints;
-  dim->ncf = data->modelData.nOptimizeFinalConstraints;
+  dim->nc = data->modelData->nOptimizeConstraints;
+  dim->ncf = data->modelData->nOptimizeFinalConstraints;
   dim->nJ = dim->nx + dim->nc;
   dim->nJ2 = dim->nJ + 2;
-  dim->nReal = data->modelData.nVariablesReal;
+  dim->nReal = data->modelData->nVariablesReal;
 
   cflags = (char*)omc_flagValue[FLAG_OPTIMIZER_TGRID];
-  data->callback->getTimeGrid(data, &dim->nsi, &time->tt);
+  dim->nsi = -1; /* Initialize the data just in case */
+  data->callback->getTimeGrid(data, &dim->nsi, &time->tt); /* TODO: dim->nsi is long*, expected is int* */
   time->model_grid = (modelica_boolean)(dim->nsi > 0);
 
-  if(!time->model_grid)
-    dim->nsi = data->simulationInfo.numSteps;
+  if (!time->model_grid) {
+    dim->nsi = data->simulationInfo->numSteps;
+  }
 
-  if(cflags)
+  if (cflags) {
     dim->nsi = getNsi(cflags, dim->nsi, &dim->exTimeGrid);
+  }
 
   dim->nt = dim->nsi*dim->np;
   dim->NV = dim->nt*dim->nv;
@@ -186,8 +190,8 @@ static inline void pickUpTime(OptDataTime * time, OptDataDim * dim, DATA* data, 
   double t;
   char * cflags = NULL;
 
-  time->t0 = (long double)fmax(data->simulationInfo.startTime, preSimTime);
-  time->tf = (long double)data->simulationInfo.stopTime;
+  time->t0 = (long double)fmax(data->simulationInfo->startTime, preSimTime);
+  time->tf = (long double)data->simulationInfo->stopTime;
 
   time->dt = (long double*) malloc((nsi+1)*sizeof(long double));
   time->dt[0] = (time->tf - time->t0)/nsi;
@@ -319,7 +323,7 @@ int cmp_modelica_real(const void *v1, const void *v2) {
 
 static inline void overwriteTimeGridModel(OptDataTime * time, long double c[], const int np, const int nsi){
   int i,k;
-  const int np1 = np - 1;
+
   time->t0 = time->tt[0];
   time->tf = time->tt[nsi];
 
@@ -376,14 +380,14 @@ static inline void pickUpBounds(OptDataBounds * bounds, OptDataDim * dim, DATA* 
   data->callback->pickUpBoundsForInputsInOptimization(data,umin, umax, unom, nominalWasSetInput, inputName, bounds->u0, &bounds->preSim);
 
   for(i = 0; i < nx; ++i){
-    min = data->modelData.realVarsData[i].attribute.min;
-    max = data->modelData.realVarsData[i].attribute.max;
-    nominal = data->modelData.realVarsData[i].attribute.nominal;
-    nominalWasSet = data->modelData.realVarsData[i].attribute.useNominal;
+    min = data->modelData->realVarsData[i].attribute.min;
+    max = data->modelData->realVarsData[i].attribute.max;
+    nominal = data->modelData->realVarsData[i].attribute.nominal;
+    nominalWasSet = data->modelData->realVarsData[i].attribute.useNominal;
     x0 = data->localData[1]->realVars[i];
 
     check_nominal(bounds, min, max, nominal, nominalWasSet, i, x0);
-    data->modelData.realVarsData[i].attribute.nominal = bounds->vnom[i];
+    data->modelData->realVarsData[i].attribute.nominal = bounds->vnom[i];
     bounds->scalF[i] = 1.0/bounds->vnom[i];
     bounds->vmin[i] = min * bounds->scalF[i];
     bounds->vmax[i] = max * bounds->scalF[i];
@@ -535,16 +539,16 @@ static inline void printSomeModelInfos(OptDataBounds * bounds, OptDataDim * dim,
   for(i = 0; i < nx; ++i){
 
     if (xmin[i] > -1e20)
-      sprintf(buffer, ", min = %g", data->modelData.realVarsData[i].attribute.min);
+      sprintf(buffer, ", min = %g", data->modelData->realVarsData[i].attribute.min);
     else
       sprintf(buffer, ", min = -Inf");
 
-    tmpStart = data->modelData.realVarsData[i].attribute.start;
+    tmpStart = data->modelData->realVarsData[i].attribute.start;
 
-    printf("\nState[%i]:%s(start = %g, nominal = %g%s", i, data->modelData.realVarsData[i].info.name, tmpStart, xnom[i], buffer);
+    printf("\nState[%i]:%s(start = %g, nominal = %g%s", i, data->modelData->realVarsData[i].info.name, tmpStart, xnom[i], buffer);
 
     if(xmax[i] < 1e20)
-      sprintf(buffer, ", max = %g", data->modelData.realVarsData[i].attribute.max);
+      sprintf(buffer, ", max = %g", data->modelData->realVarsData[i].attribute.max);
     else
       sprintf(buffer, ", max = +Inf");
 
@@ -586,9 +590,9 @@ void res2file(OptData *optData, SOLVER_INFO* solverInfo, double *vopt){
   const int nsi = optData->dim.nsi;
   const int np = optData->dim.np;
   const int nReal = optData->dim.nReal;
-  const int nBoolean = optData->data->modelData.nVariablesBoolean;
-  const int nInteger = optData->data->modelData.nVariablesInteger;
-  const int nRelations =  optData->data->modelData.nRelations;
+  const int nBoolean = optData->data->modelData->nVariablesBoolean;
+  const int nInteger = optData->data->modelData->nVariablesInteger;
+  const int nRelations =  optData->data->modelData->nRelations;
   const int nvnp = nv*np;
   long double a[np];
   modelica_real *** v = optData->v;
@@ -597,6 +601,7 @@ void res2file(OptData *optData, SOLVER_INFO* solverInfo, double *vopt){
   int i,j,k, ii, jj;
   char buffer[4096];
   DATA * data = optData->data;
+  threadData_t *threadData = optData->threadData;
   SIMULATION_DATA *sData = (SIMULATION_DATA*)data->localData[0];
 
   FILE * pFile = optData->pFile;
@@ -627,30 +632,30 @@ void res2file(OptData *optData, SOLVER_INFO* solverInfo, double *vopt){
       tmpv += a[k]*vopt[k*nv + j];
     }
     tmpv = fmin(fmax(tmpv,optData->bounds.vmin[j]),optData->bounds.vmax[j]);
-    data->simulationInfo.inputVars[i] = (double)tmpv*vnom[j];
-    fprintf(pFile, "%lf ", (float)data->simulationInfo.inputVars[i]);
+    data->simulationInfo->inputVars[i] = (double)tmpv*vnom[j];
+    fprintf(pFile, "%lf ", (float)data->simulationInfo->inputVars[i]);
   }
   fprintf(pFile, "%s", "\n");
   /******************/
   memcpy(sData->realVars, v0, nReal*sizeof(modelica_real));
   memcpy(data->localData[0]->integerVars, optData->i0, nInteger*sizeof(modelica_integer));
   memcpy(data->localData[0]->booleanVars, optData->b0, nBoolean*sizeof(modelica_boolean));
-  memcpy(data->simulationInfo.integerVarsPre, optData->i0Pre, nInteger*sizeof(modelica_integer));
-  memcpy(data->simulationInfo.booleanVarsPre, optData->b0Pre, nBoolean*sizeof(modelica_boolean));
-  memcpy(data->simulationInfo.realVarsPre, optData->v0Pre, nReal*sizeof(modelica_real));
-  memcpy(data->simulationInfo.relationsPre, optData->rePre, nRelations*sizeof(modelica_boolean));
-  memcpy(data->simulationInfo.relations, optData->re, nRelations*sizeof(modelica_boolean));
-  memcpy(data->simulationInfo.storedRelations, optData->storeR, nRelations*sizeof(modelica_boolean));
+  memcpy(data->simulationInfo->integerVarsPre, optData->i0Pre, nInteger*sizeof(modelica_integer));
+  memcpy(data->simulationInfo->booleanVarsPre, optData->b0Pre, nBoolean*sizeof(modelica_boolean));
+  memcpy(data->simulationInfo->realVarsPre, optData->v0Pre, nReal*sizeof(modelica_real));
+  memcpy(data->simulationInfo->relationsPre, optData->rePre, nRelations*sizeof(modelica_boolean));
+  memcpy(data->simulationInfo->relations, optData->re, nRelations*sizeof(modelica_boolean));
+  memcpy(data->simulationInfo->storedRelations, optData->storeR, nRelations*sizeof(modelica_boolean));
   /******************/
   solverInfo->currentTime = (double)t0;
   sData->timeValue = solverInfo->currentTime;
 
   /*updateDiscreteSystem(data);*/
-  data->callback->input_function(data);
+  data->callback->input_function(data, threadData);
   /*data->callback->functionDAE(data);*/
-  updateDiscreteSystem(data);
+  updateDiscreteSystem(data, threadData);
 
-  sim_result.emit(&sim_result,data);
+  sim_result.emit(&sim_result, data, threadData);
   /******************/
 
   for(ii = 0; ii < nsi; ++ii){
@@ -667,7 +672,7 @@ void res2file(OptData *optData, SOLVER_INFO* solverInfo, double *vopt){
       /******************/
       solverInfo->currentTime = (double)t[ii][jj];
       sData->timeValue = solverInfo->currentTime;
-      sim_result.emit(&sim_result,data);
+      sim_result.emit(&sim_result, data, threadData);
     }
   }
   fclose(pFile);
@@ -682,36 +687,36 @@ void optData2ModelData(OptData *optData, double *vopt, const int index){
   const int nsi = optData->dim.nsi;
   const int np = optData->dim.np;
 
-  const int nBoolean = optData->data->modelData.nVariablesBoolean;
-  const int nInteger = optData->data->modelData.nVariablesInteger;
+  const int nBoolean = optData->data->modelData->nVariablesBoolean;
+  const int nInteger = optData->data->modelData->nVariablesInteger;
   const int nReal = optData->dim.nReal;
-  const int nRelations =  optData->data->modelData.nRelations;
+  const int nRelations =  optData->data->modelData->nRelations;
 
 
   modelica_real * realVars[3];
-  modelica_real * tmpVars[2];
+  modelica_real * tmpVars[2] = {NULL, NULL};
 
   int i, j, k, shift, l;
   DATA * data = optData->data;
   const int * indexBC = optData->s.indexABCD + 3;
-  threadData_t *threadData = data->threadData;
+  threadData_t *threadData = optData->threadData;
 
   for(l = 0; l < 3; ++l)
     realVars[l] = data->localData[l]->realVars;
 
   for(l = 0; l< 2; ++l){
     if(optData->s.matrix[l])
-      tmpVars[l] = data->simulationInfo.analyticJacobians[indexBC[l]].tmpVars;
+      tmpVars[l] = data->simulationInfo->analyticJacobians[indexBC[l]].tmpVars;
   }
 
   memcpy(data->localData[0]->integerVars, optData->i0, nInteger*sizeof(modelica_integer));
   memcpy(data->localData[0]->booleanVars, optData->b0, nBoolean*sizeof(modelica_boolean));
-  memcpy(data->simulationInfo.integerVarsPre, optData->i0Pre, nInteger*sizeof(modelica_integer));
-  memcpy(data->simulationInfo.booleanVarsPre, optData->b0Pre, nBoolean*sizeof(modelica_boolean));
-  memcpy(data->simulationInfo.realVarsPre, optData->v0Pre, nReal*sizeof(modelica_real));
-  memcpy(data->simulationInfo.relationsPre, optData->rePre, nRelations*sizeof(modelica_boolean));
-  memcpy(data->simulationInfo.relations, optData->re, nRelations*sizeof(modelica_boolean));
-  memcpy(data->simulationInfo.storedRelations, optData->storeR, nRelations*sizeof(modelica_boolean));
+  memcpy(data->simulationInfo->integerVarsPre, optData->i0Pre, nInteger*sizeof(modelica_integer));
+  memcpy(data->simulationInfo->booleanVarsPre, optData->b0Pre, nBoolean*sizeof(modelica_boolean));
+  memcpy(data->simulationInfo->realVarsPre, optData->v0Pre, nReal*sizeof(modelica_real));
+  memcpy(data->simulationInfo->relationsPre, optData->rePre, nRelations*sizeof(modelica_boolean));
+  memcpy(data->simulationInfo->relations, optData->re, nRelations*sizeof(modelica_boolean));
+  memcpy(data->simulationInfo->storedRelations, optData->storeR, nRelations*sizeof(modelica_boolean));
 
 
   for(i = 0, shift = 0; i < nsi-1; ++i){
@@ -739,7 +744,7 @@ void optData2ModelData(OptData *optData, double *vopt, const int index){
 
   for(l = 0; l< 2; ++l)
     if(optData->s.matrix[l])
-      data->simulationInfo.analyticJacobians[indexBC[l]].tmpVars = tmpVars[l];
+      data->simulationInfo->analyticJacobians[indexBC[l]].tmpVars = tmpVars[l];
 
 }
 
@@ -756,9 +761,9 @@ static inline void updateDOSystem(OptData * optData, DATA * data, threadData_t *
 #if !defined(OMC_EMCC)
     MMC_TRY_INTERNAL(simulationJumpBuffer)
 #endif
-    data->callback->input_function(data);
+    data->callback->input_function(data, optData->threadData);
     /*data->callback->functionDAE(data);*/
-    updateDiscreteSystem(data);
+    updateDiscreteSystem(data, optData->threadData);
 
     if(index){
       diffSynColoredOptimizerSystem(optData, optData->J[i][j], i, j, m);
@@ -790,13 +795,13 @@ static inline void setLocalVars(OptData * optData, DATA * data, const double * c
   }
   for(l = 0; l < 2; ++l)
     if(optData->s.matrix[l])
-      data->simulationInfo.analyticJacobians[indexBC[l]].tmpVars = dim->analyticJacobians_tmpVars[l][i][j];
+      data->simulationInfo->analyticJacobians[indexBC[l]].tmpVars = dim->analyticJacobians_tmpVars[l][i][j];
 
   for(k = 0; k < nx; ++k)
     data->localData[0]->realVars[k] = vopt[shift + k]*vnom[k];
 
   for(; k <nv; ++k){
-    data->simulationInfo.inputVars[k-nx] = (modelica_real) vopt[shift + k]*vnom[k];
+    data->simulationInfo->inputVars[k-nx] = (modelica_real) vopt[shift + k]*vnom[k];
   }
 
 };
@@ -808,18 +813,19 @@ static inline void setLocalVars(OptData * optData, DATA * data, const double * c
  */
 void diffSynColoredOptimizerSystem(OptData *optData, modelica_real **J, const int m, const int n, const int index){
   DATA * data = optData->data;
+  threadData_t *threadData = optData->threadData;
   int i,j,l,ii, ll;
 
   const int h_index = optData->s.indexABCD[index];
   const long double * scaldt = optData->bounds.scaldt[m];
-  const unsigned int * const cC = data->simulationInfo.analyticJacobians[h_index].sparsePattern.colorCols;
-  const unsigned int * const lindex  = optData->s.lindex[index];
-  const int nx = data->simulationInfo.analyticJacobians[h_index].sizeCols;
-  const int Cmax = data->simulationInfo.analyticJacobians[h_index].sparsePattern.maxColors + 1;
+  const unsigned int * const cC = data->simulationInfo->analyticJacobians[h_index].sparsePattern.colorCols;
+  const unsigned int * const lindex  = data->simulationInfo->analyticJacobians[h_index].sparsePattern.leadindex;
+  const int nx = data->simulationInfo->analyticJacobians[h_index].sizeCols;
+  const int Cmax = data->simulationInfo->analyticJacobians[h_index].sparsePattern.maxColors + 1;
   const int dnx = optData->dim.nx;
   const int dnxnc = optData->dim.nJ;
-  const modelica_real * const resultVars = data->simulationInfo.analyticJacobians[h_index].resultVars;
-  const unsigned int * const sPindex = data->simulationInfo.analyticJacobians[h_index].sparsePattern.index;
+  const modelica_real * const resultVars = data->simulationInfo->analyticJacobians[h_index].resultVars;
+  const unsigned int * const sPindex = data->simulationInfo->analyticJacobians[h_index].sparsePattern.index;
   long double  scalb = optData->bounds.scalb[m][n];
 
   const int * index_J = (index == 3)? optData->s.indexJ3 : optData->s.indexJ2;
@@ -828,12 +834,12 @@ void diffSynColoredOptimizerSystem(OptData *optData, modelica_real **J, const in
   modelica_real **sV = optData->s.seedVec[index];
 
   for(i = 1; i < Cmax; ++i){
-    data->simulationInfo.analyticJacobians[h_index].seedVars = sV[i];
+    data->simulationInfo->analyticJacobians[h_index].seedVars = sV[i];
 
     if(index == 2){
-      data->callback->functionJacB_column(data);
+      data->callback->functionJacB_column(data, threadData);
     }else if(index == 3){
-      data->callback->functionJacC_column(data);
+      data->callback->functionJacC_column(data, threadData);
     }else
       assert(0);
 
@@ -861,22 +867,23 @@ void diffSynColoredOptimizerSystem(OptData *optData, modelica_real **J, const in
 void diffSynColoredOptimizerSystemF(OptData *optData, modelica_real **J){
   if(optData->dim.ncf > 0){
     DATA * data = optData->data;
+    threadData_t *threadData = optData->threadData;
     int i,j,l,ii, ll;
     const int index = 4;
     const int h_index = optData->s.indexABCD[index];
-    const unsigned int * const cC = data->simulationInfo.analyticJacobians[h_index].sparsePattern.colorCols;
-    const unsigned int * const lindex  = optData->s.lindex[index];
-    const int nx = data->simulationInfo.analyticJacobians[h_index].sizeCols;
-    const int Cmax = data->simulationInfo.analyticJacobians[h_index].sparsePattern.maxColors + 1;
-    const modelica_real * const resultVars = data->simulationInfo.analyticJacobians[h_index].resultVars;
-    const unsigned int * const sPindex = data->simulationInfo.analyticJacobians[h_index].sparsePattern.index;
+    const unsigned int * const cC = data->simulationInfo->analyticJacobians[h_index].sparsePattern.colorCols;
+    const unsigned int * const lindex  = data->simulationInfo->analyticJacobians[h_index].sparsePattern.leadindex;
+    const int nx = data->simulationInfo->analyticJacobians[h_index].sizeCols;
+    const int Cmax = data->simulationInfo->analyticJacobians[h_index].sparsePattern.maxColors + 1;
+    const modelica_real * const resultVars = data->simulationInfo->analyticJacobians[h_index].resultVars;
+    const unsigned int * const sPindex = data->simulationInfo->analyticJacobians[h_index].sparsePattern.index;
 
     modelica_real **sV = optData->s.seedVec[index];
 
     for(i = 1; i < Cmax; ++i){
-      data->simulationInfo.analyticJacobians[h_index].seedVars = sV[i];
+      data->simulationInfo->analyticJacobians[h_index].seedVars = sV[i];
 
-      data->callback->functionJacD_column(data);
+      data->callback->functionJacD_column(data, threadData);
 
       for(ii = 0; ii < nx; ++ii){
         if(cC[ii] == i){
@@ -913,20 +920,20 @@ static inline void pickUpStates(OptData* optData){
       }
       // check if csv file is empty!
       if(n == 0){
-        fprintf(stderr, "External input file: externalInput.csv is empty!\n"); fflush(NULL);
+        fprintf(stderr, "External input file: %s is empty!\n",cflags); fflush(NULL);
         EXIT(1);
       }else{
         int i, j;
         double start_value;
         char buffer[200];
-        const int nReal = optData->data->modelData.nVariablesReal;
+        const int nReal = optData->data->modelData->nVariablesReal;
         rewind(pFile);
         for(i =0; i< n; ++i){
           fscanf(pFile, "%s", buffer);
           if (fscanf(pFile, "%lf", &start_value) <= 0) continue;
 
           for(j = 0, b = 0; j < nReal; ++j){
-            if(!strcmp(optData->data->modelData.realVarsData[j].info.name, buffer)){
+            if(!strcmp(optData->data->modelData->realVarsData[j].info.name, buffer)){
               optData->data->localData[0]->realVars[j] = start_value;
               optData->data->localData[1]->realVars[j] = start_value;
               optData->data->localData[2]->realVars[j] = start_value;
@@ -944,9 +951,9 @@ static inline void pickUpStates(OptData* optData){
         fclose(pFile);
         printf("\n");
         /*update system*/
-        optData->data->callback->input_function(optData->data);
+        optData->data->callback->input_function(optData->data, optData->threadData);
         /*optData->data->callback->functionDAE(optData->data);*/
-        updateDiscreteSystem(optData->data);
+        updateDiscreteSystem(optData->data, optData->threadData);
       }
     }
   }

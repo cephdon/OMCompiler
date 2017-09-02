@@ -34,7 +34,6 @@ encapsulated package ConnectionGraph
   package:     ConnectionGraph
   description: Constant propagation of expressions
 
-  RCS: $Id$
 
   This module contains a connection breaking algorithm and
   related data structures. The input of the algorithm is
@@ -335,7 +334,7 @@ algorithm
         if Flags.isSet(Flags.CGRAPH) then
           Debug.trace("- ConnectionGraph.addConnection(" + ComponentReference.printComponentRefStr(ref1) + ", " + ComponentReference.printComponentRefStr(ref2) + ")\n");
         end if;
-      then GRAPH(updateGraph, definiteRoots,potentialRoots,uniqueRoots,branches,(ref1,ref2,dae)::connections);
+      then GRAPH(updateGraph, definiteRoots, potentialRoots, uniqueRoots, branches, (ref1,ref2,dae)::connections);
   end match;
 end addConnection;
 
@@ -748,40 +747,26 @@ protected function orderConnectsGuidedByUser
   input DaeEdges inConnections;
   input list<tuple<String,String>> inUserSelectedBreaking;
   output DaeEdges outOrderedConnections;
+protected
+  DaeEdges front = {};
+  DaeEdges back = {};
+  DAE.ComponentRef c1, c2;
+  String sc1,sc2;
 algorithm
-  outOrderedConnections := match(inConnections, inUserSelectedBreaking)
-    local
-      String sc1,sc2;
-      DAE.ComponentRef c1, c2;
-      DaeEdge e;
-      list<DAE.Element> els;
-      DaeEdges rest, ordered;
-      Boolean  b1, b2;
+  for e in inConnections loop
+    (c1, c2, _) := e;
+    sc1 := ComponentReference.printComponentRefStr(c1);
+    sc2 := ComponentReference.printComponentRefStr(c2);
 
-    // handle empty case
-    case ({}, _) then {};
-
-    // handle match and miss
-    case ((e as (c1, c2, _))::rest, _)
-      equation
-        sc1 = ComponentReference.printComponentRefStr(c1);
-        sc2 = ComponentReference.printComponentRefStr(c2);
-        ordered = orderConnectsGuidedByUser(rest, inUserSelectedBreaking);
-        // see both ways!
-        b1 = listMember((sc1, sc2), inUserSelectedBreaking);
-        b2 = listMember((sc2, sc1), inUserSelectedBreaking);
-        if (boolOr(b1, b2))
-        then
-          // put them at the end to be tried last (more chance to be broken)
-          ordered = listAppend(ordered, {e});
-        else
-          // put them at the front to be tried first (less chance to be broken)
-          ordered = e::ordered;
-        end if;
-      then
-        ordered;
-
-  end match;
+    if listMember((sc1, sc2), inUserSelectedBreaking) or listMember((sc2, sc1), inUserSelectedBreaking) then
+      // put them at the end to be tried last (more chance to be broken)
+      back := e::back;
+    else
+      // put them at the front to be tried first (less chance to be broken)
+      front := e::front;
+    end if;
+  end for;
+  outOrderedConnections := List.append_reverse(front, back);
 end orderConnectsGuidedByUser;
 
 protected function printTupleStr
@@ -994,7 +979,7 @@ algorithm
         //  BaseHashTable.dumpHashTable(table);
         rooted = setRootDistance(inRoots,table,0,{},HashTable.emptyHashTable());
         //  BaseHashTable.dumpHashTable(rooted);
-        (outDae, _) = DAEUtil.traverseDAE2(inDae, evalConnectionsOperatorsHelper, (rooted,inRoots,graph));
+        (outDae, _) = DAEUtil.traverseDAEElementList(inDae, evalConnectionsOperatorsHelper, (rooted,inRoots,graph));
       then outDae;
 
   end matchcontinue;
@@ -1626,30 +1611,33 @@ public function removeBrokenConnects
   input list<Connect.ConnectorElement> inConnects;
   input DaeEdges inConnected;
   input DaeEdges inBroken;
-  output list<Connect.ConnectorElement> outConnects;
+  output list<list<Connect.ConnectorElement>> outConnects "we return a list of lists of elements as a particular connection set might be broken into several!";
 algorithm
   outConnects := match(inConnects, inConnected, inBroken)
     local
       list<DAE.ComponentRef> toRemove, toKeep, intersect;
       list<Connect.ConnectorElement> cset;
+      list<list<Connect.ConnectorElement>> csets;
 
     // if we have no broken then we don't care!
-    case (_, _, {}) then inConnects;
+    case (_, _, {}) then {inConnects};
 
     // if we have nothing toRemove then we don't care!
     case (_, _, _)
       equation
-        toRemove = filterFromSet(inConnects, inBroken, {});
+        toRemove = filterFromSet(inConnects, inBroken, {}, "removed");
 
         if listEmpty(toRemove)
         then
-          cset = inConnects;
+          csets = {inConnects};
         else
-          toKeep = filterFromSet(inConnects, inConnected, {});
+          toKeep = filterFromSet(inConnects, inConnected, {}, "allowed");
           intersect = List.intersectionOnTrue(toRemove, toKeep, ComponentReference.crefEqualNoStringCompare);
 
           if Flags.isSet(Flags.CGRAPH)
           then
+            Debug.traceln("- ConnectionGraph.removeBrokenConnects: CS: " +
+              stringDelimitList(List.map(inConnects, ConnectUtil.printElementStr), "\n"));
             Debug.traceln("- ConnectionGraph.removeBrokenConnects: keep: " +
               stringDelimitList(List.map(toKeep, ComponentReference.printComponentRefStr), ", "));
             Debug.traceln("- ConnectionGraph.removeBrokenConnects: delete: " +
@@ -1666,12 +1654,54 @@ algorithm
           end if;
 
           cset = removeFromConnects(inConnects, toRemove);
+          csets = splitSetByAllowed(cset, inConnected);
+          /*
+          if Flags.isSet(Flags.CGRAPH) then
+            for cset in csets loop
+              Debug.traceln("- ConnectionGraph.removeBrokenConnects: FINALCS: -------");
+              Debug.traceln("- ConnectionGraph.removeBrokenConnects: FINALCS: " +
+                stringDelimitList(List.map(inConnects, ConnectUtil.printElementStr), "\n"));
+              Debug.traceln("- ConnectionGraph.removeBrokenConnects: FINALCS: -------");
+            end for;
+          end if;
+          */
         end if;
 
-      then cset;
+      then csets;
 
   end match;
 end removeBrokenConnects;
+
+protected function splitSetByAllowed
+  input list<Connect.ConnectorElement> inConnects;
+  input DaeEdges inConnected;
+  output list<list<Connect.ConnectorElement>> outConnects "we return a list of lists of elements as a particular connection set might be broken into several!";
+protected
+  list<Connect.ConnectorElement> cset;
+  list<list<Connect.ConnectorElement>> csets;
+  DaeEdge e;
+  DAE.ComponentRef cr1, cr2;
+  Connect.ConnectorElement ce, ce1, ce2;
+algorithm
+  csets := {};
+  for e in inConnected loop
+    cset := {};
+    (cr1, cr2, _) := e;
+    for ce in inConnects loop
+      if ComponentReference.crefPrefixOf(cr1, ce.name) then
+        cset := ce::cset;
+      end if;
+      if ComponentReference.crefPrefixOf(cr2, ce.name) then
+        cset := ce::cset;
+      end if;
+    end for;
+    if not listEmpty(cset)
+    then
+      csets := cset::csets;
+    end if;
+  end for;
+  outConnects := csets;
+end splitSetByAllowed;
 
 protected function filterFromSet
 "@author: adrpo
@@ -1679,6 +1709,7 @@ protected function filterFromSet
   input list<Connect.ConnectorElement> inConnects;
   input DaeEdges inFilter;
   input list<DAE.ComponentRef> inAcc;
+  input String msg;
   output list<DAE.ComponentRef> filteredCrefs;
 algorithm
   filteredCrefs := matchcontinue(inConnects, inFilter, inAcc)
@@ -1695,16 +1726,16 @@ algorithm
         true = ConnectUtil.isReferenceInConnects(inConnects, c1);
         true = ConnectUtil.isReferenceInConnects(inConnects, c2);
         if Flags.isSet(Flags.CGRAPH) then
-          Debug.traceln("- ConnectionGraph.removeBroken: removed connect(" + ComponentReference.printComponentRefStr(c1) + ", " + ComponentReference.printComponentRefStr(c2) + ")");
+          Debug.traceln("- ConnectionGraph.filterFromSet: " + msg + " connect(" + ComponentReference.printComponentRefStr(c1) + ", " + ComponentReference.printComponentRefStr(c2) + ")");
         end if;
-        filtered = filterFromSet(inConnects, rest, c1::c2::inAcc);
+        filtered = filterFromSet(inConnects, rest, c1::c2::inAcc, msg);
       then
         filtered;
 
     // some are not there, move forward ...
     case (_, _::rest, _)
       equation
-        filtered = filterFromSet(inConnects, rest, inAcc);
+        filtered = filterFromSet(inConnects, rest, inAcc, msg);
       then
         filtered;
   end matchcontinue;
@@ -1725,7 +1756,7 @@ algorithm
 
     case (cset, c::rest)
       equation
-        (cset, true) = ConnectUtil.removeReferenceFromConnects(cset, c, {});
+        (cset, true) = ConnectUtil.removeReferenceFromConnects(cset, c);
         cset = removeFromConnects(cset, rest);
       then
         cset;

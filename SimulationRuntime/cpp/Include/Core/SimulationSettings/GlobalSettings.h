@@ -21,9 +21,9 @@ public:
   ///< Output step size (default: 20 ms)
   virtual double gethOutput();
   virtual void sethOutput(double);
-  ///< Write out results ([false,true]; default: true)
-  virtual bool getResultsOutput();
-  virtual void setResultsOutput(bool);
+  ///< Write out results (default: EMIT_ALL)
+  virtual EmitResults getEmitResults();
+  virtual void setEmitResults(EmitResults);
   ///< Write out statistical simulation infos, e.g. number of steps (at the end of simulation); [false, true]; default: true)
   virtual bool getInfoOutput();
   virtual void setInfoOutput(bool);
@@ -32,13 +32,12 @@ public:
   ///path for simulation results in textfile
   virtual string getOutputPath();
   virtual void setOutputPath(string);
-  virtual OutputFormat getOutputFormat();
-  virtual void setOutputFormat(OutputFormat format);
   virtual OutputPointType getOutputPointType();
   virtual void setOutputPointType(OutputPointType);
   virtual LogSettings getLogSettings();
   virtual void setLogSettings(LogSettings);
-
+  virtual OutputFormat getOutputFormat();
+  virtual void setOutputFormat(OutputFormat);
   //solver used for simulation
   virtual string getSelectedSolver();
   virtual void setSelectedSolver(string);
@@ -55,15 +54,23 @@ public:
   virtual void setAlarmTime(unsigned int);
   virtual unsigned int getAlarmTime();
 
+  virtual void setNonLinearSolverContinueOnError(bool);
+  virtual bool getNonLinearSolverContinueOnError();
+
+  virtual void setSolverThreads(int);
+  virtual int getSolverThreads();
+
 private:
   double
-      _startTime, ///< Start time of integration (default: 0.0)
-      _endTime, ///< End time of integraiton (default: 1.0)
-      _hOutput; //< Output step size (default: 20 ms)
+      _startTime,   ///< Start time of integration (default: 0.0)
+      _endTime,     ///< End time of integraiton (default: 1.0)
+      _hOutput;     ///< Output step size (default: 20 ms)
+  EmitResults
+      _emitResults; ///< Write out results (default: EMIT_ALL)
   bool
-      _resultsOutput,   ///< Write out results ([false,true]; default: true)
-      _infoOutput,      ///< Write out statistical simulation infos, e.g. number of steps (at the end of simulation); [false,true]; default: true)
-      _endless_sim;
+      _infoOutput,  ///< Write out statistical simulation infos, e.g. number of steps (at the end of simulation); [false,true]; default: true)
+      _endless_sim,
+      _nonLinSolverContinueOnError;
   string
       _output_path,
       _selected_solver,
@@ -71,9 +78,10 @@ private:
       _selected_nonlin_solver,
       _resultsfile_name,
       _runtimeLibraryPath;
-  OutputFormat _outputFormat;
   OutputPointType _outputPointType;
   LogSettings _log_settings;
   unsigned int _alarm_time;
+  int _solverThreads;
+  OutputFormat _outputFormat;
 };
 /** @} */ // end of coreSimulationSettings

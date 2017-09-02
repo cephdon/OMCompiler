@@ -34,7 +34,6 @@ encapsulated package ClassInf
   package:     ClassInf
   description: Class restrictions
 
-  RCS:   $Id$
 
   This module deals with class inference, i.e. determining if a
   class definition adhers to one of the class restrictions, and, if
@@ -154,6 +153,7 @@ uniontype State "- Machine states, the string contains the classname."
 
   record META_UNIONTYPE
     Absyn.Path path;
+    list<String> typeVars;
   end META_UNIONTYPE;
 
   record META_ARRAY
@@ -234,7 +234,7 @@ public function printState
   input State inState;
 algorithm
   _:=
-  matchcontinue (inState)
+  match (inState)
     local Absyn.Path p;
 
     case UNKNOWN(path = p)
@@ -334,7 +334,7 @@ algorithm
         Print.printBuf(Absyn.pathString(p));
         Print.printBuf(printStateStr(inState));
       then ();
-  end matchcontinue;
+  end match;
 end printState;
 
 public function getStateName "Returns the classname of the state."
@@ -436,7 +436,7 @@ algorithm
       then TYPE_CLOCK(p);
     case (SCode.R_PREDEFINED_ENUMERATION(),p) then TYPE_ENUM(p);
      /* Meta Modelica extensions */
-    case (SCode.R_UNIONTYPE(),p) then META_UNIONTYPE(p);
+    case (SCode.R_UNIONTYPE(),p) then META_UNIONTYPE(p, inRestriction.typeVars);
     case (SCode.R_METARECORD(),p) then META_RECORD(p);
   end match;
 end start_dispatch;
@@ -566,6 +566,7 @@ algorithm
     case (BLOCK(),SCode.R_BLOCK()) then ();
     case (MODEL(),SCode.R_MODEL()) then ();
 
+    case (CONNECTOR(),SCode.R_TYPE()) then ();
     case (CONNECTOR(isExpandable=false),SCode.R_CONNECTOR(false)) then ();
     case (CONNECTOR(isExpandable=true),SCode.R_CONNECTOR(true)) then ();
     case (HAS_RESTRICTIONS(hasEquations=false,hasConstraints=false,hasAlgorithms=false),SCode.R_CONNECTOR(_)) then ();
@@ -577,6 +578,7 @@ algorithm
     case (TYPE_CLOCK(),SCode.R_CONNECTOR(_)) then ();
     case (TYPE_ENUM(),SCode.R_CONNECTOR(_)) then (); // used in Modelica.Electrical.Digital where we have an enum as a connector
     case (ENUMERATION(),SCode.R_CONNECTOR(_)) then ();      // used in Modelica.Electrical.Digital where we have an enum as a connector
+    case (TYPE(),SCode.R_CONNECTOR()) then (); // Note: Only allowed in some cases (outputs, etc). Happens when the base class is type T extends Real; end T;
 
     case (TYPE(),SCode.R_TYPE()) then ();
     case (TYPE_INTEGER(),SCode.R_TYPE()) then ();
@@ -663,9 +665,8 @@ public function matchingState "
   output Boolean outBoolean;
 algorithm
   outBoolean:=
-  matchcontinue (inState,inStateLst)
+  match (inState,inStateLst)
     local
-      State st,first;
       list<State> rest;
       Boolean res;
     case (_,{}) then false;
@@ -685,12 +686,12 @@ algorithm
     // BTH
     case (TYPE_CLOCK(),(TYPE_CLOCK() :: _)) then true;
     case (TYPE_ENUM(),(TYPE_ENUM() :: _)) then true;
-    case (st,(_ :: rest))
+    case (_,(_ :: rest))
       equation
-        res = matchingState(st, rest);
+        res = matchingState(inState, rest);
       then
         res;
-  end matchcontinue;
+  end match;
 end matchingState;
 
 public function isFunction
@@ -759,39 +760,25 @@ algorithm
   end match;
 end isTypeOrRecord;
 
-public function stateToSCodeRestriction
-"@author: adrpo
- ClassInf.State -> SCode.Restriction"
+public function isRecord
   input State inState;
-  output SCode.Restriction outRestriction;
-  output Absyn.Path outPath;
+  output Boolean outIsRecord;
 algorithm
-  (outRestriction, outPath) := match (inState)
-    local Absyn.Path p; Boolean isExpandable, isImpure;
-
-    case UNKNOWN(p) then (SCode.R_CLASS(),p);
-    case OPTIMIZATION(p) then (SCode.R_OPTIMIZATION(),p);
-    case MODEL(p) then (SCode.R_MODEL(),p);
-      // mahge: TODO ClassInf.RECORD should contain isOperator.
-    case RECORD(p) then (SCode.R_RECORD(false),p);
-    case BLOCK(p) then (SCode.R_BLOCK(),p) ;
-    case CONNECTOR(p,isExpandable) then (SCode.R_CONNECTOR(isExpandable),p);
-    case TYPE(p) then (SCode.R_TYPE(),p);
-    case PACKAGE(p) then (SCode.R_PACKAGE(),p) ;
-    case FUNCTION(p,isImpure) then (SCode.R_FUNCTION(SCode.FR_NORMAL_FUNCTION(isImpure)),p);
-    case ENUMERATION(p) then (SCode.R_ENUMERATION(),p);
-    case TYPE_INTEGER(p) then (SCode.R_PREDEFINED_INTEGER(),p);
-    case TYPE_REAL(p) then (SCode.R_PREDEFINED_REAL(),p);
-    case TYPE_STRING(p) then (SCode.R_PREDEFINED_STRING(),p);
-    case TYPE_BOOL(p) then (SCode.R_PREDEFINED_BOOLEAN(),p);
-    // BTH
-    case TYPE_CLOCK(p) then (SCode.R_PREDEFINED_CLOCK(),p);
-    case TYPE_ENUM(p) then (SCode.R_PREDEFINED_ENUMERATION(),p);
-     /* Meta Modelica extensions */
-    case META_UNIONTYPE(p) then (SCode.R_UNIONTYPE(),p);
-    case  META_RECORD(p) then (SCode.R_METARECORD(p, 0, false, false),p);
+  outIsRecord := match inState
+    case RECORD() then true;
+    else false;
   end match;
-end stateToSCodeRestriction;
+end isRecord;
+
+public function isMetaRecord
+  input State inState;
+  output Boolean outIsRecord;
+algorithm
+  outIsRecord := match inState
+    case META_RECORD() then true;
+    else false;
+  end match;
+end isMetaRecord;
 
 annotation(__OpenModelica_Interface="frontend");
 end ClassInf;

@@ -34,7 +34,6 @@ encapsulated package SCode
   package:     SCode
   description: SCode intermediate form
 
-  RCS: $Id$
 
   This module contains data structures to describe a Modelica
   model in a more convenient (canonical) way than the Absyn module does.
@@ -89,9 +88,11 @@ uniontype Restriction
     Integer index; //Index in the uniontype
     Boolean singleton;
     Boolean moved; // true if moved outside uniontype, otherwise false.
+    list<String> typeVars;
   end R_METARECORD; /* added by x07simbj */
 
   record R_UNIONTYPE "Metamodelica extension"
+    list<String> typeVars;
   end R_UNIONTYPE; /* added by simbj */
 end Restriction;
 
@@ -186,7 +187,6 @@ uniontype ClassDef
   end PARTS;
 
   record CLASS_EXTENDS "an extended class definition plus the additional parts"
-    Ident                      baseClassName       "the name of the base class we have to extend";
     Mod                        modifications       "the modifications that need to be applied to the base class";
     ClassDef                   composition         "the new composition";
   end CLASS_EXTENDS;
@@ -273,6 +273,14 @@ uniontype EEquation
     Comment comment;
     SourceInfo info;
   end EQ_EQUALS;
+
+  record EQ_PDE "partial differential equation or boundary condition"
+    Absyn.Exp expLeft  "the expression on the left side of the operator";
+    Absyn.Exp expRight "the expression on the right side of the operator";
+    Absyn.ComponentRef domain "domain for PDEs" ;
+    Comment comment;
+    SourceInfo info;
+  end EQ_PDE;
 
   record EQ_CONNECT "the connect equation"
     Absyn.ComponentRef crefLeft  "the connector/component reference on the left side";
@@ -580,6 +588,7 @@ uniontype Attributes "- Attributes"
     Parallelism parallelism "parallelism prefix: parglobal, parlocal, parprivate";
     Variability variability " the variability: parameter, discrete, variable, constant" ;
     Absyn.Direction direction "the direction: input, output or bidirectional" ;
+    Absyn.IsField isField "non-fiel / field";
   end ATTR;
 end Attributes;
 
@@ -616,11 +625,11 @@ public constant Prefixes defaultPrefixes =
     NOT_REPLACEABLE());
 
 public constant Attributes defaultVarAttr =
-  ATTR({}, POTENTIAL(), NON_PARALLEL(), VAR(), Absyn.BIDIR());
+  ATTR({}, POTENTIAL(), NON_PARALLEL(), VAR(), Absyn.BIDIR(), Absyn.NONFIELD());
 public constant Attributes defaultParamAttr =
-  ATTR({}, POTENTIAL(), NON_PARALLEL(), PARAM(), Absyn.BIDIR());
+  ATTR({}, POTENTIAL(), NON_PARALLEL(), PARAM(), Absyn.BIDIR(), Absyn.NONFIELD());
 public constant Attributes defaultConstAttr =
-  ATTR({}, POTENTIAL(), NON_PARALLEL(), CONST(), Absyn.BIDIR());
+  ATTR({}, POTENTIAL(), NON_PARALLEL(), CONST(), Absyn.BIDIR(), Absyn.NONFIELD());
 
 // .......... functionality .........
 protected import Error;
@@ -738,6 +747,17 @@ algorithm
     else false;
   end match;
 end isElementExtends;
+
+public function isElementExtendsOrClassExtends
+  "Check if an element extends another class."
+  input Element ele;
+  output Boolean isExtend;
+algorithm
+  isExtend := match(ele)
+    case EXTENDS() then true;
+    else false;
+  end match;
+end isElementExtendsOrClassExtends;
 
 public function isNotElementClassExtends "
 check if an element is not of type CLASS_EXTENDS."
@@ -933,6 +953,23 @@ algorithm
 
   end match;
 end renameElement;
+
+public function elementNameEqual
+  input Element inElement1;
+  input Element inElement2;
+  output Boolean outEqual;
+algorithm
+  outEqual := match (inElement1, inElement2)
+    case (CLASS(), CLASS()) then inElement1.name == inElement2.name;
+    case (COMPONENT(), COMPONENT()) then inElement1.name == inElement2.name;
+    case (DEFINEUNIT(), DEFINEUNIT()) then inElement1.name == inElement2.name;
+    case (EXTENDS(), EXTENDS())
+      then Absyn.pathEqual(inElement1.baseClassPath, inElement2.baseClassPath);
+    case (IMPORT(), IMPORT())
+      then Absyn.importEqual(inElement1.imp, inElement2.imp);
+    else false;
+  end match;
+end elementNameEqual;
 
 public function enumName ""
 input Enum e;
@@ -1167,6 +1204,7 @@ algorithm
     // BTH
     case (R_PREDEFINED_CLOCK(),R_PREDEFINED_CLOCK()) then true;
     case (R_PREDEFINED_ENUMERATION(),R_PREDEFINED_ENUMERATION()) then true;
+    case (R_UNIONTYPE(),R_UNIONTYPE()) then min(t1==t2 threaded for t1 in restr1.typeVars, t2 in restr2.typeVars);
     else false;
    end match;
 end restrictionEqual;
@@ -1226,7 +1264,6 @@ protected function classDefEqual
        Mod mod1,mod2;
        list<Enum> elst1,elst2;
        list<Ident> ilst1,ilst2;
-       String bcName1, bcName2;
        list<Absyn.NamedArg> clsttrs1,clsttrs2;
 
      case(PARTS(elts1,eqns1,ieqns1,algs1,ialgs1,_,_,_),
@@ -1254,15 +1291,14 @@ protected function classDefEqual
        then
          true;
 
-     case (CLASS_EXTENDS(bcName1,mod1,PARTS(elts1,eqns1,ieqns1,algs1,ialgs1,_,_,_)),
-           CLASS_EXTENDS(bcName2,mod2,PARTS(elts2,eqns2,ieqns2,algs2,ialgs2,_,_,_)))
+     case (CLASS_EXTENDS(mod1,PARTS(elts1,eqns1,ieqns1,algs1,ialgs1,_,_,_)),
+           CLASS_EXTENDS(mod2,PARTS(elts2,eqns2,ieqns2,algs2,ialgs2,_,_,_)))
        equation
          List.threadMapAllValue(elts1,elts2,elementEqual,true);
          List.threadMapAllValue(eqns1,eqns2,equationEqual,true);
          List.threadMapAllValue(ieqns1,ieqns2,equationEqual,true);
          List.threadMapAllValue(algs1,algs2,algorithmEqual,true);
          List.threadMapAllValue(ialgs1,ialgs2,algorithmEqual,true);
-         true = stringEq(bcName1,bcName2);
          true = modEqual(mod1,mod2);
        then
          true;
@@ -1435,6 +1471,14 @@ algorithm
       equation
         true = Absyn.expEqual(e11,e21);
         true = Absyn.expEqual(e12,e22);
+      then
+        true;
+
+    case(EQ_PDE(expLeft = e11, expRight = e12, domain = cr1),EQ_PDE(expLeft = e21, expRight = e22, domain = cr2))
+      equation
+        true = Absyn.expEqual(e11,e21);
+        true = Absyn.expEqual(e12,e22);
+        true = Absyn.crefEqual(cr1,cr2);
       then
         true;
 
@@ -1631,14 +1675,16 @@ algorithm
       ConnectorType ct1, ct2;
       Absyn.ArrayDim ad1,ad2;
       Absyn.Direction dir1,dir2;
+      Absyn.IsField if1,if2;
 
-    case(ATTR(ad1,ct1,prl1,var1,dir1),ATTR(ad2,ct2,prl2,var2,dir2))
+    case(ATTR(ad1,ct1,prl1,var1,dir1,if1),ATTR(ad2,ct2,prl2,var2,dir2,if2))
       equation
         true = arrayDimEqual(ad1,ad2);
         true = valueEq(ct1, ct2);
         true = parallelismEqual(prl1,prl2);
         true = variabilityEqual(var1,var2);
         true = Absyn.directionEqual(dir1,dir2);
+        true = Absyn.isFieldEqual(if1,if2);
       then
         true;
 
@@ -1761,6 +1807,21 @@ algorithm
       then CLASS(name,prefixes,e,p,r,parts,cmt,info);
   end matchcontinue;
 end setClassName;
+
+public function makeClassPartial
+  input Element inClass;
+  output Element outClass = inClass;
+algorithm
+  outClass := match outClass
+    case CLASS(partialPrefix = NOT_PARTIAL())
+      algorithm
+        outClass.partialPrefix := PARTIAL();
+      then
+        outClass;
+
+    else outClass;
+  end match;
+end makeClassPartial;
 
 public function setClassPartialPrefix "Sets the partial prefix of a SCode Class"
   input Partial partialPrefix;
@@ -2022,6 +2083,7 @@ algorithm
   info := match eq
     case EQ_IF(info=info) then info;
     case EQ_EQUALS(info=info) then info;
+    case EQ_PDE(info=info) then info;
     case EQ_CONNECT(info=info) then info;
     case EQ_FOR(info=info) then info;
     case EQ_WHEN(info=info) then info;
@@ -2170,6 +2232,13 @@ algorithm
         List.fold1(inEquation.elseBranch, foldEEquationsExps, inFunc, outArg);
 
     case EQ_EQUALS()
+      algorithm
+        outArg := inFunc(inEquation.expLeft, outArg);
+        outArg := inFunc(inEquation.expRight, outArg);
+      then
+        outArg;
+
+    case EQ_PDE()
       algorithm
         outArg := inFunc(inEquation.expLeft, outArg);
         outArg := inFunc(inEquation.expRight, outArg);
@@ -2509,7 +2578,7 @@ algorithm
       list<tuple<Absyn.Exp, list<EEquation>>> else_when;
       Comment comment;
       SourceInfo info;
-      Absyn.ComponentRef cr1, cr2;
+      Absyn.ComponentRef cr1, cr2, domain;
       Ident index;
 
     case (EQ_IF(expl1, then_branch, else_branch, comment, info), traverser, arg)
@@ -2524,6 +2593,13 @@ algorithm
         (e2, arg) = traverser(e2, arg);
       then
         (EQ_EQUALS(e1, e2, comment, info), arg);
+
+    case (EQ_PDE(e1, e2, domain, comment, info), traverser, arg)
+      equation
+        (e1, arg) = traverser(e1, arg);
+        (e2, arg) = traverser(e2, arg);
+      then
+        (EQ_PDE(e1, e2, domain, comment, info), arg);
 
     case (EQ_CONNECT(cr1, cr2, comment, info), _, _)
       equation
@@ -3066,6 +3142,16 @@ algorithm
   end match;
 end elementIsClass;
 
+public function elementIsImport
+  input Element inElement;
+  output Boolean outIsImport;
+algorithm
+  outIsImport := match inElement
+    case IMPORT() then true;
+    else false;
+  end match;
+end elementIsImport;
+
 public function elementIsPublicImport
   input Element el;
   output Boolean b;
@@ -3144,6 +3230,7 @@ algorithm
 
     case EQ_IF(info = info) then info;
     case EQ_EQUALS(info = info) then info;
+    case EQ_PDE(info = info) then info;
     case EQ_CONNECT(info = info) then info;
     case EQ_FOR(info = info) then info;
     case EQ_WHEN(info = info) then info;
@@ -3547,19 +3634,21 @@ algorithm
       Parallelism p1,p2,p;
       Variability v1,v2,v;
       Absyn.Direction d1,d2,d;
+      Absyn.IsField isf1, isf2, isf;
       Absyn.ArrayDim ad1,ad2,ad;
       ConnectorType ct1, ct2, ct;
 
     case (_,NONE()) then SOME(ele);
-    case(ATTR(ad1,ct1,p1,v1,d1), SOME(ATTR(_,ct2,p2,v2,d2)))
+    case(ATTR(ad1,ct1,p1,v1,d1,isf1), SOME(ATTR(_,ct2,p2,v2,d2,isf2)))
       equation
         ct = propagateConnectorType(ct1, ct2);
         p = propagateParallelism(p1,p2);
         v = propagateVariability(v1,v2);
         d = propagateDirection(d1,d2);
+        isf = propagateIsField(isf1,isf2);
         ad = ad1; // TODO! CHECK if ad1 == ad2!
       then
-        SOME(ATTR(ad,ct,p,v,d));
+        SOME(ATTR(ad,ct,p,v,d,isf));
   end match;
 end mergeAttributes;
 
@@ -3699,17 +3788,10 @@ algorithm
 end prefixesInnerOuter;
 
 public function prefixesSetInnerOuter
-  input Prefixes inPrefixes;
-  input Absyn.InnerOuter inInnerOuter;
-  output Prefixes outPrefixes;
-protected
-  Visibility v;
-  Redeclare rd;
-  Final f;
-  Replaceable rp;
+  input output Prefixes prefixes;
+  input Absyn.InnerOuter innerOuter;
 algorithm
-  PREFIXES(v, rd, f, _, rp) := inPrefixes;
-  outPrefixes := PREFIXES(v, rd, f, inInnerOuter, rp);
+  prefixes.innerOuter := innerOuter;
 end prefixesSetInnerOuter;
 
 public function removeAttributeDimensions
@@ -3720,23 +3802,17 @@ protected
   Variability v;
   Parallelism p;
   Absyn.Direction d;
+  Absyn.IsField isf;
 algorithm
-  ATTR(_, ct, p, v, d) := inAttributes;
-  outAttributes := ATTR({}, ct, p, v, d);
+  ATTR(_, ct, p, v, d, isf) := inAttributes;
+  outAttributes := ATTR({}, ct, p, v, d, isf);
 end removeAttributeDimensions;
 
 public function setAttributesDirection
-  input Attributes inAttributes;
-  input Absyn.Direction inDirection;
-  output Attributes outAttributes;
-protected
-  Absyn.ArrayDim ad;
-  ConnectorType ct;
-  Parallelism p;
-  Variability v;
+  input output Attributes attributes;
+  input Absyn.Direction direction;
 algorithm
-  ATTR(ad, ct, p, v, _) := inAttributes;
-  outAttributes := ATTR(ad, ct, p, v, inDirection);
+  attributes.direction := direction;
 end setAttributesDirection;
 
 public function attrVariability
@@ -3749,6 +3825,13 @@ algorithm
     case  ATTR(variability = v) then v;
   end match;
 end attrVariability;
+
+public function setAttributesVariability
+  input output Attributes attributes;
+  input Variability variability;
+algorithm
+  attributes.variability := variability;
+end setAttributesVariability;
 
 public function isDerivedClassDef
   input ClassDef inClassDef;
@@ -3774,16 +3857,17 @@ public function removeBuiltinsFromTopScope
   input Program inProgram;
   output Program outProgram;
 algorithm
-  outProgram := List.filter(inProgram, isNotBuiltinClass);
+  outProgram := List.filterOnTrue(inProgram, isNotBuiltinClass);
 end removeBuiltinsFromTopScope;
 
 protected function isNotBuiltinClass
   input Element inClass;
+  output Boolean b;
 algorithm
-  _ := match(inClass)
+  b := match(inClass)
     case CLASS(classDef = PARTS(externalDecl =
-      SOME(EXTERNALDECL(lang = SOME("builtin"))))) then fail();
-    else ();
+      SOME(EXTERNALDECL(lang = SOME("builtin"))))) then false;
+    else true;
   end match;
 end isNotBuiltinClass;
 
@@ -3798,7 +3882,7 @@ protected
   list<SubMod> submods;
 algorithm
   ANNOTATION(modification = MOD(subModLst = submods)) := inAnnotation;
-  NAMEMOD(mod = MOD(info = info, binding = SOME(exp))) := List.selectFirst1(submods, hasNamedAnnotation, inName);
+  NAMEMOD(mod = MOD(info = info, binding = SOME(exp))) := List.find1(submods, hasNamedAnnotation, inName);
 end getNamedAnnotation;
 
 protected function hasNamedAnnotation
@@ -3937,7 +4021,7 @@ algorithm
 
     case ANNOTATION(MOD(fp, ep, submods, _, info))
       equation
-        inline_mod = List.selectFirst(submods, isInlineTypeSubMod);
+        inline_mod = List.find(submods, isInlineTypeSubMod);
       then
         SOME(ANNOTATION(MOD(fp, ep, {inline_mod}, NONE(), info)));
 
@@ -4266,74 +4350,43 @@ public function replaceElementsInClassDef
  if derived a SOME(element) is returned,
  otherwise the modified class def and NONE()"
   input Program inProgram;
-  input ClassDef inClassDef;
+  input output ClassDef classDef;
   input Program inElements;
-  output ClassDef outClassDef;
-  output Option<Element> outElementOpt;
+        output Option<Element> outElementOpt;
 algorithm
-  (outClassDef, outElementOpt) := matchcontinue(inProgram, inClassDef, inElements)
+  outElementOpt := match classDef
     local
-      Program els;
       Element e;
       Absyn.Path p;
-      Absyn.Ident i;
-      list<Element> elementLst "the list of elements";
-      list<Equation> normalEquationLst "the list of equations";
-      list<Equation> initialEquationLst "the list of initial equations";
-      list<AlgorithmSection> normalAlgorithmLst "the list of algorithms";
-      list<AlgorithmSection> initialAlgorithmLst "the list of initial algorithms";
-      list<ConstraintSection> constraintLst "the list of constraints";
-      list<Absyn.NamedArg> clsattrs "the list of class attributes. Currently for Optimica extensions";
-      Option<ExternalDecl> externalDecl "used by external functions";
-      list<Annotation> annotationLst "the list of annotations found in between class elements, equations and algorithms";
-      Ident baseClassName "the name of the base class we have to extend";
-      Mod modifications "the modifications that need to be applied to the base class";
       ClassDef composition;
 
     // a derived class
-    case (_, DERIVED(typeSpec = Absyn.TPATH(path = p)), _)
-      equation
-        e = getElementWithPath(inProgram, p);
-        e = replaceElementsInElement(inProgram, e, inElements);
+    case DERIVED(typeSpec = Absyn.TPATH(path = p))
+      algorithm
+        e := getElementWithPath(inProgram, p);
+        e := replaceElementsInElement(inProgram, e, inElements);
       then
-        (inClassDef, SOME(e));
+        SOME(e);
 
     // a parts
-    case (_,
-          PARTS(
-            _,
-            normalEquationLst,
-            initialEquationLst,
-            normalAlgorithmLst,
-            initialAlgorithmLst,
-            constraintLst,
-            clsattrs,
-            externalDecl),
-          _)
+    case PARTS()
+      algorithm
+        classDef.elementLst := inElements;
       then
-        (PARTS(inElements,
-               normalEquationLst,
-               initialEquationLst,
-               normalAlgorithmLst,
-               initialAlgorithmLst,
-               constraintLst,
-               clsattrs,
-               externalDecl), NONE());
-
-    // a class extends, non derived
-    case (_, CLASS_EXTENDS(baseClassName, modifications, composition), _)
-      equation
-        (composition, NONE()) = replaceElementsInClassDef(inProgram, composition, inElements);
-      then
-        (CLASS_EXTENDS(baseClassName, modifications, composition), NONE());
+        NONE();
 
     // a class extends
-    case (_, CLASS_EXTENDS(_, _, composition), _)
-      equation
-        (composition, SOME(e)) = replaceElementsInClassDef(inProgram, composition, inElements);
+    case CLASS_EXTENDS(composition = composition)
+      algorithm
+        (composition, outElementOpt) := replaceElementsInClassDef(inProgram, composition, inElements);
+
+        if isNone(outElementOpt) then
+          classDef.composition := composition;
+        end if;
       then
-        (inClassDef, SOME(e));
-  end matchcontinue;
+        outElementOpt;
+
+  end match;
 end replaceElementsInClassDef;
 
 protected function getElementWithId
@@ -4526,6 +4579,16 @@ algorithm
     else false;
   end match;
 end isDerivedClass;
+
+public function isClassExtends
+  input Element cls;
+  output Boolean isCE;
+algorithm
+  isCE := match cls
+    case CLASS(classDef = CLASS_EXTENDS()) then true;
+    else false;
+  end match;
+end isClassExtends;
 
 public function setDerivedTypeSpec
 "@auhtor: adrpo
@@ -4838,7 +4901,7 @@ algorithm
       Attributes attr;
 
     case (DERIVED(ty, _, attr), _) then DERIVED(ty, inMod, attr);
-    case (CLASS_EXTENDS(bc, _, cdef), _) then CLASS_EXTENDS(bc, inMod, cdef);
+    case (CLASS_EXTENDS(_, cdef), _) then CLASS_EXTENDS(inMod, cdef);
 
   end match;
 end setClassDefMod;
@@ -5173,16 +5236,22 @@ algorithm
       SourceInfo i1, i2;
       Mod m;
 
-    case (NOMOD(), _) then inOldMod;
     case (_, NOMOD()) then inNewMod;
+    case (NOMOD(), _) then inOldMod;
     case (REDECL(), _) then inNewMod;
 
     case (MOD(f1, e1, sl1, b1, i1),
-          MOD(_, _, sl2, b2, _))
+          MOD(f2, e2, sl2, b2, _))
       equation
         b = mergeBindings(b1, b2);
         sl = mergeSubMods(sl1, sl2);
-        m = MOD(f1, e1, sl, b, i1);
+        if referenceEq(b, b1) and referenceEq(sl, sl1) then
+          m = inNewMod;
+        elseif referenceEq(b, b2) and referenceEq(sl, sl2) and valueEq(f1, f2) and valueEq(e1, e2) then
+          m = inOldMod;
+        else
+          m = MOD(f1, e1, sl, b, i1);
+        end if;
       then
         m;
 
@@ -5237,7 +5306,7 @@ algorithm
       list<Subscript> idxs1, idxs2;
       SubMod s;
 
-    case (_, {}) then {};
+    case (_, {}) then inOld;
 
     case (NAMEMOD(ident = id1), NAMEMOD(ident = id2)::rest)
       equation
@@ -5284,6 +5353,7 @@ end mergeComponentModifiers;
 public function propagateAttributes
   input Attributes inOriginalAttributes;
   input Attributes inNewAttributes;
+  input Boolean inNewTypeIsArray = false;
   output Attributes outNewAttributes;
 protected
   Absyn.ArrayDim dims1, dims2;
@@ -5291,15 +5361,25 @@ protected
   Parallelism prl1,prl2;
   Variability var1, var2;
   Absyn.Direction dir1, dir2;
+  Absyn.IsField if1, if2;
 algorithm
-  ATTR(dims1, ct1, prl1, var1, dir1) := inOriginalAttributes;
-  ATTR(dims2, ct2, prl2, var2, dir2) := inNewAttributes;
-  dims2 := propagateArrayDimensions(dims1, dims2);
+  ATTR(dims1, ct1, prl1, var1, dir1, if1) := inOriginalAttributes;
+  ATTR(dims2, ct2, prl2, var2, dir2, if2) := inNewAttributes;
+
+  // If the new component has an array type, don't propagate the old dimensions.
+  // E.g. type Real3 = Real[3];
+  //      replaceable Real x[:];
+  //      comp(redeclare Real3 x) => Real[3] x
+  if not inNewTypeIsArray then
+    dims2 := propagateArrayDimensions(dims1, dims2);
+  end if;
+
   ct2 := propagateConnectorType(ct1, ct2);
   prl2 := propagateParallelism(prl1,prl2);
   var2 := propagateVariability(var1, var2);
   dir2 := propagateDirection(dir1, dir2);
-  outNewAttributes := ATTR(dims2, ct2, prl2, var2, dir2);
+  if2 := propagateIsField(if1,if2);
+  outNewAttributes := ATTR(dims2, ct2, prl2, var2, dir2, if2);
 end propagateAttributes;
 
 public function propagateArrayDimensions
@@ -5329,18 +5409,10 @@ public function propagateParallelism
   input Parallelism inNewParallelism;
   output Parallelism outNewParallelism;
 algorithm
-  outNewParallelism := matchcontinue(inOriginalParallelism, inNewParallelism)
+  outNewParallelism := match(inOriginalParallelism, inNewParallelism)
     case (_, NON_PARALLEL()) then inOriginalParallelism;
-    case (_,_)
-      equation
-        // equality(inNewParallelism = inOriginalParallelism);
-      then inNewParallelism;
-    else
-      equation
-        print("failure in propagateParallelism: parallelism mismatch.");
-      then
-        fail();
-  end matchcontinue;
+    else inNewParallelism;
+  end match;
 end propagateParallelism;
 
 public function propagateVariability
@@ -5359,23 +5431,28 @@ public function propagateDirection
   input Absyn.Direction inNewDirection;
   output Absyn.Direction outNewDirection;
 algorithm
-  outNewDirection := matchcontinue(inOriginalDirection, inNewDirection)
+  outNewDirection := match(inOriginalDirection, inNewDirection)
     case (_, Absyn.BIDIR()) then inOriginalDirection;
-    case(_,_)
-      equation
-        // equality(inNewDirection = inOriginalDirection);
-      then inNewDirection;
-    else
-      equation
-        print(" failure in propagateDirection, inner outer mismatch");
-      then
-        fail();
-  end matchcontinue;
+    else inNewDirection;
+  end match;
 end propagateDirection;
+
+public function propagateIsField
+  input Absyn.IsField inOriginalIsField;
+  input Absyn.IsField inNewIsField;
+  output Absyn.IsField outNewIsField;
+algorithm
+  outNewIsField := matchcontinue(inOriginalIsField, inNewIsField)
+    case (_, Absyn.NONFIELD()) then inOriginalIsField;
+    else inNewIsField;
+  end matchcontinue;
+end propagateIsField;
+
 
 public function propagateAttributesVar
   input Element inOriginalVar;
   input Element inNewVar;
+  input Boolean inNewTypeIsArray;
   output Element outNewVar;
 protected
   Ident name;
@@ -5390,7 +5467,7 @@ algorithm
   COMPONENT(prefixes = pref1, attributes = attr1) := inOriginalVar;
   COMPONENT(name, pref2, attr2, ty, mod, cmt, cond, info) := inNewVar;
   pref2 := propagatePrefixes(pref1, pref2);
-  attr2 := propagateAttributes(attr1, attr2);
+  attr2 := propagateAttributes(attr1, attr2, inNewTypeIsArray);
   outNewVar := COMPONENT(name, pref2, attr2, ty, mod, cmt, cond, info);
 end propagateAttributesVar;
 
@@ -5647,6 +5724,26 @@ algorithm
   COMPONENT(n, pr, atr, ts, m, cmt, cnd, i) := inE;
   outE := COMPONENT(inName, pr, atr, ts, m, cmt, cnd, i);
 end setComponentName;
+
+public function isArrayComponent
+  input Element inElement;
+  output Boolean outIsArray;
+algorithm
+  outIsArray := match inElement
+    case COMPONENT(attributes = ATTR(arrayDims = _ :: _)) then true;
+    else false;
+  end match;
+end isArrayComponent;
+
+public function isEmptyMod
+  input Mod mod;
+  output Boolean isEmpty;
+algorithm
+  isEmpty := match mod
+    case Mod.NOMOD() then true;
+    else false;
+  end match;
+end isEmptyMod;
 
 annotation(__OpenModelica_Interface="frontend");
 end SCode;

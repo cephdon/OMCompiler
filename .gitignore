@@ -8,6 +8,7 @@
 *.la
 *.log
 *.stamp
+**/*.dylib.dSYM/
 
 # autoconf
 autom4te.cache/
@@ -77,52 +78,41 @@ build/
 .externalToolBuilders/OpenModelicaBuilder.launch
 .externalToolBuilders/OMDev-MINGW-OpenModelicaBuilder.launch
 .project
+.metadata
+.vscode/
 revision.h
 SimulationRuntime/c/Makefile
 SimulationRuntime/c/util/java_interface/Makefile
-SimulationRuntime/c/util/java_interface/modelica_java.jar
-SimulationRuntime/c/util/java_interface/src/org/openmodelica/corba/parser/OMCorbaDefinitionsLexer.java
-SimulationRuntime/c/util/java_interface/src/org/openmodelica/corba/parser/OMCorbaDefinitionsParser.java
-SimulationRuntime/c/util/java_interface/src/org/openmodelica/corba/parser/OMCorbaDefinitions.tokens
+SimulationRuntime/java_interface/modelica_java.jar
+SimulationRuntime/java_interface/src/org/openmodelica/corba/parser/OMCorbaDefinitionsLexer.java
+SimulationRuntime/java_interface/src/org/openmodelica/corba/parser/OMCorbaDefinitionsParser.java
 SimulationRuntime/cpp/Makefile
-SimulationRuntime/cpp/Build/
+SimulationRuntime/cpp/Makefile.env
+SimulationRuntime/cpp/Build_*/
 SimulationRuntime/cpp/Debug/
 SimulationRuntime/cpp/.cproject
+SimulationRuntime/cpp/confdefs.h
 SimulationRuntime/ParModelica/Makefile
 SimulationRuntime/ParModelica/auto/Makefile
 SimulationRuntime/ParModelica/explicit/Makefile
 SimulationRuntime/ParModelica/explicit/openclrt/Makefile
 SimulationRuntime/build_c/
+SimulationRuntime/opc/ua/open62541.h
+SimulationRuntime/opc/ua/open62541.c
+SimulationRuntime/opc/ua/libomopcua.dll
 
 # OpenModelicaSetup
 Compiler/OpenModelicaSetup
 # Compiler files
 Compiler/Makefile
+Compiler/OpenModelicaBootstrappingHeader.h
 Compiler/OpenModelicaBootstrappingHeader.h.log
 Compiler/Script/Makefile
 Compiler/Script/OpenModelicaScriptingAPI.mo
 Compiler/Script/OpenModelicaScriptingAPIQt.cpp
 Compiler/Script/OpenModelicaScriptingAPIQt.h
 Compiler/Template/AbsynDumpTpl.mo
-Compiler/Template/CodegenAdevs.mo
-Compiler/Template/CodegenC.mo
-Compiler/Template/CodegenC.mo.log
-Compiler/Template/CodegenCSharp.mo
-Compiler/Template/CodegenCpp.mo
-Compiler/Template/CodegenCppHpcom.mo
-Compiler/Template/CodegenCppInit.mo
-Compiler/Template/CodegenFMU.mo
-Compiler/Template/CodegenFMU1.mo
-Compiler/Template/CodegenFMU2.mo
-Compiler/Template/CodegenFMUCommon.mo
-Compiler/Template/CodegenFMUCpp.mo
-Compiler/Template/CodegenJS.mo
-Compiler/Template/CodegenJava.mo
-Compiler/Template/CodegenModelica.mo
-Compiler/Template/CodegenQSS.mo
-Compiler/Template/CodegenSparseFMI.mo
-Compiler/Template/CodegenUtil.mo
-Compiler/Template/CodegenXML.mo
+Compiler/Template/Codegen*.mo
 Compiler/Template/DAEDumpTpl.mo
 Compiler/Template/ExpressionDumpTpl.mo
 Compiler/Template/GenerateAPIFunctionsTpl.mo
@@ -167,3 +157,5 @@ Parser/ParModelica_Lexer_BaseModelica_Lexer.h
 
 SimulationRuntime/**/test_files/*.jar
 SimulationRuntime/cpp/build_msvc/
+
+tags

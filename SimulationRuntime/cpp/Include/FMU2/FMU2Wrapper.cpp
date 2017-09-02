@@ -36,18 +36,6 @@
 
 #include "FMU2Wrapper.h"
 
-#include <Core/ModelicaDefine.h>
- #include <Core/Modelica.h>
-/*workarround until cmake file is modified*/
-//#define OMC_BUILD
-#include <Core/Solver/ISolverSettings.h>
-#include <Core/SimulationSettings/ISettingsFactory.h>
-#include <Core/Solver/ISolver.h>
-#include <Core/DataExchange/SimData.h>
-
-/*end workarround*/
-#include <Core/System/AlgLoopSolverFactory.h>
-
 static fmi2String const _LogCategoryFMUNames[] = {
   "logEvents",
   "logSingularLinearSystems",
@@ -65,29 +53,91 @@ fmi2String FMU2Wrapper::LogCategoryFMUName(LogCategoryFMU category) {
   return _LogCategoryFMUNames[category];
 }
 
+FMU2Logger::FMU2Logger(FMU2Wrapper *wrapper,
+                       LogSettings &logSettings, bool enabled) :
+  Logger(logSettings, enabled),
+  _wrapper(wrapper)
+{
+}
+
+void FMU2Logger::initialize(FMU2Wrapper *wrapper, LogSettings &logSettings, bool enabled)
+{
+  _instance = new FMU2Logger(wrapper, logSettings, enabled);
+}
+
+void FMU2Logger::writeInternal(string msg, LogCategory cat, LogLevel lvl,
+                               LogStructure ls)
+{
+  LogCategoryFMU category;
+  fmi2Status status;
+
+  if (ls == LS_END)
+    return;
+
+  // determine FMI status and category from LogLevel
+  switch (lvl) {
+  case LL_ERROR:
+    status = fmi2Error;
+    category = logStatusError;
+    break;
+  case LL_WARNING:
+    status = fmi2Warning;
+    category = logStatusWarning;
+    break;
+  default:
+    status = fmi2OK;
+    category = logStatusWarning;
+  }
+
+  // override FMU category with matching LogCategory
+  switch (cat) {
+  case LC_NLS:
+    category = logNonlinearSystems;
+    break;
+  case LC_EVENTS:
+    category = logEvents;
+    break;
+  }
+
+  // call FMU log function
+  FMU2_LOG(_wrapper, status, category, msg.c_str());
+}
+
 FMU2Wrapper::FMU2Wrapper(fmi2String instanceName, fmi2String GUID,
                          const fmi2CallbackFunctions *functions,
                          fmi2Boolean loggingOn) :
-  _global_settings(), _functions(*functions), logger(_functions.logger),
-  componentEnvironment(_functions.componentEnvironment),
-  instanceName(_instanceName), logCategories(_logCategories)
+  _global_settings(),
+  _functions(*functions),
+  callbackLogger(_functions.logger)
 {
   _instanceName = instanceName;
   _GUID = GUID;
-  _logCategories = loggingOn? 0xFFFF: 0x0000;
-  boost::shared_ptr<IAlgLoopSolverFactory>
-    solver_factory(new AlgLoopSolverFactory(&_global_settings,
-                                            PATH(""), PATH("")));
-  _model = boost::shared_ptr<MODEL_CLASS>
-    (new MODEL_CLASS(&_global_settings, solver_factory,
-                     boost::shared_ptr<ISimData>(new SimData()),
-                     boost::shared_ptr<ISimVars>(MODEL_CLASS::createSimVars())));
-  _model->initialize();
+
+  // setup logger
+  _logger = NULL;
+  _logCategories = 0x0000;
+  if (loggingOn) {
+    // only instantiate logger if requested as it is not thread save
+    setDebugLogging(loggingOn, 0, NULL);
+  }
+
+  // setup model
+  _model = createSystemFMU(&_global_settings);
+  _model->initializeMemory();
+  _model->initializeFreeVariables();
   _string_buffer.resize(_model->getDimString());
+  _clockTick = new bool[_model->getDimClock()];
+  _clockSubactive = new bool[_model->getDimClock()];
+  std::fill(_clockTick, _clockTick + _model->getDimClock(), false);
+  std::fill(_clockSubactive, _clockSubactive + _model->getDimClock(), false);
+  _nclockTick = 0;
 }
 
 FMU2Wrapper::~FMU2Wrapper()
 {
+  delete [] _clockSubactive;
+  delete [] _clockTick;
+  delete _model;
 }
 
 fmi2Status FMU2Wrapper::setDebugLogging(fmi2Boolean loggingOn,
@@ -95,13 +145,25 @@ fmi2Status FMU2Wrapper::setDebugLogging(fmi2Boolean loggingOn,
                                         const fmi2String categories[])
 {
   fmi2Status ret = fmi2OK;
-  if (nCategories == 0)
+
+  if (_logger == NULL) {
+    LogSettings logSettings = _global_settings.getLogSettings();
+    FMU2Logger::initialize(this, logSettings, loggingOn);
+    _logger = Logger::getInstance();
+  }
+  else {
+    _logger->setEnabled(loggingOn);
+  }
+  if (nCategories == 0) {
     _logCategories = loggingOn? 0xFFFF: 0x0000;
+    _logger->setAll(loggingOn? LL_DEBUG: LL_ERROR);
+  }
   else {
     int i, j, nSupported = sizeof(_LogCategoryFMUNames) / sizeof(fmi2String);
     for (i = 0; i < nCategories; i++) {
       if (strcmp(categories[i], "logAll") == 0) {
         _logCategories = loggingOn? 0xFFFF: 0x0000;
+        _logger->setAll(loggingOn? LL_DEBUG: LL_ERROR);
         continue;
       }
       for (j = 0; j < nSupported; j++) {
@@ -110,6 +172,14 @@ fmi2Status FMU2Wrapper::setDebugLogging(fmi2Boolean loggingOn,
             _logCategories |= (1 << j);
           else
             _logCategories &= ~(1 << j);
+          switch (j) {
+          case logEvents:
+            _logger->set(LC_EVENTS, loggingOn? LL_DEBUG: LL_ERROR);
+            break;
+          case logNonlinearSystems:
+            _logger->set(LC_NLS, loggingOn? LL_DEBUG: LL_ERROR);
+            break;
+          }
           break;
         }
       }
@@ -150,6 +220,7 @@ fmi2Status FMU2Wrapper::exitInitializationMode()
     updateModel();
   _model->saveAll();
   _model->setInitial(false);
+  _model->initTimeEventData();
   return fmi2OK;
 }
 
@@ -166,14 +237,21 @@ fmi2Status FMU2Wrapper::reset()
 
 void FMU2Wrapper::updateModel()
 {
-  if (_model->initial())
+  if (_model->initial()) {
     _model->initializeBoundVariables();
+    _model->saveAll();
+  }
   _model->evaluateAll();     // derivatives and algebraic variables
   _need_update = false;
 }
 
 fmi2Status FMU2Wrapper::setTime(fmi2Real time)
 {
+  if (_nclockTick > 0) {
+    std::fill(_clockTick, _clockTick + _model->getDimClock(), false);
+    std::fill(_clockSubactive, _clockSubactive + _model->getDimClock(), false);
+    _nclockTick = 0;
+  }
   _model->setTime(time);
   _need_update = true;
   return fmi2OK;
@@ -196,6 +274,7 @@ fmi2Status FMU2Wrapper::getDerivatives(fmi2Real derivatives[], size_t nx)
 {
   if (_need_update)
     updateModel();
+  _model->computeTimeEventConditions(_model->getTime());
   _model->getRHS(derivatives);
   return fmi2OK;
 }
@@ -251,11 +330,40 @@ fmi2Status FMU2Wrapper::setString(const fmi2ValueReference vr[], size_t nvr,
   return fmi2OK;
 }
 
+fmi2Status FMU2Wrapper::setClock(const fmi2Integer clockIndex[],
+                                 size_t nClockIndex, const fmi2Boolean tick[],
+                                 const fmi2Boolean *subactive)
+{
+  for (int i = 0; i < nClockIndex; i++) {
+    _clockTick[clockIndex[i] - 1] = tick[i];
+    if (subactive != NULL)
+      _clockSubactive[clockIndex[i] - 1] = subactive[i];
+  }
+  _nclockTick = 0;
+  for (int i = 0; i < _model->getDimClock(); i++) {
+    _nclockTick += _clockTick[i]? 1: 0;
+  }
+  _need_update = true;
+  return fmi2OK;
+}
+
+fmi2Status FMU2Wrapper::setInterval(const fmi2Integer clockIndex[],
+                                    size_t nClockIndex, const fmi2Real interval[])
+{
+  double *clockInterval = _model->clockInterval();
+  for (int i = 0; i < nClockIndex; i++) {
+    clockInterval[clockIndex[i] - 1] = interval[i];
+    _model->setIntervalInTimEventData((clockIndex[i] - 1), interval[i]);
+  }
+  _need_update = true;
+  return fmi2OK;
+}
+
 fmi2Status FMU2Wrapper::getEventIndicators(fmi2Real eventIndicators[], size_t ni)
 {
   if (_need_update)
     updateModel();
-  bool conditions[NUMBER_OF_EVENT_INDICATORS];
+  bool conditions[NUMBER_OF_EVENT_INDICATORS + 1];
   _model->getConditions(conditions);
   _model->getZeroFunc(eventIndicators);
   for (int i = 0; i < ni; i++)
@@ -308,26 +416,57 @@ fmi2Status FMU2Wrapper::getString(const fmi2ValueReference vr[], size_t nvr,
   return fmi2OK;
 }
 
+fmi2Status FMU2Wrapper::getClock(const fmi2Integer clockIndex[],
+                                 size_t nClockIndex, fmi2Boolean tick[])
+{
+  for (int i = 0; i < nClockIndex; i++) {
+    tick[i] = _clockTick[clockIndex[i] - 1];
+  }
+  return fmi2OK;
+}
+
+fmi2Status FMU2Wrapper::getInterval(const fmi2Integer clockIndex[],
+                                    size_t nClockIndex, fmi2Real interval[])
+{
+  double *clockInterval = _model->clockInterval();
+  for (int i = 0; i < nClockIndex; i++) {
+    interval[i] = clockInterval[clockIndex[i] - 1];
+  }
+  return fmi2OK;
+}
 
 fmi2Status FMU2Wrapper::newDiscreteStates(fmi2EventInfo *eventInfo)
 {
-  if (_need_update)
+  if (_need_update) {
+    if (_nclockTick > 0)
+      _model->setClock(_clockTick, _clockSubactive);
     updateModel();
+    if (_nclockTick > 0) {
+      // reset clocks
+      std::fill(_clockTick, _clockTick + _model->getDimClock(), false);
+      std::fill(_clockSubactive, _clockSubactive + _model->getDimClock(), false);
+      _nclockTick = 0;
+    }
+  }
   // Check if an Zero Crossings happend
-  double f[NUMBER_OF_EVENT_INDICATORS];
-  bool events[NUMBER_OF_EVENT_INDICATORS];
+  double f[NUMBER_OF_EVENT_INDICATORS + 1];
+  bool events[NUMBER_OF_EVENT_INDICATORS + 1];
   _model->getZeroFunc(f);
   for (int i = 0; i < NUMBER_OF_EVENT_INDICATORS; i++)
     events[i] = f[i] >= 0;
   // Handle Zero Crossings if nessesary
   bool state_vars_reinitialized = _model->handleSystemEvents(events);
+  //time events
+  eventInfo->nextEventTime = _model->computeNextTimeEvents(_model->getTime());
+  if ((eventInfo->nextEventTime != 0.0) && (eventInfo->nextEventTime != std::numeric_limits<double>::max()))
+    eventInfo->nextEventTimeDefined = fmi2True;
+  else
+    eventInfo->nextEventTimeDefined = fmi2False;
   // everything is done
   eventInfo->newDiscreteStatesNeeded = fmi2False;
   eventInfo->terminateSimulation = fmi2False;
   eventInfo->nominalsOfContinuousStatesChanged = state_vars_reinitialized;
   eventInfo->valuesOfContinuousStatesChanged = state_vars_reinitialized;
-  eventInfo->nextEventTimeDefined = fmi2False;
-  //eventInfo->nextEventTime = _time;
   return fmi2OK;
 }
 
@@ -337,4 +476,5 @@ fmi2Status FMU2Wrapper::getNominalsOfContinuousStates(fmi2Real x_nominal[], size
     x_nominal[i] = 1.0;  // TODO
   return fmi2OK;
 }
+
 /** @} */ // end of fmu2

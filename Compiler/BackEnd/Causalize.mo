@@ -34,10 +34,9 @@ encapsulated package Causalize
   package:     Causalize
   description: Causalize contains functions to causalize the equation system.
                This includes algorithms to check if the system is singulare,
-               match the equations with variables and sorting to BLT-Form.
+               match the equations with variables and sorting to BLT-Form."
 
 
-  RCS: $Id: Causalize.mo 14235 2013-01-23 04:34:35Z jfrenkel $"
 
 public import BackendDAE;
 public import BackendDAEFunc;
@@ -50,6 +49,7 @@ protected import BackendVariable;
 protected import DAEUtil;
 protected import Debug;
 protected import DumpGraphML;
+protected import ElementSource;
 protected import Error;
 protected import Flags;
 protected import List;
@@ -100,6 +100,7 @@ algorithm
         esize_str = intString(neqns);
         vsize_str = intString(nvars);
         Error.addMessage(Error.UNDERDET_EQN_SYSTEM, {esize_str,vsize_str});
+        BackendDAEUtil.checkIncidenceMatrixSolvability(isyst, ishared.functionTree);
       then
         fail();
 
@@ -109,6 +110,7 @@ algorithm
         esize_str = intString(neqns) ;
         vsize_str = intString(nvars);
         Error.addMessage(Error.OVERDET_EQN_SYSTEM, {esize_str,vsize_str});
+        BackendDAEUtil.checkIncidenceMatrixSolvability(isyst, ishared.functionTree);
       then
         fail();
 
@@ -134,28 +136,27 @@ protected function singularSystemCheck1
   input tuple<BackendDAEFunc.matchingAlgorithmFunc,String> matchingAlgorithm;
   input BackendDAE.StructurallySingularSystemHandlerArg arg;
   input BackendDAE.Shared iShared;
-  output BackendDAE.EqSystem outSyst;
+  output BackendDAE.EqSystem outSyst = iSyst;
 protected
-  BackendDAE.Variables vars;
-  BackendDAE.EquationArray eqns;
   BackendDAE.IncidenceMatrix m;
   BackendDAE.IncidenceMatrixT mT;
-  BackendDAE.StateSets stateSets;
   list<list<Integer>> comps;
   array<Integer> ass1,ass2;
   BackendDAEFunc.matchingAlgorithmFunc matchingFunc;
-  BackendDAE.BaseClockPartitionKind partitionKind;
+  BackendDAE.EqSystem syst;
 algorithm
-  BackendDAE.EQSYSTEM(orderedVars=vars,orderedEqs=eqns,m=SOME(m),mT=SOME(mT),stateSets=stateSets,partitionKind=partitionKind) := iSyst;
+  BackendDAE.EQSYSTEM(m=SOME(m), mT=SOME(mT)) := iSyst;
   (matchingFunc,_) :=  matchingAlgorithm;
   // get absolute Incidence Matrix
   m := BackendDAEUtil.absIncidenceMatrix(m);
   mT := BackendDAEUtil.absIncidenceMatrix(mT);
   // try to match
-  outSyst := BackendDAE.EQSYSTEM(vars,eqns,SOME(m),SOME(mT),BackendDAE.NO_MATCHING(),stateSets,partitionKind);
+  syst := BackendDAEUtil.setEqSystMatrices(iSyst, SOME(m), SOME(mT));
+  syst.matching := BackendDAE.NO_MATCHING();
   // do matching
-  (outSyst as BackendDAE.EQSYSTEM(matching=BackendDAE.MATCHING(ass1=ass1,ass2=ass2)),_,_) := matchingFunc(outSyst,iShared,true,(BackendDAE.INDEX_REDUCTION(),eqnConstr),foundSingularSystem,arg);
-  outSyst := BackendDAEUtil.setEqSystMatching(iSyst,BackendDAE.MATCHING(ass1,ass2,{}));
+  (syst as BackendDAE.EQSYSTEM(matching=BackendDAE.MATCHING(ass1=ass1, ass2=ass2)), _, _) :=
+      matchingFunc(syst, iShared, true, (BackendDAE.INDEX_REDUCTION(), eqnConstr), foundSingularSystem, arg);
+  outSyst.matching := BackendDAE.MATCHING(ass1, ass2, {});
   /*
     print("singularSystemCheck:\n");
     BackendDump.printEqSystem(outSyst);
@@ -164,7 +165,7 @@ algorithm
     DumpGraphML.dumpSystem(outSyst,iShared,NONE(),"SingularSystemCheck" + intString(nVars) + ".graphml",false);
   */
   // free states matching information because there it is unkown if the state or the state derivative was matched
-  ((_,ass1,ass2)) := BackendVariable.traverseBackendDAEVars(vars, freeStateAssignments, (1,ass1,ass2));
+  ((_,ass1,ass2)) := BackendVariable.traverseBackendDAEVars(outSyst.orderedVars, freeStateAssignments, (1,ass1,ass2));
 end singularSystemCheck1;
 
 protected function freeStateAssignments "unset assignments of statevariables."
@@ -252,7 +253,7 @@ algorithm
   vars := List.fold1(unmatched,getAssignedVars,inAssignments1,vars);
   var_str := BackendDump.dumpMarkedVars(isyst, vars);
   source := BackendEquation.markedEquationSource(isyst, listHead(unmatched1));
-  info := DAEUtil.getElementSourceFileInfo(source);
+  info := ElementSource.getElementSourceFileInfo(source);
 
   Error.addSourceMessage(if BackendDAEUtil.isInitializationDAE(ishared) then Error.STRUCTURAL_SINGULAR_INITIAL_SYSTEM else Error.STRUCT_SINGULAR_SYSTEM, {eqn_str,var_str}, info);
 end singularSystemError;

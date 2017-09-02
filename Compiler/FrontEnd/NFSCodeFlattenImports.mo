@@ -34,7 +34,6 @@ encapsulated package NFSCodeFlattenImports
   package:     NFSCodeFlattenImports
   description: SCode flattening
 
-  RCS: $Id$
 
   This module flattens the SCode representation by removing all extends, imports
   and redeclares, and fully qualifying class names.
@@ -128,13 +127,12 @@ algorithm
       SCode.Mod mods;
       SCode.Attributes attr;
       Env env;
-      SCode.Ident bc;
       SCode.ClassDef cdef;
 
     case (SCode.PARTS(el, neql, ieql, nal, ial, nco, clats, extdecl), _, _)
       equation
         // Lookup elements.
-        el = List.filter(el, isNotImport);
+        el = List.filterOnTrue(el, isNotImport);
         (el, env) = List.mapFold(el, flattenElement, inEnv);
 
         // Lookup equations and algorithm names.
@@ -146,12 +144,12 @@ algorithm
       then
         (SCode.PARTS(el, neql, ieql, nal, ial, nco, clats, extdecl), env);
 
-    case (SCode.CLASS_EXTENDS(bc, mods, cdef), _, _)
+    case (SCode.CLASS_EXTENDS(mods, cdef), _, _)
       equation
         (cdef, env) = flattenClassDef(cdef, inEnv, inInfo);
         mods = flattenModifier(mods, env, inInfo);
       then
-        (SCode.CLASS_EXTENDS(bc, mods, cdef), env);
+        (SCode.CLASS_EXTENDS(mods, cdef), env);
 
     case (SCode.DERIVED(ty, mods, attr), env, _)
       equation
@@ -185,10 +183,11 @@ end flattenDerivedClassDef;
 
 protected function isNotImport
   input SCode.Element inElement;
+  output Boolean outB;
 algorithm
-  _ := match(inElement)
-    case SCode.IMPORT() then fail();
-    else ();
+  outB := match(inElement)
+    case SCode.IMPORT() then false;
+    else true;
   end match;
 end isNotImport;
 
@@ -264,10 +263,11 @@ protected
   SCode.Parallelism prl;
   SCode.Variability var;
   Absyn.Direction dir;
+  Absyn.IsField isf;
 algorithm
-  SCode.ATTR(ad, ct, prl, var, dir) := inAttributes;
+  SCode.ATTR(ad, ct, prl, var, dir, isf) := inAttributes;
   ad := List.map2(ad, flattenSubscript, inEnv, inInfo);
-  outAttributes := SCode.ATTR(ad, ct, prl, var, dir);
+  outAttributes := SCode.ATTR(ad, ct, prl, var, dir, isf);
 end flattenAttributes;
 
 protected function flattenTypeSpec
@@ -499,7 +499,7 @@ algorithm
       then
         SOME(exp);
 
-    case NONE() then inOptExp;
+    else inOptExp;
   end match;
 end flattenModOptExp;
 
@@ -613,7 +613,7 @@ algorithm
       then
         SOME(exp);
 
-    case (NONE(), _, _) then inExp;
+    else inExp;
   end match;
 end flattenOptExp;
 
@@ -632,6 +632,7 @@ algorithm
       Absyn.ForIterators iters;
       SourceInfo info;
       tuple<Env, SourceInfo> tup;
+      Absyn.ReductionIterType iterType;
 
     case (Absyn.CREF(componentRef = cref), tup as (env, info))
       equation
@@ -639,11 +640,13 @@ algorithm
       then
         (Absyn.CREF(cref), tup);
 
-    case (Absyn.CALL(functionArgs = Absyn.FOR_ITER_FARG(iterators = iters)), (env, info))
+    case (Absyn.CALL(function_ = cref, functionArgs = args as Absyn.FOR_ITER_FARG(exp = exp, iterType = iterType, iterators = iters)), (env, info))
       equation
+        cref = NFSCodeLookup.lookupComponentRef(cref, env, info);
         env = NFSCodeEnv.extendEnvWithIterators(iters, System.tmpTickIndex(NFSCodeEnv.tmpTickIndex), env);
+        exp = flattenExp(exp, env, info);
       then
-        (inExp, (env, info));
+        (Absyn.CALL(cref, Absyn.FOR_ITER_FARG(exp, iterType, iters)), (env, info));
 
     case (Absyn.CALL(function_ = Absyn.CREF_IDENT(name = "SOME")), _)
       then (inExp,inTuple);

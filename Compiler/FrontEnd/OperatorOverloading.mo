@@ -53,6 +53,7 @@ import ExpressionDump;
 import ExpressionSimplify;
 import FGraph;
 import Flags;
+import Global;
 import Inline;
 import List;
 import Lookup;
@@ -217,12 +218,12 @@ algorithm
 
          path = getRecordPath(type1);
          path = Absyn.makeFullyQualified(path);
-         (cache,_,recordEnv) = Lookup.lookupClass(cache,env,path, false);
+         (cache,_,recordEnv) = Lookup.lookupClass(cache,env,path);
 
          str1 = "'" + Dump.opSymbolCompact(aboper) + "'";
          path = Absyn.joinPaths(path, Absyn.IDENT(str1));
 
-         (cache,operatorCl,operatorEnv) = Lookup.lookupClass(cache,recordEnv,path, false);
+         (cache,operatorCl,operatorEnv) = Lookup.lookupClass(cache,recordEnv,path);
          true = SCode.isOperator(operatorCl);
 
          operNames = SCodeUtil.getListofQualOperatorFuncsfromOperator(operatorCl);
@@ -277,12 +278,12 @@ algorithm
 
         path = getRecordPath(type1);
         path = Absyn.makeFullyQualified(path);
-        (cache,_,recordEnv) = Lookup.lookupClass(cache,env,path, false);
+        (cache,_,recordEnv) = Lookup.lookupClass(cache,env,path);
 
         str1 = "'String'";
         path = Absyn.joinPaths(path, Absyn.IDENT(str1));
 
-        (cache,operatorCl,operatorEnv) = Lookup.lookupClass(cache,recordEnv,path, false);
+        (cache,operatorCl,operatorEnv) = Lookup.lookupClass(cache,recordEnv,path);
         true = SCode.isOperator(operatorCl);
 
         operNames = SCodeUtil.getListofQualOperatorFuncsfromOperator(operatorCl);
@@ -326,6 +327,12 @@ algorithm
   end match;
 end elabArglist;
 
+function initCache
+algorithm
+  setGlobalRoot(Global.operatorOverloadingCache, (AvlTreePathPathEnv.Tree.EMPTY(),AvlTreePathOperatorTypes.Tree.EMPTY()));
+end initCache;
+
+
 protected
 
 /* We have these as constants instead of function calls as done previously
@@ -333,48 +340,48 @@ protected
  * The types are a bit hard to read, but they are simply 1 through 9-dimensional
  * arrays of the basic types. */
 constant list<DAE.Type> intarrtypes = {
-  DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource), // 1-dim
-  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource), // 2-dim
-  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource), // 3-dim
-  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource), // 4-dim
-  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource), // 5-dim
-  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource), // 6-dim
-  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource), // 7-dim
-  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource), // 8-dim
-  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource) // 9-dim
+  DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT,{DAE.DIM_UNKNOWN()}), // 1-dim
+  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT,{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}), // 2-dim
+  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT,{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}), // 3-dim
+  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT,{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}), // 4-dim
+  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT,{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}), // 5-dim
+  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT,{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}), // 6-dim
+  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT,{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}), // 7-dim
+  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT,{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}), // 8-dim
+  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT,{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}) // 9-dim
 };
 constant list<DAE.Type> realarrtypes = {
-  DAE.T_ARRAY(DAE.T_REAL_DEFAULT,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource), // 1-dim
-  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_REAL_DEFAULT,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource), // 2-dim
-  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_REAL_DEFAULT,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource), // 3-dim
-  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_REAL_DEFAULT,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource), // 4-dim
-  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_REAL_DEFAULT,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource), // 5-dim
-  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_REAL_DEFAULT,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource), // 6-dim
-  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_REAL_DEFAULT,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource), // 7-dim
-  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_REAL_DEFAULT,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource), // 8-dim
-  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_REAL_DEFAULT,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource) // 9-dim
+  DAE.T_ARRAY(DAE.T_REAL_DEFAULT,{DAE.DIM_UNKNOWN()}), // 1-dim
+  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_REAL_DEFAULT,{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}), // 2-dim
+  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_REAL_DEFAULT,{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}), // 3-dim
+  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_REAL_DEFAULT,{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}), // 4-dim
+  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_REAL_DEFAULT,{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}), // 5-dim
+  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_REAL_DEFAULT,{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}), // 6-dim
+  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_REAL_DEFAULT,{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}), // 7-dim
+  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_REAL_DEFAULT,{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}), // 8-dim
+  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_REAL_DEFAULT,{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}) // 9-dim
 };
 constant list<DAE.Type> boolarrtypes = {
-  DAE.T_ARRAY(DAE.T_BOOL_DEFAULT,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource), // 1-dim
-  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_BOOL_DEFAULT,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource), // 2-dim
-  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_BOOL_DEFAULT,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource), // 3-dim
-  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_BOOL_DEFAULT,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource), // 4-dim
-  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_BOOL_DEFAULT,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource), // 5-dim
-  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_BOOL_DEFAULT,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource), // 6-dim
-  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_BOOL_DEFAULT,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource), // 7-dim
-  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_BOOL_DEFAULT,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource), // 8-dim
-  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_BOOL_DEFAULT,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource) // 9-dim
+  DAE.T_ARRAY(DAE.T_BOOL_DEFAULT,{DAE.DIM_UNKNOWN()}), // 1-dim
+  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_BOOL_DEFAULT,{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}), // 2-dim
+  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_BOOL_DEFAULT,{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}), // 3-dim
+  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_BOOL_DEFAULT,{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}), // 4-dim
+  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_BOOL_DEFAULT,{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}), // 5-dim
+  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_BOOL_DEFAULT,{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}), // 6-dim
+  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_BOOL_DEFAULT,{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}), // 7-dim
+  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_BOOL_DEFAULT,{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}), // 8-dim
+  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_BOOL_DEFAULT,{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}) // 9-dim
 };
 constant list<DAE.Type> stringarrtypes = {
-  DAE.T_ARRAY(DAE.T_STRING_DEFAULT,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource), // 1-dim
-  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_STRING_DEFAULT,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource), // 2-dim
-  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_STRING_DEFAULT,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource), // 3-dim
-  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_STRING_DEFAULT,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource), // 4-dim
-  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_STRING_DEFAULT,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource), // 5-dim
-  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_STRING_DEFAULT,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource), // 6-dim
-  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_STRING_DEFAULT,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource), // 7-dim
-  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_STRING_DEFAULT,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource), // 8-dim
-  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_STRING_DEFAULT,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource),{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource) // 9-dim
+  DAE.T_ARRAY(DAE.T_STRING_DEFAULT,{DAE.DIM_UNKNOWN()}), // 1-dim
+  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_STRING_DEFAULT,{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}), // 2-dim
+  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_STRING_DEFAULT,{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}), // 3-dim
+  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_STRING_DEFAULT,{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}), // 4-dim
+  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_STRING_DEFAULT,{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}), // 5-dim
+  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_STRING_DEFAULT,{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}), // 6-dim
+  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_STRING_DEFAULT,{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}), // 7-dim
+  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_STRING_DEFAULT,{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}), // 8-dim
+  DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_ARRAY(DAE.T_STRING_DEFAULT,{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}),{DAE.DIM_UNKNOWN()}) // 9-dim
 };
 /* Simply a list of 9 of that basic type; used to match with the array types */
 constant list<DAE.Type> inttypes = {
@@ -412,7 +419,7 @@ algorithm
         tuple<DAE.Exp,Option<DAE.Type>> tpl;
 
     // Matching types. Yay.
-    case ((DAE.T_FUNCTION(source={path},funcResultType=ty,functionAttributes=attr,funcArg=DAE.FUNCARG(ty=ty1)::DAE.FUNCARG(ty=ty2)::restArgs))::types, _, _, _, _, acc)
+    case ((DAE.T_FUNCTION(path=path,funcResultType=ty,functionAttributes=attr,funcArg=DAE.FUNCARG(ty=ty1)::DAE.FUNCARG(ty=ty2)::restArgs))::types, _, _, _, _, acc)
       equation
         (lhs,_) = Types.matchType(inLhs,lhsType,ty1,false);
         (rhs,_) = Types.matchType(inRhs,rhsType,ty2,false);
@@ -532,7 +539,7 @@ algorithm
         list<DAE.Exp> acc;
 
     // Matching types. Yay.
-    case (DAE.T_FUNCTION(source={path},funcResultType=ty,functionAttributes=attr,funcArg=DAE.FUNCARG(ty=ty1)::restArgs)::types, _, _, acc)
+    case (DAE.T_FUNCTION(path=path,funcResultType=ty,functionAttributes=attr,funcArg=DAE.FUNCARG(ty=ty1)::restArgs)::types, _, _, acc)
       equation
         (exp,_) = Types.matchType(inExp,inType,ty1,false);
         daeExp = makeCallFillRestDefaults(path,{exp},restArgs,Types.makeCallAttr(ty,attr));
@@ -737,7 +744,7 @@ algorithm
         resultName = Util.getTempVariableIndex();
         cr = DAE.CREF(DAE.CREF_IDENT(iterName,newType2,{}),newType2);
         (cache,exp,_,resType) = binaryUserdef(cache,env,op,inExp1,cr,inType1,newType2,impl,st,pre,info);
-        resType = DAE.T_ARRAY(resType,{dim2},{});
+        resType = DAE.T_ARRAY(resType,{dim2});
         exp = DAE.REDUCTION(DAE.REDUCTIONINFO(Absyn.IDENT("array"),Absyn.COMBINE(),resType,NONE(),foldName,resultName,NONE()),exp,DAE.REDUCTIONITER(iterName,inExp2,NONE(),newType2)::{});
         // exp = ExpressionSimplify.simplify1(exp);
       then (cache,{(exp,NONE())});
@@ -775,7 +782,7 @@ algorithm
         (cache,zeroTypes) = getOperatorFuncsOrEmpty(cache,env,{ty},"'0'",info,{});
         (cache,zeroConstructor) = getZeroConstructor(cache,env,List.filterMap(zeroTypes,getZeroConstructorExpression),impl,st,info);
 
-        resType = DAE.T_ARRAY(resType,{dim1_1},{});
+        resType = DAE.T_ARRAY(resType,{dim1_1});
         iter = DAE.REDUCTIONITER(iterName1,cr,NONE(),newType1);
         iter1 = DAE.REDUCTIONITER(iterName,inExp1,NONE(),newType1);
         iter2 = DAE.REDUCTIONITER(iterName2,inExp2,NONE(),newType2);
@@ -849,7 +856,7 @@ algorithm
         cr1 = DAE.CREF(DAE.CREF_IDENT(iterName1,newType1,{}),newType1);
         cr2 = DAE.CREF(DAE.CREF_IDENT(iterName2,newType2,{}),newType2);
         (cache,exp,_,resType) = binaryUserdef(cache,env,op,cr1,cr2,newType1,newType2,impl,st,pre,info);
-        resType = DAE.T_ARRAY(resType,{dim2},{});
+        resType = DAE.T_ARRAY(resType,{dim2});
         iter1 = DAE.REDUCTIONITER(iterName1,inExp1,NONE(),newType1);
         iter2 = DAE.REDUCTIONITER(iterName2,inExp2,NONE(),newType2);
         exp = DAE.REDUCTION(DAE.REDUCTIONINFO(Absyn.IDENT("array"),Absyn.THREAD(),resType,NONE(),foldName,resultName,NONE()),exp,iter1::iter2::{});
@@ -863,238 +870,166 @@ function operatorsBinary "This function relates the operators in the abstract sy
   Therefore, in order for the builtin type conversion from Integer to
   Real to work, operators that work on both Integers and Reals must
   return the Integer type -before- the Real type in the list."
-  input Absyn.Operator inOperator1;
-  input DAE.Type inType3;
-  input DAE.Exp inE1;
-  input DAE.Type inType4;
-  input DAE.Exp inE2;
+  input Absyn.Operator inOperator;
   output list<tuple<DAE.Operator, list<DAE.Type>, DAE.Type>> ops;
+  input output DAE.Type t1;
+  input output DAE.Exp e1;
+  input output DAE.Type t2;
+  input output DAE.Exp e2;
   output DAE.Type oty1;
   output DAE.Exp oe1;
   output DAE.Type oty2;
   output DAE.Exp oe2;
+protected
+  package OperatorsBinary
+    import int_scalar = DAE.T_INTEGER_DEFAULT;
+    import real_scalar = DAE.T_REAL_DEFAULT;
+    import bool_scalar = DAE.T_BOOL_DEFAULT;
+    constant DAE.Operator
+      int_mul = DAE.MUL(int_scalar),
+      real_mul = DAE.MUL(real_scalar),
+      real_div = DAE.DIV(real_scalar),
+      real_pow = DAE.POW(real_scalar),
+      int_mul_sp = DAE.MUL_SCALAR_PRODUCT(int_scalar),
+      real_mul_sp = DAE.MUL_SCALAR_PRODUCT(real_scalar),
+      int_mul_mp = DAE.MUL_MATRIX_PRODUCT(DAE.T_INTEGER_DEFAULT),
+      real_mul_mp = DAE.MUL_MATRIX_PRODUCT(DAE.T_REAL_DEFAULT);
+    constant DAE.Type
+      int_vector = DAE.T_ARRAY(int_scalar,{DAE.DIM_UNKNOWN()}),
+      int_matrix = DAE.T_ARRAY(int_vector,{DAE.DIM_UNKNOWN()}),
+      real_vector = DAE.T_ARRAY(real_scalar,{DAE.DIM_UNKNOWN()}),
+      real_matrix = DAE.T_ARRAY(real_vector,{DAE.DIM_UNKNOWN()});
+    constant list<tuple<DAE.Operator, list<DAE.Type>, DAE.Type>>
+      // ADD
+      addIntArrays = list((DAE.ADD_ARR(int_vector), {at,at},at) for at in intarrtypes),
+      addRealArrays = list((DAE.ADD_ARR(real_vector), {at,at},at) for at in realarrtypes),
+      addStringArrays = list((DAE.ADD_ARR(DAE.T_ARRAY(DAE.T_STRING_DEFAULT, {DAE.DIM_UNKNOWN()})), {at,at},at) for at in stringarrtypes),
+      addScalars = {
+        (DAE.ADD(int_scalar), {int_scalar,int_scalar},int_scalar),
+        (DAE.ADD(real_scalar), {real_scalar,real_scalar},real_scalar),
+        (DAE.ADD(DAE.T_STRING_DEFAULT), {DAE.T_STRING_DEFAULT,DAE.T_STRING_DEFAULT},DAE.T_STRING_DEFAULT)
+      },
+      addTypes = listAppend(addScalars, listAppend(addIntArrays, listAppend(addRealArrays, addStringArrays))),
+      // ADD_EW
+      addIntArrayScalars = list((DAE.ADD_ARRAY_SCALAR(int_vector), {at,rhs},at) threaded for at in intarrtypes, rhs in inttypes),
+      addRealArrayScalars = list((DAE.ADD_ARRAY_SCALAR(real_vector), {at,rhs},at) threaded for at in realarrtypes, rhs in realtypes),
+      addStringArrayScalars = list((DAE.ADD_ARRAY_SCALAR(DAE.T_ARRAY(DAE.T_STRING_DEFAULT, {DAE.DIM_UNKNOWN()})), {at,rhs},at) threaded for at in stringarrtypes, rhs in stringtypes),
+      addEwTypes = listAppend(addIntArrayScalars, listAppend(addRealArrayScalars, listAppend(addStringArrayScalars, addTypes))),
+      // SUB
+      subIntArrays = list((DAE.SUB_ARR(int_vector), {at,at},at) for at in intarrtypes),
+      subRealArrays = list((DAE.SUB_ARR(real_vector), {at,at},at) for at in realarrtypes),
+      subScalars = {
+        (DAE.SUB(int_scalar),{int_scalar,int_scalar},int_scalar),
+        (DAE.SUB(real_scalar),{real_scalar,real_scalar},real_scalar)
+      },
+      subTypes = listAppend(subScalars, listAppend(subIntArrays, subRealArrays)),
+      // SUB_EW
+      subIntArrayScalars = list((DAE.SUB_SCALAR_ARRAY(int_vector), {lhs,at},at) threaded for at in intarrtypes, lhs in inttypes),
+      subRealArrayScalars = list((DAE.SUB_SCALAR_ARRAY(real_vector), {lhs,at},at) threaded for at in realarrtypes, lhs in realtypes),
+      subEwTypes = listAppend(subScalars, listAppend(subIntArrayScalars, listAppend(subRealArrayScalars, listAppend(subIntArrays, subRealArrays)))),
+      // MUL
+      mulScalars = {
+          (int_mul,{int_scalar,int_scalar},int_scalar),
+          (real_mul,{real_scalar,real_scalar},real_scalar)
+      },
+      mulScalarProduct = {
+        (int_mul_sp,{int_vector,int_vector},int_scalar),
+        (real_mul_sp,{real_vector,real_vector},real_scalar)
+      },
+      mulMatrixProduct = {
+        (int_mul_mp,{int_vector,int_matrix},int_vector),
+        (int_mul_mp,{int_matrix,int_vector},int_vector),
+        (int_mul_mp,{int_matrix,int_matrix},int_matrix),
+        (real_mul_mp,{real_vector,real_matrix},real_vector),
+        (real_mul_mp,{real_matrix,real_vector},real_vector),
+        (real_mul_mp,{real_matrix,real_matrix},real_matrix)
+      },
+      mulIntArrayScalars = list((DAE.MUL_ARRAY_SCALAR(int_vector), {at,rhs},at) threaded for at in intarrtypes, rhs in inttypes),
+      mulRealArrayScalars = list((DAE.MUL_ARRAY_SCALAR(real_vector), {at,rhs},at) threaded for at in realarrtypes, rhs in realtypes),
+      mulTypes = listAppend(mulScalars, listAppend(mulIntArrayScalars, listAppend(mulRealArrayScalars, listAppend(mulScalarProduct,mulMatrixProduct)))),
+      // MUL_EW
+      mulIntArray = list((DAE.MUL_ARR(int_vector), {at,at},at) for at in intarrtypes),
+      mulRealArray = list((DAE.MUL_ARR(real_vector), {at,at},at) for at in realarrtypes),
+      mulEwTypes = listAppend(mulScalars, listAppend(mulIntArrayScalars, listAppend(mulRealArrayScalars, listAppend(mulIntArray, mulRealArray)))),
+      // DIV
+      divTypes = (real_div,{real_scalar,real_scalar},real_scalar) ::
+        list((DAE.DIV_ARRAY_SCALAR(real_vector), {at,rhs},at) threaded for at in realarrtypes, rhs in realtypes),
+      // DIV_EW
+      divRealScalarArray = list((DAE.DIV_SCALAR_ARRAY(real_vector), {lhs,at},at) threaded for at in realarrtypes, lhs in realtypes),
+      divArrs = list((DAE.DIV_ARR(real_vector), {at,at},at) for at in realarrtypes),
+      divEwTypes = listAppend(divTypes, listAppend(divRealScalarArray, divArrs)),
+      // POW
+      powTypes = {
+        (real_pow,{real_scalar,real_scalar},real_scalar),
+        (DAE.POW_ARR(real_scalar),{real_matrix,int_scalar},real_matrix)
+      },
+      // AND
+      andTypes = (DAE.AND(bool_scalar), {bool_scalar, bool_scalar}, bool_scalar) ::
+        list((DAE.AND(bool_scalar), {at,at},at) threaded for at in boolarrtypes),
+      // OR
+      orTypes = (DAE.OR(bool_scalar), {bool_scalar, bool_scalar}, bool_scalar) ::
+        list((DAE.OR(bool_scalar), {at,at},at) threaded for at in boolarrtypes);
+  end OperatorsBinary;
+  DAE.Type t;
+  DAE.Exp e;
+  Absyn.Operator op=inOperator;
+  Boolean ia1=Types.isArray(t1), ia2=Types.isArray(t2);
 algorithm
-  (ops,oty1,oe1,oty2,oe2) :=
-  matchcontinue (inOperator1,inType3,inE1,inType4,inE2)
+  if ia2 and (not ia1) then
+    (e1,e2,t1,t2) := match op
+      // element-wise equivalent operators
+      case Absyn.ADD_EW() then (e2,e1,t2,t1);
+      case Absyn.MUL() then (e2,e1,t2,t1);
+      case Absyn.MUL_EW() then (e2,e1,t2,t1);
+      // Does not need EW-equiv operators
+      else (e1,e2,t1,t2);
+    end match;
+  elseif ia1 and (not ia2) then
+    (op,e2) := match op
+      // element-wise equivalent operators
+      case Absyn.SUB_EW() then (Absyn.ADD_EW(),Expression.negate(e2));
+      // Does not need EW-equiv operators
+      else (op,e2);
+    end match;
+  end if;
+  try
+  ops := match op
     local
       list<tuple<DAE.Operator, list<DAE.Type>, DAE.Type>> intarrs,realarrs,boolarrs,stringarrs,scalars,arrays,types,scalarprod,matrixprod,intscalararrs,realscalararrs,intarrsscalar,realarrsscalar,realarrscalar,arrscalar,stringarrsscalar;
       tuple<DAE.Operator, list<DAE.Type>, DAE.Type> enum_op;
-      DAE.Type t1,t2,int_scalar,int_vector,int_matrix,real_scalar,real_vector,real_matrix;
+      DAE.Type int_scalar,int_vector,int_matrix,real_scalar,real_vector,real_matrix;
       DAE.Operator int_mul,real_mul,int_mul_sp,real_mul_sp,int_mul_mp,real_mul_mp,real_div,real_pow;
-      Absyn.Operator op;
-      DAE.Exp e1,e2;
 
-    // arithmetical operators
-    case (Absyn.ADD(),t1,e1,t2,e2)
-      equation
-        intarrs = operatorReturn(DAE.ADD_ARR(DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT, {DAE.DIM_UNKNOWN()}, DAE.emptyTypeSource)),
-                    intarrtypes, intarrtypes, intarrtypes);
-        realarrs = operatorReturn(DAE.ADD_ARR(DAE.T_ARRAY(DAE.T_REAL_DEFAULT, {DAE.DIM_UNKNOWN()}, DAE.emptyTypeSource)),
-                     realarrtypes, realarrtypes, realarrtypes);
-        stringarrs = operatorReturn(DAE.ADD_ARR(DAE.T_ARRAY(DAE.T_STRING_DEFAULT, {DAE.DIM_UNKNOWN()}, DAE.emptyTypeSource)),
-                       stringarrtypes, stringarrtypes, stringarrtypes);
-        scalars = {
-          (DAE.ADD(DAE.T_INTEGER_DEFAULT),
-          {DAE.T_INTEGER_DEFAULT,DAE.T_INTEGER_DEFAULT},DAE.T_INTEGER_DEFAULT),
-          (DAE.ADD(DAE.T_REAL_DEFAULT),
-          {DAE.T_REAL_DEFAULT,DAE.T_REAL_DEFAULT},DAE.T_REAL_DEFAULT),
-          (DAE.ADD(DAE.T_STRING_DEFAULT),
-          {DAE.T_STRING_DEFAULT,DAE.T_STRING_DEFAULT},DAE.T_STRING_DEFAULT)};
-        arrays = List.flatten({intarrs,realarrs,stringarrs});
-        types = List.flatten({scalars,arrays});
-      then
-        (types,t1,e1,t2,e2);
+    case Absyn.ADD() then OperatorsBinary.addTypes;
+    case Absyn.ADD_EW() then OperatorsBinary.addEwTypes;
+    case Absyn.SUB() then OperatorsBinary.subTypes;
+    case Absyn.SUB_EW() then OperatorsBinary.subEwTypes;
+    case Absyn.MUL() then OperatorsBinary.mulTypes;
+    case Absyn.MUL_EW() then OperatorsBinary.mulEwTypes;
+    case Absyn.DIV() then OperatorsBinary.divTypes;
+    case Absyn.DIV_EW() then OperatorsBinary.divEwTypes;
+    case Absyn.POW() then OperatorsBinary.powTypes;
 
-    // arithmetical element wise operators
-    case (Absyn.ADD_EW(),t1,e1,t2,e2)
+    case Absyn.POW_EW()
       equation
-        false = Types.isArray(t2) and (not Types.isArray(t1));
-        intarrs = operatorReturn(DAE.ADD_ARR(DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT, {DAE.DIM_UNKNOWN()}, DAE.emptyTypeSource)),
-                    intarrtypes, intarrtypes, intarrtypes);
-        realarrs = operatorReturn(DAE.ADD_ARR(DAE.T_ARRAY(DAE.T_REAL_DEFAULT, {DAE.DIM_UNKNOWN()}, DAE.emptyTypeSource)),
-                     realarrtypes, realarrtypes, realarrtypes);
-        stringarrs = operatorReturn(DAE.ADD_ARR(DAE.T_ARRAY(DAE.T_STRING_DEFAULT, {DAE.DIM_UNKNOWN()}, DAE.emptyTypeSource)),
-                       stringarrtypes, stringarrtypes, stringarrtypes);
-        scalars = {
-          (DAE.ADD(DAE.T_INTEGER_DEFAULT),
-          {DAE.T_INTEGER_DEFAULT,DAE.T_INTEGER_DEFAULT},DAE.T_INTEGER_DEFAULT),
-          (DAE.ADD(DAE.T_REAL_DEFAULT),
-          {DAE.T_REAL_DEFAULT,DAE.T_REAL_DEFAULT},DAE.T_REAL_DEFAULT),
-          (DAE.ADD(DAE.T_STRING_DEFAULT),
-          {DAE.T_STRING_DEFAULT,DAE.T_STRING_DEFAULT},DAE.T_STRING_DEFAULT)};
-        intarrsscalar = operatorReturn(DAE.ADD_ARRAY_SCALAR(DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT, {DAE.DIM_UNKNOWN()}, DAE.emptyTypeSource)),
-                          intarrtypes, inttypes, intarrtypes);
-        realarrsscalar = operatorReturn(DAE.ADD_ARRAY_SCALAR(DAE.T_ARRAY(DAE.T_REAL_DEFAULT, {DAE.DIM_UNKNOWN()}, DAE.emptyTypeSource)),
-                           realarrtypes, realtypes, realarrtypes);
-        stringarrsscalar = operatorReturn(DAE.ADD_ARRAY_SCALAR(DAE.T_ARRAY(DAE.T_STRING_DEFAULT, {DAE.DIM_UNKNOWN()}, DAE.emptyTypeSource)),
-                             stringarrtypes, stringtypes, stringarrtypes);
-        types = List.flatten({scalars,intarrsscalar,realarrsscalar,stringarrsscalar,intarrs,realarrs,stringarrs});
-      then
-        (types,t1,e1,t2,e2);
-
-    // arithmetical operators
-    case (Absyn.SUB(),t1,e1,t2,e2)
-      equation
-        intarrs = operatorReturn(DAE.SUB_ARR(DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT, {DAE.DIM_UNKNOWN()}, DAE.emptyTypeSource)),
-                    intarrtypes, intarrtypes, intarrtypes);
-        realarrs = operatorReturn(DAE.SUB_ARR(DAE.T_ARRAY(DAE.T_REAL_DEFAULT, {DAE.DIM_UNKNOWN()}, DAE.emptyTypeSource)),
-                     realarrtypes, realarrtypes, realarrtypes);
-        scalars = {
-          (DAE.SUB(DAE.T_INTEGER_DEFAULT),
-          {DAE.T_INTEGER_DEFAULT,DAE.T_INTEGER_DEFAULT},DAE.T_INTEGER_DEFAULT),
-          (DAE.SUB(DAE.T_REAL_DEFAULT),
-          {DAE.T_REAL_DEFAULT,DAE.T_REAL_DEFAULT},DAE.T_REAL_DEFAULT)};
-        types = List.flatten({scalars,intarrs,realarrs});
-      then
-        (types,t1,e1,t2,e2);
-
-    // arithmetical element wise operators
-    case (Absyn.SUB_EW(),t1,e1,t2,e2)
-      equation
-        false = Types.isArray(t1) and (not Types.isArray(t2));
-        intarrs = operatorReturn(DAE.SUB_ARR(DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT, {DAE.DIM_UNKNOWN()}, DAE.emptyTypeSource)),
-                    intarrtypes, intarrtypes, intarrtypes);
-        realarrs = operatorReturn(DAE.SUB_ARR(DAE.T_ARRAY(DAE.T_REAL_DEFAULT, {DAE.DIM_UNKNOWN()}, DAE.emptyTypeSource)),
-                     realarrtypes, realarrtypes, realarrtypes);
-        scalars = {
-          (DAE.SUB(DAE.T_INTEGER_DEFAULT),
-          {DAE.T_INTEGER_DEFAULT,DAE.T_INTEGER_DEFAULT},DAE.T_INTEGER_DEFAULT),
-          (DAE.SUB(DAE.T_REAL_DEFAULT),
-          {DAE.T_REAL_DEFAULT,DAE.T_REAL_DEFAULT},DAE.T_REAL_DEFAULT)};
-        intscalararrs = operatorReturn(DAE.SUB_SCALAR_ARRAY(DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT, {DAE.DIM_UNKNOWN()}, DAE.emptyTypeSource)),
-                          inttypes, intarrtypes, intarrtypes);
-        realscalararrs = operatorReturn(DAE.SUB_SCALAR_ARRAY(DAE.T_ARRAY(DAE.T_REAL_DEFAULT, {DAE.DIM_UNKNOWN()}, DAE.emptyTypeSource)),
-                           realtypes, realarrtypes, realarrtypes);
-        types = List.flatten({scalars,intscalararrs,realscalararrs,intarrs,realarrs});
-      then
-        (types,t1,e1,t2,e2);
-
-    case (Absyn.MUL(),t1,e1,t2,e2)
-      equation
-        false = Types.isArray(t2) and (not Types.isArray(t1));
-        int_mul = DAE.MUL(DAE.T_INTEGER_DEFAULT);
-        real_mul = DAE.MUL(DAE.T_REAL_DEFAULT);
-        int_mul_sp = DAE.MUL_SCALAR_PRODUCT(DAE.T_INTEGER_DEFAULT);
-        real_mul_sp = DAE.MUL_SCALAR_PRODUCT(DAE.T_REAL_DEFAULT);
-        int_mul_mp = DAE.MUL_MATRIX_PRODUCT(DAE.T_INTEGER_DEFAULT);
-        real_mul_mp = DAE.MUL_MATRIX_PRODUCT(DAE.T_REAL_DEFAULT);
-        int_scalar = DAE.T_INTEGER_DEFAULT;
-        int_vector = DAE.T_ARRAY(int_scalar,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource);
-        int_matrix = DAE.T_ARRAY(int_vector,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource);
-        real_scalar = DAE.T_REAL_DEFAULT;
-        real_vector = DAE.T_ARRAY(real_scalar,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource);
-        real_matrix = DAE.T_ARRAY(real_vector,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource);
-        scalars = {(int_mul,{int_scalar,int_scalar},int_scalar),
-          (real_mul,{real_scalar,real_scalar},real_scalar)};
-        scalarprod = {(int_mul_sp,{int_vector,int_vector},int_scalar),
-          (real_mul_sp,{real_vector,real_vector},real_scalar)};
-        matrixprod = {(int_mul_mp,{int_vector,int_matrix},int_vector),
-          (int_mul_mp,{int_matrix,int_vector},int_vector),(int_mul_mp,{int_matrix,int_matrix},int_matrix),
-          (real_mul_mp,{real_vector,real_matrix},real_vector),(real_mul_mp,{real_matrix,real_vector},real_vector),
-          (real_mul_mp,{real_matrix,real_matrix},real_matrix)};
-        intarrsscalar = operatorReturn(DAE.MUL_ARRAY_SCALAR(DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT, {DAE.DIM_UNKNOWN()}, DAE.emptyTypeSource)),
-                          intarrtypes, inttypes, intarrtypes);
-        realarrsscalar = operatorReturn(DAE.MUL_ARRAY_SCALAR(DAE.T_ARRAY(DAE.T_REAL_DEFAULT, {DAE.DIM_UNKNOWN()}, DAE.emptyTypeSource)),
-                           realarrtypes, realtypes, realarrtypes);
-        types = List.flatten({scalars,intarrsscalar,realarrsscalar,scalarprod,matrixprod});
-      then
-        (types,t1,e1,t2,e2);
-
-    case (Absyn.MUL_EW(),t1,e1,t2,e2) /* Arithmetical operators */
-      equation
-        false = Types.isArray(t2) and (not Types.isArray(t1));
-        intarrs = operatorReturn(DAE.MUL_ARR(DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT, {DAE.DIM_UNKNOWN()}, DAE.emptyTypeSource)),
-          intarrtypes, intarrtypes, intarrtypes);
-        realarrs = operatorReturn(DAE.MUL_ARR(DAE.T_ARRAY(DAE.T_REAL_DEFAULT, {DAE.DIM_UNKNOWN()}, DAE.emptyTypeSource)),
-          realarrtypes, realarrtypes, realarrtypes);
-        scalars = {
-          (DAE.MUL(DAE.T_INTEGER_DEFAULT),
-          {DAE.T_INTEGER_DEFAULT,DAE.T_INTEGER_DEFAULT},DAE.T_INTEGER_DEFAULT),
-          (DAE.MUL(DAE.T_REAL_DEFAULT),
-          {DAE.T_REAL_DEFAULT,DAE.T_REAL_DEFAULT},DAE.T_REAL_DEFAULT)};
-        intarrsscalar = operatorReturn(DAE.MUL_ARRAY_SCALAR(DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT, {DAE.DIM_UNKNOWN()}, DAE.emptyTypeSource)),
-          intarrtypes, inttypes, intarrtypes);
-        realarrsscalar = operatorReturn(DAE.MUL_ARRAY_SCALAR(DAE.T_ARRAY(DAE.T_REAL_DEFAULT, {DAE.DIM_UNKNOWN()}, DAE.emptyTypeSource)),
-          realarrtypes, realtypes, realarrtypes);
-        types = List.flatten({scalars,intarrsscalar,realarrsscalar,intarrs,realarrs});
-      then
-        (types,t1,e1,t2,e2);
-
-    case (Absyn.DIV(),t1,e1,t2,e2)
-      equation
-        real_div = DAE.DIV(DAE.T_REAL_DEFAULT);
-        real_scalar = DAE.T_REAL_DEFAULT;
-        scalars = {(real_div,{real_scalar,real_scalar},real_scalar)};
-        realarrscalar = operatorReturn(DAE.DIV_ARRAY_SCALAR(DAE.T_ARRAY(DAE.T_REAL_DEFAULT, {DAE.DIM_UNKNOWN()}, DAE.emptyTypeSource)),
-          realarrtypes, realtypes, realarrtypes);
-        types = List.flatten({scalars,realarrscalar});
-      then
-        (types,t1,e1,t2,e2);
-
-    case (Absyn.DIV_EW(),t1,e1,t2,e2) /* Arithmetical operators */
-      equation
-        realarrs = operatorReturn(DAE.DIV_ARR(DAE.T_ARRAY(DAE.T_REAL_DEFAULT, {DAE.DIM_UNKNOWN()}, DAE.emptyTypeSource)),
-          realarrtypes, realarrtypes, realarrtypes);
-        scalars = {
-          (DAE.DIV(DAE.T_REAL_DEFAULT),
-          {DAE.T_REAL_DEFAULT,DAE.T_REAL_DEFAULT},DAE.T_REAL_DEFAULT)};
-        realscalararrs = operatorReturn(DAE.DIV_SCALAR_ARRAY(DAE.T_ARRAY(DAE.T_REAL_DEFAULT, {DAE.DIM_UNKNOWN()}, DAE.emptyTypeSource)),
-          realtypes, realarrtypes, realarrtypes);
-        realarrsscalar = operatorReturn(DAE.DIV_ARRAY_SCALAR(DAE.T_ARRAY(DAE.T_REAL_DEFAULT, {DAE.DIM_UNKNOWN()}, DAE.emptyTypeSource)),
-          realarrtypes, realtypes, realarrtypes);
-        types = List.flatten({scalars,realscalararrs,
-          realarrsscalar,realarrs});
-      then
-        (types,t1,e1,t2,e2);
-
-    case (Absyn.POW(),t1,e1,t2,e2)
-      equation
-        // Note: POW_ARR uses Integer exponents, while POW only uses Real exponents
-        real_scalar = DAE.T_REAL_DEFAULT;
-        int_scalar = DAE.T_INTEGER_DEFAULT;
-        real_vector = DAE.T_ARRAY(real_scalar,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource);
-        real_matrix = DAE.T_ARRAY(real_vector,{DAE.DIM_UNKNOWN()},DAE.emptyTypeSource);
-        real_pow = DAE.POW(DAE.T_REAL_DEFAULT);
-        scalars = {(real_pow,{real_scalar,real_scalar},real_scalar)};
-        arrscalar = {
-          (DAE.POW_ARR(DAE.T_REAL_DEFAULT),{real_matrix,int_scalar},
-          real_matrix)};
-        types = List.flatten({scalars,arrscalar});
-      then
-        (types,t1,e1,t2,e2);
-
-    case (Absyn.POW_EW(),t1,e1,t2,e2)
-      equation
-        realarrs = operatorReturn(DAE.POW_ARR2(DAE.T_ARRAY(DAE.T_REAL_DEFAULT, {DAE.DIM_UNKNOWN()}, DAE.emptyTypeSource)),
+        realarrs = operatorReturn(DAE.POW_ARR2(DAE.T_ARRAY(DAE.T_REAL_DEFAULT, {DAE.DIM_UNKNOWN()})),
           realarrtypes, realarrtypes, realarrtypes);
         scalars = {
           (DAE.POW(DAE.T_REAL_DEFAULT),
           {DAE.T_REAL_DEFAULT,DAE.T_REAL_DEFAULT},DAE.T_REAL_DEFAULT)};
-        realscalararrs = operatorReturn(DAE.POW_SCALAR_ARRAY(DAE.T_ARRAY(DAE.T_REAL_DEFAULT, {DAE.DIM_UNKNOWN()}, DAE.emptyTypeSource)),
+        realscalararrs = operatorReturn(DAE.POW_SCALAR_ARRAY(DAE.T_ARRAY(DAE.T_REAL_DEFAULT, {DAE.DIM_UNKNOWN()})),
           realtypes, realarrtypes, realarrtypes);
-        realarrsscalar = operatorReturn(DAE.POW_ARRAY_SCALAR(DAE.T_ARRAY(DAE.T_REAL_DEFAULT, {DAE.DIM_UNKNOWN()}, DAE.emptyTypeSource)),
+        realarrsscalar = operatorReturn(DAE.POW_ARRAY_SCALAR(DAE.T_ARRAY(DAE.T_REAL_DEFAULT, {DAE.DIM_UNKNOWN()})),
           realarrtypes, realtypes, realarrtypes);
         types = List.flatten({scalars,realscalararrs,
           realarrsscalar,realarrs});
-      then
-        (types,t1,e1,t2,e2);
+      then types;
 
-    case (Absyn.AND(), t1, e1, t2, e2)
-      equation
-        scalars = {(DAE.AND(DAE.T_BOOL_DEFAULT), {DAE.T_BOOL_DEFAULT, DAE.T_BOOL_DEFAULT}, DAE.T_BOOL_DEFAULT)};
-        boolarrs = operatorReturn(DAE.AND(DAE.T_BOOL_DEFAULT), boolarrtypes, boolarrtypes, boolarrtypes);
-        types = List.flatten({scalars, boolarrs});
-      then (types,t1,e1,t2,e2);
-
-    case (Absyn.OR(), t1, e1, t2, e2)
-      equation
-        scalars = {(DAE.OR(DAE.T_BOOL_DEFAULT), {DAE.T_BOOL_DEFAULT, DAE.T_BOOL_DEFAULT}, DAE.T_BOOL_DEFAULT)};
-        boolarrs = operatorReturn(DAE.OR(DAE.T_BOOL_DEFAULT), boolarrtypes, boolarrtypes, boolarrtypes);
-        types = List.flatten({scalars, boolarrs});
-      then (types,t1,e1,t2,e2);
+    case Absyn.AND() then OperatorsBinary.andTypes;
+    case Absyn.OR() then OperatorsBinary.orTypes;
 
     // Relational operators
-    case (Absyn.LESS(),t1,e1,t2,e2)
+    case Absyn.LESS()
       equation
         enum_op = makeEnumOperator(DAE.LESS(DAE.T_ENUMERATION_DEFAULT), t1, t2);
         scalars = {
@@ -1108,9 +1043,9 @@ algorithm
           (DAE.LESS(DAE.T_STRING_DEFAULT),
             {DAE.T_STRING_DEFAULT,DAE.T_STRING_DEFAULT},DAE.T_BOOL_DEFAULT)};
         types = List.flatten({scalars});
-      then (types,t1,e1,t2,e2);
+      then types;
 
-    case (Absyn.LESSEQ(),t1,e1,t2,e2)
+    case Absyn.LESSEQ()
       equation
         enum_op = makeEnumOperator(DAE.LESSEQ(DAE.T_ENUMERATION_DEFAULT), t1, t2);
         scalars = {
@@ -1124,9 +1059,9 @@ algorithm
           (DAE.LESSEQ(DAE.T_STRING_DEFAULT),
             {DAE.T_STRING_DEFAULT,DAE.T_STRING_DEFAULT},DAE.T_BOOL_DEFAULT)};
         types = List.flatten({scalars});
-      then (types,t1,e1,t2,e2);
+      then types;
 
-    case (Absyn.GREATER(),t1,e1,t2,e2)
+    case Absyn.GREATER()
       equation
         enum_op = makeEnumOperator(DAE.GREATER(DAE.T_ENUMERATION_DEFAULT), t1, t2);
         scalars = {
@@ -1140,9 +1075,9 @@ algorithm
           (DAE.GREATER(DAE.T_STRING_DEFAULT),
             {DAE.T_STRING_DEFAULT,DAE.T_STRING_DEFAULT},DAE.T_BOOL_DEFAULT)};
         types = List.flatten({scalars});
-      then (types,t1,e1,t2,e2);
+      then types;
 
-    case (Absyn.GREATEREQ(),t1,e1,t2,e2)
+    case Absyn.GREATEREQ()
       equation
         enum_op = makeEnumOperator(DAE.GREATEREQ(DAE.T_ENUMERATION_DEFAULT), t1, t2);
         scalars = {
@@ -1156,9 +1091,9 @@ algorithm
           (DAE.GREATEREQ(DAE.T_STRING_DEFAULT),
             {DAE.T_STRING_DEFAULT,DAE.T_STRING_DEFAULT},DAE.T_BOOL_DEFAULT)};
         types = List.flatten({scalars});
-      then (types,t1,e1,t2,e2);
+      then types;
 
-    case (Absyn.EQUAL(),t1,e1,t2,e2)
+    case Absyn.EQUAL()
       equation
         enum_op = makeEnumOperator(DAE.EQUAL(DAE.T_ENUMERATION_DEFAULT), t1, t2);
         types =
@@ -1172,10 +1107,9 @@ algorithm
           (DAE.EQUAL(DAE.T_BOOL_DEFAULT),
             {DAE.T_BOOL_DEFAULT,DAE.T_BOOL_DEFAULT},DAE.T_BOOL_DEFAULT)::
           {};
-      then
-        (types,t1,e1,t2,e2);
+      then types;
 
-    case (Absyn.NEQUAL(),t1,e1,t2,e2)
+    case Absyn.NEQUAL()
       equation
         enum_op = makeEnumOperator(DAE.NEQUAL(DAE.T_ENUMERATION_DEFAULT), t1, t2);
         types =
@@ -1189,42 +1123,13 @@ algorithm
           (DAE.NEQUAL(DAE.T_BOOL_DEFAULT),
             {DAE.T_BOOL_DEFAULT,DAE.T_BOOL_DEFAULT},DAE.T_BOOL_DEFAULT)::
           {};
-      then
-        (types,t1,e1,t2,e2);
-
-    // element-wise equivalent operators
-    case (Absyn.ADD_EW(),t1,e1,t2,e2)
-      equation
-        true = Types.isArray(t2) and (not Types.isArray(t1));
-        (types,t1,e1,t2,e2) = operatorsBinary(Absyn.ADD_EW(),t2,e2,t1,e1);
-      then (types,t1,e1,t2,e2);
-
-    case (Absyn.SUB_EW(),t1,e1,t2,e2)
-      equation
-        true = Types.isArray(t1) and (not Types.isArray(t2));
-        e2 = Expression.negate(e2);
-        (types,t1,e1,t2,e2) = operatorsBinary(Absyn.ADD_EW(),t1,e1,t2,e2);
-      then (types,t1,e1,t2,e2);
-
-    case (Absyn.MUL(),t1,e1,t2,e2)
-      equation
-        true = Types.isArray(t2) and (not Types.isArray(t1));
-        (types,t1,e1,t2,e2) = operatorsBinary(Absyn.MUL(),t2,e2,t1,e1);
-      then (types,t1,e1,t2,e2);
-
-    case (Absyn.MUL_EW(),t1,e1,t2,e2)
-      equation
-        true = Types.isArray(t2) and (not Types.isArray(t1));
-        (types,t1,e1,t2,e2) = operatorsBinary(Absyn.MUL_EW(),t2,e2,t1,e1);
-      then (types,t1,e1,t2,e2);
-
-    case (op,_,_,_,_)
-      equation
-        true = Flags.isSet(Flags.FAILTRACE);
-        Debug.traceln("OperatorOverloading.operatorsBinary failed, op: " + Dump.opSymbol(op));
-      then
-        fail();
-  end matchcontinue;
+      then types;
+  end match;
+  else
+    true := Flags.isSet(Flags.FAILTRACE);
+    Debug.traceln("OperatorOverloading.operatorsBinary failed, op: " + Dump.opSymbol(op));
+    fail();
+  end try;
 end operatorsBinary;
 
 function operatorsUnary "This function relates the operators in the abstract syntax to the
@@ -1247,9 +1152,9 @@ algorithm
           DAE.T_INTEGER_DEFAULT),
           (DAE.UMINUS(DAE.T_REAL_DEFAULT),{DAE.T_REAL_DEFAULT},
           DAE.T_REAL_DEFAULT)} "The UMINUS operator, unary minus" ;
-        intarrs = operatorReturnUnary(DAE.UMINUS_ARR(DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT, {DAE.DIM_UNKNOWN()}, DAE.emptyTypeSource)),
+        intarrs = operatorReturnUnary(DAE.UMINUS_ARR(DAE.T_ARRAY(DAE.T_INTEGER_DEFAULT, {DAE.DIM_UNKNOWN()})),
           intarrtypes, intarrtypes);
-        realarrs = operatorReturnUnary(DAE.UMINUS_ARR(DAE.T_ARRAY(DAE.T_REAL_DEFAULT, {DAE.DIM_UNKNOWN()}, DAE.emptyTypeSource)),
+        realarrs = operatorReturnUnary(DAE.UMINUS_ARR(DAE.T_ARRAY(DAE.T_REAL_DEFAULT, {DAE.DIM_UNKNOWN()})),
           realarrtypes, realarrtypes);
         types = List.flatten({scalars,intarrs,realarrs});
       then types;
@@ -1340,21 +1245,8 @@ function operatorReturn "This function collects the types and operator lists int
   input list<DAE.Type> inReturnTypes;
   output list<tuple<DAE.Operator, list<DAE.Type>, DAE.Type>> outOperators;
 algorithm
-  outOperators := match(inOperator, inLhsTypes, inRhsTypes, inReturnTypes)
-    local
-      list<tuple<DAE.Operator, list<DAE.Type>, DAE.Type>> rest;
-      tuple<DAE.Operator, list<DAE.Type>, DAE.Type> t;
-      DAE.Operator op;
-      DAE.Type l,r,re;
-      list<DAE.Type> lr,rr,rer;
-    case (_,{},{},{}) then {};
-    case (op,(l :: lr),(r :: rr),(re :: rer))
-      equation
-        rest = operatorReturn(op, lr, rr, rer);
-        t = (op,{l,r},re) "list contains two types, i.e. BINARY operations" ;
-      then
-        (t :: rest);
-  end match;
+  outOperators := list((inOperator,{l,r},re) threaded for l in inLhsTypes, r in inRhsTypes, re in inReturnTypes);
+  annotation(__OpenModelica_EarlyInline=true);
 end operatorReturn;
 
 function operatorReturnUnary "This function collects the types and operator lists into a tuple list,
@@ -1400,25 +1292,9 @@ algorithm
       list<Absyn.Path> paths;
       DAE.Type ty,scalarType;
       list<DAE.Type> rest;
-    case (cache,_,ty::rest,_,_,_)
+    case (_,_,ty::rest,_,_,_)
       equation
-        // prepare the call path for the operator.
-        // if *   => recordPath.'*'  , !!also if .*   => recordPath.'*'
-        scalarType = Types.arrayElementType(ty);
-        path = getRecordPath(scalarType);
-        path = Absyn.makeFullyQualified(path);
-        (cache,operatorCl,recordEnv) = Lookup.lookupClass(cache,env,path,false);
-        (cache,path,recordEnv) = lookupOperatorBaseClass(cache,recordEnv,operatorCl);
-        opNamePath = Absyn.IDENT(opName);
-        path = Absyn.joinPaths(path, opNamePath);
-        // check if the operator is defined. i.e overloaded
-        (cache,operatorCl,operEnv) = Lookup.lookupClass(cache,recordEnv,path,false);
-        true = SCode.isOperator(operatorCl);
-        // get the list of functions in the operator. !! there can be multiple options
-        paths = SCodeUtil.getListofQualOperatorFuncsfromOperator(operatorCl);
-        (cache,funcs) = Lookup.lookupFunctionsListInEnv(cache, operEnv, paths, info, {});
-        funcs = List.select2(funcs, if opName=="'constructor'" or opName=="'0'" then checkOperatorFunctionOutput else checkOperatorFunctionOneOutput,
-          scalarType,info);
+        (cache,funcs) = getOperatorFuncsOrEmptySingleTy(inCache,env,ty,opName,info);
         (cache,funcs) = getOperatorFuncsOrEmpty(cache,env,rest,opName,info,listAppend(funcs,acc));
       then (cache,funcs);
     case (_,_,_::rest,_,_,_)
@@ -1428,10 +1304,96 @@ algorithm
     case (_,_,{},_,_,_)
       equation
         (cache,Util.SUCCESS()) = Static.instantiateDaeFunctionFromTypes(inCache, env, acc, false, NONE(), true, Util.SUCCESS());
-        (DAE.T_TUPLE(funcs,_,{}),_) = Types.traverseType(DAE.T_TUPLE(acc,NONE(),{}), -1, Types.makeExpDimensionsUnknown);
+        (DAE.T_TUPLE(funcs,_),_) = Types.traverseType(DAE.T_TUPLE(acc,NONE()), -1, Types.makeExpDimensionsUnknown);
       then (cache,funcs);
   end matchcontinue;
 end getOperatorFuncsOrEmpty;
+
+package AvlTreePathPathEnv "AvlTree Path -> Path"
+  extends BaseAvlTree;
+  redeclare type Key = Absyn.Path;
+  redeclare type Value = Absyn.Path;
+  redeclare function extends keyStr
+  algorithm
+    outString := Absyn.pathString(inKey);
+  end keyStr;
+  redeclare function extends valueStr
+  algorithm
+    outString := Absyn.pathString(inValue);
+  end valueStr;
+  redeclare function extends keyCompare
+  algorithm
+    outResult := Absyn.pathCompareNoQual(inKey1,inKey2);
+  end keyCompare;
+  redeclare function addConflictDefault = addConflictKeep;
+annotation(__OpenModelica_Interface="util");
+end AvlTreePathPathEnv;
+
+package AvlTreePathOperatorTypes "AvlTree Path -> list<Type>"
+  extends BaseAvlTree;
+  redeclare type Key = Absyn.Path;
+  redeclare type Value = list<DAE.Type>;
+  redeclare function extends keyStr
+  algorithm
+    outString := Absyn.pathString(inKey);
+  end keyStr;
+  redeclare function extends valueStr
+  algorithm
+    outString := Types.unparseType(DAE.T_METATUPLE(inValue));
+  end valueStr;
+  redeclare function extends keyCompare
+  algorithm
+    outResult := Absyn.pathCompareNoQual(inKey1,inKey2);
+  end keyCompare;
+  redeclare function addConflictDefault = addConflictKeep;
+annotation(__OpenModelica_Interface="util");
+end AvlTreePathOperatorTypes;
+
+function getOperatorFuncsOrEmptySingleTy
+  input output FCore.Cache cache;
+  input FCore.Graph env;
+  input DAE.Type ty;
+  input String opName;
+  input SourceInfo info;
+  output list<DAE.Type> funcs;
+protected
+  Absyn.Path path,pathIn,opNamePath;
+  SCode.Element operatorCl;
+  FCore.Graph recordEnv,operEnv;
+  list<Absyn.Path> paths;
+  DAE.Type scalarType;
+  AvlTreePathPathEnv.Tree tree1;
+  AvlTreePathOperatorTypes.Tree tree2;
+  tuple<AvlTreePathPathEnv.Tree,AvlTreePathOperatorTypes.Tree> trees;
+algorithm
+  scalarType := Types.arrayElementType(ty);
+  pathIn := Absyn.makeFullyQualified(getRecordPath(scalarType));
+  trees := getGlobalRoot(Global.operatorOverloadingCache);
+  (tree1,tree2) := trees;
+  try
+    path := AvlTreePathPathEnv.get(tree1, pathIn);
+  else
+    (cache,operatorCl,recordEnv) := Lookup.lookupClass(cache,env,pathIn);
+    (cache,path,recordEnv) := lookupOperatorBaseClass(cache,recordEnv,operatorCl);
+    tree1 := AvlTreePathPathEnv.add(tree1, pathIn, path);
+    setGlobalRoot(Global.operatorOverloadingCache, (tree1,tree2));
+  end try;
+  opNamePath := Absyn.IDENT(opName);
+  path := Absyn.makeFullyQualified(Absyn.joinPaths(path, opNamePath));
+  try
+    funcs := AvlTreePathOperatorTypes.get(tree2, path);
+  else
+    // check if the operator is defined. i.e overloaded
+    (cache,operatorCl,operEnv) := Lookup.lookupClass(cache,env,path);
+    true := SCode.isOperator(operatorCl);
+    // get the list of functions in the operator. !! there can be multiple options
+    paths := SCodeUtil.getListofQualOperatorFuncsfromOperator(operatorCl);
+    (cache,funcs) := Lookup.lookupFunctionsListInEnv(cache, operEnv, paths, info, {});
+    funcs := List.select2(funcs, if opName=="'constructor'" or opName=="'0'" then checkOperatorFunctionOutput else checkOperatorFunctionOneOutput, scalarType,info);
+    tree2 := AvlTreePathOperatorTypes.add(tree2, path, funcs);
+    setGlobalRoot(Global.operatorOverloadingCache, (tree1,tree2));
+  end try;
+end getOperatorFuncsOrEmptySingleTy;
 
 function lookupOperatorBaseClass "From a derived class, we find the parent.
 This is required because we take the union of functions from lhs and rhs.
@@ -1451,7 +1413,7 @@ algorithm
       String name;
     case (cache,env,SCode.CLASS(classDef=SCode.DERIVED(typeSpec=Absyn.TPATH(path,NONE()))))
       equation
-        (cache,cl,env) = Lookup.lookupClass(cache,env,path,false);
+        (cache,cl,env) = Lookup.lookupClass(cache,env,path);
         (cache,path,env) = lookupOperatorBaseClass(cache,env,cl);
       then (cache,path,env);
 
@@ -1474,12 +1436,12 @@ algorithm
       Absyn.Path p;
       Boolean b;
     case (DAE.T_FUNCTION(funcResultType=DAE.T_TUPLE()),_,_) then false;
-    case (DAE.T_FUNCTION(funcArg=DAE.FUNCARG(ty=ty1,defaultBinding=NONE())::DAE.FUNCARG(ty=ty2,defaultBinding=NONE())::_,source={_}),_,_)
+    case (DAE.T_FUNCTION(funcArg=DAE.FUNCARG(ty=ty1,defaultBinding=NONE())::DAE.FUNCARG(ty=ty2,defaultBinding=NONE())::_),_,_)
       equation
         b = Types.equivtypesOrRecordSubtypeOf(Types.arrayElementType(ty1),opType) or Types.equivtypesOrRecordSubtypeOf(Types.arrayElementType(ty2),opType);
         checkOperatorFunctionOneOutputError(b,opType,ty,info);
       then b;
-    case (DAE.T_FUNCTION(funcArg=DAE.FUNCARG(ty=ty1,defaultBinding=NONE())::_,source={_}),_,_)
+    case (DAE.T_FUNCTION(funcArg=DAE.FUNCARG(ty=ty1,defaultBinding=NONE())::_),_,_)
       equation
         b = Types.equivtypesOrRecordSubtypeOf(Types.arrayElementType(ty1),opType);
         checkOperatorFunctionOneOutputError(b,opType,ty,info);
@@ -1536,7 +1498,7 @@ algorithm
     case (DAE.T_FUNCTION(funcArg={_}),_) then false; // Unary functions are legal even if we are not interested in them
     case (DAE.T_FUNCTION(funcArg=DAE.FUNCARG(defaultBinding=NONE())::DAE.FUNCARG(defaultBinding=NONE())::rest),_)
       equation
-        isBinaryFunc = Util.boolAndList(List.mapMap(rest, Types.funcArgDefaultBinding, isSome));
+        isBinaryFunc = List.mapMapBoolAnd(rest, Types.funcArgDefaultBinding, isSome);
         // Error.assertionOrAddSourceMessage(isBinaryFunc, Error.COMPILER_WARNING, {"TODO: Better warning for: " + Types.unparseType(ty) + ", expected arguments 3..n to have default values"}, info);
       then isBinaryFunc; // Unary functions are legal even if we are not interested in them
     else
@@ -1555,7 +1517,7 @@ algorithm
       list<DAE.FuncArg> rest;
     case DAE.T_FUNCTION(funcArg=DAE.FUNCARG(defaultBinding=NONE())::rest)
       equation
-        isBinaryFunc = Util.boolAndList(List.mapMap(rest, Types.funcArgDefaultBinding, isSome));
+        isBinaryFunc = List.mapMapBoolAnd(rest, Types.funcArgDefaultBinding, isSome);
       then isBinaryFunc;
     else false;
   end match;
@@ -1570,7 +1532,7 @@ algorithm
       list<DAE.FuncArg> args;
       Absyn.Path path;
       DAE.FunctionAttributes attr;
-    case DAE.T_FUNCTION(funcArg=args,functionAttributes=attr,source={path})
+    case DAE.T_FUNCTION(funcArg=args,functionAttributes=attr,path=path)
       equation
         result = makeCallFillRestDefaults(path,{},args,Types.makeCallAttr(ty,attr));
       then result;
@@ -1594,7 +1556,7 @@ function getRecordPath
   input DAE.Type inType1;
   output Absyn.Path outPath;
 algorithm
-  DAE.T_COMPLEX(complexClassType = ClassInf.RECORD(_), source = outPath :: _) :=
+  DAE.T_COMPLEX(complexClassType = ClassInf.RECORD(outPath)) :=
     Types.arrayElementType(inType1);
 end getRecordPath;
 

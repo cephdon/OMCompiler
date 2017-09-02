@@ -1,9 +1,9 @@
 /*
  * This file is part of OpenModelica.
  *
- * Copyright (c) 1998-2010, Link�pings University,
+ * Copyright (c) 1998-2010, Linköpings University,
  * Department of Computer and Information Science,
- * SE-58183 Link�ping, Sweden.
+ * SE-58183 Linköping, Sweden.
  *
  * All rights reserved.
  *
@@ -14,7 +14,7 @@
  *
  * The OpenModelica software and the Open Source Modelica
  * Consortium (OSMC) Public License (OSMC-PL) are obtained
- * from Link�pings University, either from the above address,
+ * from Linköpings University, either from the above address,
  * from the URL: http://www.ida.liu.se/projects/OpenModelica
  * and in the OpenModelica distribution.
  *
@@ -28,8 +28,12 @@
  *
  */
 
+#if defined(_MSC_VER) || defined(__MINGW32__)
+ #define WIN32_LEAN_AND_MEAN
+ #include <windows.h>
+#endif
+
 #include "meta_modelica.h"
-#include "OpenModelicaBootstrappingHeader.h"
 #include "parse.c"
 
 void* ParserExt_parse(const char* filename, const char* infoname, int acceptedGrammar, int langStd, const char* encoding, int runningTestsuite)
@@ -38,6 +42,7 @@ void* ParserExt_parse(const char* filename, const char* infoname, int acceptedGr
   if(acceptedGrammar == 2) flags |= PARSE_META_MODELICA;
   else if(acceptedGrammar == 3) flags |= PARSE_PARMODELICA;
   else if(acceptedGrammar == 4) flags |= PARSE_OPTIMICA;
+  else if(acceptedGrammar == 5) flags |= PARSE_PDEMODELICA;
 
   void *res = parseFile(filename, infoname, flags, encoding, langStd, runningTestsuite);
   if (res == NULL)
@@ -52,6 +57,7 @@ void* ParserExt_parseexp(const char* filename, const char* infoname, int accepte
   if(acceptedGrammar == 2) flags |= PARSE_META_MODELICA;
   else if(acceptedGrammar == 3) flags |= PARSE_PARMODELICA;
   else if(acceptedGrammar == 4) flags |= PARSE_OPTIMICA;
+  else if(acceptedGrammar == 5) flags |= PARSE_PDEMODELICA;
 
   void *res = parseFile(filename, infoname, flags, "UTF-8", langStd, runningTestsuite);
   if (res == NULL)
@@ -65,6 +71,7 @@ void* ParserExt_parsestring(const char* data, const char* filename, int accepted
   if(acceptedGrammar == 2) flags |= PARSE_META_MODELICA;
   else if(acceptedGrammar == 3) flags |= PARSE_PARMODELICA;
   else if(acceptedGrammar == 4) flags |= PARSE_OPTIMICA;
+  else if(acceptedGrammar == 5) flags |= PARSE_PDEMODELICA;
 
   void *res = parseString(data, filename, flags, langStd, runningTestsuite);
   if (res != NULL) {
@@ -80,6 +87,7 @@ void* ParserExt_parsestringexp(const char* data, const char* filename, int accep
   if(acceptedGrammar == 2) flags |= PARSE_META_MODELICA;
   else if(acceptedGrammar == 3) flags |= PARSE_PARMODELICA;
   else if(acceptedGrammar == 4) flags |= PARSE_OPTIMICA;
+  else if(acceptedGrammar == 5) flags |= PARSE_PDEMODELICA;
 
   void *res = parseString(data, filename, flags, langStd, runningTestsuite);
   if (res != NULL) {
@@ -95,6 +103,7 @@ void* ParserExt_stringPath(const char* data, const char* filename, int acceptedG
   if(acceptedGrammar == 2) flags |= PARSE_META_MODELICA;
   else if(acceptedGrammar == 3) flags |= PARSE_PARMODELICA;
   else if(acceptedGrammar == 4) flags |= PARSE_OPTIMICA;
+  else if(acceptedGrammar == 5) flags |= PARSE_PDEMODELICA;
 
   void *res = parseString(data, filename, flags, langStd, runningTestsuite);
   if (res != NULL) {
@@ -110,6 +119,7 @@ void* ParserExt_stringCref(const char* data, const char* filename, int acceptedG
   if(acceptedGrammar == 2) flags |= PARSE_META_MODELICA;
   else if(acceptedGrammar == 3) flags |= PARSE_PARMODELICA;
   else if(acceptedGrammar == 4) flags |= PARSE_OPTIMICA;
+  else if(acceptedGrammar == 5) flags |= PARSE_PDEMODELICA;
 
   void *res = parseString(data, filename, flags, langStd, runningTestsuite);
   if (res != NULL) {

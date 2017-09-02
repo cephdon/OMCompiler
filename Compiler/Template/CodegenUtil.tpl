@@ -45,6 +45,7 @@
 
 package CodegenUtil
 
+import ExpressionDumpTpl.*;
 import interface SimCodeTV;
 
 /* public */ template symbolName(String modelNamePrefix, String symbolName)
@@ -63,6 +64,18 @@ template replaceDotAndUnderscore(String str)
     System.unquoteIdentifier(str_underscores)
 end replaceDotAndUnderscore;
 
+template getGeneralTarget(String str)
+ "Replace _ with __ and dot in identifiers with _"
+::=
+  match str
+  case "msvc10"
+  case "msvc12"
+  case "msvc13"
+  case "msvc15"
+  then "msvc"
+  else str
+end getGeneralTarget;
+
 template underscorePath(Path path)
  "Generate paths with components separated by underscores.
   Replaces also the . in identifiers with _.
@@ -77,16 +90,6 @@ template underscorePath(Path path)
     underscorePath(path)
 end underscorePath;
 
-template modelNamePrefix(SimCode simCode)
-::=
-  match simCode
-  case simCode as SIMCODE(__) then
-    System.stringReplace(fileNamePrefix,".", "_")
-  // underscorePath(mi.name)
-  // case simCode as SIMCODE(modelInfo=mi as MODELINFO(__)) then
-  // underscorePath(mi.name)
-end modelNamePrefix;
-
 template crefStr(ComponentRef cr)
  "Generates the name of a variable for variable name array. Uses underscores for qualified names.
  a._b not a.b"
@@ -95,6 +98,7 @@ template crefStr(ComponentRef cr)
   case CREF_IDENT(__) then '<%System.unquoteIdentifier(ident)%><%subscriptsStr(subscriptLst)%>'
   // Are these even needed? Function context should only have CREF_IDENT :)
   case CREF_QUAL(ident = "$DER") then 'der(<%crefStr(componentRef)%>)'
+  case CREF_QUAL(ident = "$CLKPRE") then 'previous(<%crefStr(componentRef)%>)'
   case CREF_QUAL(__) then '<%System.unquoteIdentifier(ident)%><%subscriptsStr(subscriptLst)%>._<%crefStr(componentRef)%>'
   else "CREF_NOT_IDENT_OR_QUAL"
 end crefStr;
@@ -106,6 +110,7 @@ template crefStrNoUnderscore(ComponentRef cr)
   match cr
   case CREF_IDENT(__) then '<%ident%><%subscriptsStr(subscriptLst)%>'
   case CREF_QUAL(ident = "$DER") then 'der(<%crefStrNoUnderscore(componentRef)%>)'
+  case CREF_QUAL(ident = "$CLKPRE") then 'previous(<%crefStrNoUnderscore(componentRef)%>)'
   case CREF_QUAL(__) then '<%ident%><%subscriptsStr(subscriptLst)%>.<%crefStrNoUnderscore(componentRef)%>'
   else "CREF_NOT_IDENT_OR_QUAL"
 end crefStrNoUnderscore;
@@ -165,7 +170,7 @@ template initValXml(Exp exp)
   case SCONST(__) then '<%Util.escapeModelicaStringToXmlString(string)%>'
   case BCONST(__) then if bool then "true" else "false"
   case ENUM_LITERAL(__) then '<%index%>'
-  else error(sourceInfo(), 'initial value of unknown type: <%printExpStr(exp)%>')
+  else error(sourceInfo(), 'initial value of unknown type: <%dumpExp(exp,"\"")%>')
 end initValXml;
 
 /*********************************************************************
@@ -184,6 +189,35 @@ template getVariablity(VarKind varKind)
     else "continuous"
 end getVariablity;
 
+template variabilityString(VarKind varKind)
+::=
+  match varKind
+    case VARIABLE() then "variable"
+    case STATE(derName=NONE()) then 'STATE(<%index%>)'
+    case STATE(derName=SOME(dcr)) then 'STATE(<%index%>,<%crefStrNoUnderscore(dcr)%>)'
+    case STATE_DER()   then "STATE_DER"
+    case DUMMY_DER()   then "DUMMY_DER"
+    case DUMMY_STATE() then "DUMMY_STATE"
+    case CLOCKED_STATE()  then "CLOCKED_STATE"
+    case DISCRETE()    then "DISCRETE"
+    case PARAM()       then "PARAM"
+    case CONST()       then "CONST"
+    case EXTOBJ()  then 'EXTOBJ: <%dotPath(fullClassName)%>'
+    case JAC_VAR()     then "JACOBIAN_VAR"
+    case JAC_DIFF_VAR()then "JACOBIAN_DIFF_VAR"
+    case SEED_VAR()    then "SEED_VAR"
+    case OPT_CONSTR()  then "OPT_CONSTR"
+    case OPT_FCONSTR()  then "OPT_FCONSTR"
+    case OPT_INPUT_WITH_DER()  then "OPT_INPUT_WITH_DER"
+    case OPT_INPUT_DER()  then "OPT_INPUT_DER"
+    case OPT_TGRID()  then "OPT_TGRID"
+    case OPT_LOOP_INPUT()  then "OPT_LOOP_INPUT"
+    case ALG_STATE()  then "ALG_STATE"
+    case DAE_RESIDUAL_VAR() then "DAE_RESIDUAL_VAR"
+    else "#UNKNOWN_VARKIND"
+  end match
+end variabilityString;
+
 template getAliasVar(AliasVariable aliasvar)
  "Returns the alias Attribute of ScalarVariable."
 ::=
@@ -198,11 +232,11 @@ template ScalarVariableType(String unit, String displayUnit, Option<DAE.Exp> min
  "Generates code for ScalarVariable Type file for FMU target."
 ::=
   match type_
-    case T_INTEGER(__) then '<Integer <%ScalarVariableTypeStartAttribute(startValue, type_)%><%ScalarVariableTypeFixedAttribute(isFixed)%><%ScalarVariableTypeIntegerMinAttribute(minValue)%><%ScalarVariableTypeIntegerMaxAttribute(maxValue)%><%ScalarVariableTypeUnitAttribute(unit)%><%ScalarVariableTypeDisplayUnitAttribute(displayUnit)%> />'
-    case T_REAL(__) then '<Real <%ScalarVariableTypeStartAttribute(startValue, type_)%><%ScalarVariableTypeFixedAttribute(isFixed)%><%ScalarVariableTypeNominalAttribute(nominalValue)%><%ScalarVariableTypeRealMinAttribute(minValue)%><%ScalarVariableTypeRealMaxAttribute(maxValue)%><%ScalarVariableTypeUnitAttribute(unit)%><%ScalarVariableTypeDisplayUnitAttribute(displayUnit)%> />'
-    case T_BOOL(__) then '<Boolean <%ScalarVariableTypeStartAttribute(startValue, type_)%><%ScalarVariableTypeFixedAttribute(isFixed)%><%ScalarVariableTypeUnitAttribute(unit)%><%ScalarVariableTypeDisplayUnitAttribute(displayUnit)%> />'
-    case T_STRING(__) then '<String <%ScalarVariableTypeStartAttribute(startValue, type_)%><%ScalarVariableTypeFixedAttribute(isFixed)%><%ScalarVariableTypeUnitAttribute(unit)%><%ScalarVariableTypeDisplayUnitAttribute(displayUnit)%> />'
-    case T_ENUMERATION(__) then '<Integer <%ScalarVariableTypeStartAttribute(startValue, type_)%><%ScalarVariableTypeFixedAttribute(isFixed)%><%ScalarVariableTypeUnitAttribute(unit)%><%ScalarVariableTypeDisplayUnitAttribute(displayUnit)%> />'
+    case T_INTEGER(__) then '<Integer<%ScalarVariableTypeStartAttribute(startValue, type_)%><%ScalarVariableTypeFixedAttribute(isFixed)%><%ScalarVariableTypeIntegerMinAttribute(minValue)%><%ScalarVariableTypeIntegerMaxAttribute(maxValue)%><%ScalarVariableTypeUnitAttribute(unit)%><%ScalarVariableTypeDisplayUnitAttribute(displayUnit)%> />'
+    case T_REAL(__) then '<Real<%ScalarVariableTypeStartAttribute(startValue, type_)%><%ScalarVariableTypeFixedAttribute(isFixed)%><%ScalarVariableTypeNominalAttribute(nominalValue)%><%ScalarVariableTypeRealMinAttribute(minValue)%><%ScalarVariableTypeRealMaxAttribute(maxValue)%><%ScalarVariableTypeUnitAttribute(unit)%><%ScalarVariableTypeDisplayUnitAttribute(displayUnit)%> />'
+    case T_BOOL(__) then '<Boolean<%ScalarVariableTypeStartAttribute(startValue, type_)%><%ScalarVariableTypeFixedAttribute(isFixed)%><%ScalarVariableTypeUnitAttribute(unit)%><%ScalarVariableTypeDisplayUnitAttribute(displayUnit)%> />'
+    case T_STRING(__) then '<String<%ScalarVariableTypeStartAttribute(startValue, type_)%><%ScalarVariableTypeFixedAttribute(isFixed)%><%ScalarVariableTypeUnitAttribute(unit)%><%ScalarVariableTypeDisplayUnitAttribute(displayUnit)%> />'
+    case T_ENUMERATION(__) then '<Integer<%ScalarVariableTypeStartAttribute(startValue, type_)%><%ScalarVariableTypeFixedAttribute(isFixed)%><%ScalarVariableTypeUnitAttribute(unit)%><%ScalarVariableTypeDisplayUnitAttribute(displayUnit)%> />'
     case T_COMPLEX(complexClassType = ci as ClassInf.EXTERNAL_OBJ(__)) then '<ExternalObject path="<%escapeModelicaStringToXmlString(dotPath(ci.path))%>" />'
     else error(sourceInfo(), 'ScalarVariableType: <%unparseType(type_)%>')
 end ScalarVariableType;
@@ -222,8 +256,8 @@ template ScalarVariableTypeStartAttribute(Option<DAE.Exp> startValue, DAE.Type t
  "generates code for start attribute"
 ::=
   match startValue
-    case SOME(exp) then 'useStart="true"<%StartString(exp)%>'
-    case NONE() then 'useStart="false"'
+    case SOME(exp) then '<%StartString(exp)%>'
+    else ''
 end ScalarVariableTypeStartAttribute;
 
 template ScalarVariableTypeFixedAttribute(Boolean isFixed)
@@ -316,160 +350,6 @@ template ScalarVariableTypeRealMaxAttribute(Option<DAE.Exp> maxValue)
     case SOME(exp) then '<%MaxString(exp)%>'
     // case NONE() then ' max="1.7976931348623157E+308"'
 end ScalarVariableTypeRealMaxAttribute;
-
-
-
-/********* Equation Dumps *****************************/
-
-template equationIndex(SimEqSystem eq)
- "Generates an equation."
-::=
-  match eq
-  case SES_RESIDUAL(__)
-  case SES_SIMPLE_ASSIGN(__)
-  case SES_ARRAY_CALL_ASSIGN(__)
-  case SES_IFEQUATION(__)
-  case SES_ALGORITHM(__)
-    then index
-  case SES_INVERSE_ALGORITHM(__)
-    then index
-  case SES_LINEAR(lSystem=ls as LINEARSYSTEM(__))
-    then ls.index
-  case SES_NONLINEAR(nlSystem=nls as NONLINEARSYSTEM(__))
-    then nls.index
-  case SES_MIXED(__)
-  case SES_WHEN(__)
-  case SES_FOR_LOOP(__)
-    then index
-end equationIndex;
-
-template dumpEqs(list<SimEqSystem> eqs)
-::= eqs |> eq hasindex i0 =>
-  match eq
-    case e as SES_RESIDUAL(__) then
-      <<
-      equation index: <%equationIndex(eq)%>
-      type: RESIDUAL
-
-      <%escapeCComments(printExpStr(e.exp))%>
-      >>
-    case e as SES_SIMPLE_ASSIGN(__) then
-      <<
-      equation index: <%equationIndex(eq)%>
-      type: SIMPLE_ASSIGN
-      <%crefStr(e.cref)%> = <%escapeCComments(printExpStr(e.exp))%>
-      >>
-    case e as SES_ARRAY_CALL_ASSIGN(lhs=lhs as CREF(__)) then
-      <<
-      equation index: <%equationIndex(eq)%>
-      type: ARRAY_CALL_ASSIGN
-
-      <%crefStr(lhs.componentRef)%> = <%escapeCComments(printExpStr(e.exp))%>
-      >>
-    case e as SES_ALGORITHM(statements={}) then
-      <<
-      empty algorithm
-      >>
-    case e as SES_ALGORITHM(statements=first::_) then
-      <<
-      equation index: <%equationIndex(eq)%>
-      type: ALGORITHM
-
-      <%e.statements |> stmt => escapeCComments(ppStmtStr(stmt,2))%>
-      >>
-    case e as SES_INVERSE_ALGORITHM(statements=first::_) then
-      <<
-      equation index: <%equationIndex(eq)%>
-      type: INVERSE ALGORITHM
-
-      <%e.statements |> stmt => escapeCComments(ppStmtStr(stmt,2))%>
-      >>
-    case e as SES_LINEAR(lSystem=ls as LINEARSYSTEM(__)) then
-      <<
-      equation index: <%equationIndex(eq)%>
-      type: LINEAR
-
-      <%ls.vars |> SIMVAR(name=cr) => '<var><%crefStr(cr)%></var>' ; separator = "\n" %>
-      <row>
-        <%ls.beqs |> exp => '<cell><%escapeCComments(printExpStr(exp))%></cell>' ; separator = "\n" %><%\n%>
-      </row>
-      <matrix>
-        <%ls.simJac |> (i1,i2,eq) =>
-        <<
-        <cell row="<%i1%>" col="<%i2%>">
-          <%match eq case e as SES_RESIDUAL(__) then
-            <<
-            <residual><%escapeCComments(printExpStr(e.exp))%></residual>
-            >>
-           %>
-        </cell>
-        >>
-        %>
-      </matrix>
-      >>
-    case e as SES_NONLINEAR(nlSystem=nls as NONLINEARSYSTEM(__)) then
-      <<
-      equation index: <%equationIndex(eq)%>
-      indexNonlinear: <%nls.indexNonLinearSystem%>
-      type: NONLINEAR
-
-      vars: {<%nls.crefs |> cr => '<%crefStr(cr)%>' ; separator = ", "%>}
-      eqns: {<%nls.eqs |> eq => '<%equationIndex(eq)%>' ; separator = ", "%>}
-      >>
-    case e as SES_MIXED(__) then
-      <<
-      equation index: <%equationIndex(eq)%>
-      type: MIXED
-
-      <%dumpEqs(fill(e.cont,1))%>
-      <%dumpEqs(e.discEqs)%><%\n%>
-
-      <mixed>
-        <continuous index="<%equationIndex(e.cont)%>" />
-        <%e.discVars |> SIMVAR(name=cr) => '<var><%crefStr(cr)%></var>' ; separator = ","%>
-        <%e.discEqs |> eq => '<discrete index="<%equationIndex(eq)%>" />'%>
-      </mixed>
-      >>
-    case e as SES_WHEN(__) then
-      <<
-      equation index: <%equationIndex(eq)%>
-      type: WHEN
-
-      when {<%conditions |> cond => '<%crefStr(cond)%>' ; separator=", " %>} then
-        <%crefStr(e.left)%> = <%escapeCComments(printExpStr(e.right))%>;
-      end when;
-      >>
-    case e as SES_IFEQUATION(__) then
-      let branches = ifbranches |> (_,eqs) => dumpEqs(eqs)
-      let elsebr = dumpEqs(elsebranch)
-      <<
-      equation index: <%equationIndex(eq)%>
-      type: IFEQUATION
-
-      <%branches%>
-      <%elsebr%>
-      >>
-    case e as SES_FOR_LOOP(__) then
-      let &forstatement = buffer ""
-      let &forstatement += 'for(size_t ' + escapeCComments(printExpStr(e.iter)) + ' = ' + escapeCComments(printExpStr(e.startIt)) + '; '
-      let &forstatement += escapeCComments(printExpStr(e.iter)) + ' != ' + escapeCComments(printExpStr(e.endIt)) + '+1; '
-      let &forstatement += escapeCComments(printExpStr(e.iter)) + '++) {<%\n%>'
-      let &forstatement += '  <%crefStr(e.cref)%> = <%escapeCComments(printExpStr(e.exp))%><%\n%>'
-      let &forstatement += '}'
-      <<
-      equation index: <%equationIndex(e)%>
-      type: FOR_LOOP
-      <%forstatement%>
-      >>
-    else
-      <<
-      unknown equation
-      >>
-end dumpEqs;
-
-
-/************************************************************************************************/
-
 
 
 /*********************************************************************

@@ -43,16 +43,11 @@
 #include "fmi2Functions.h"
 #include "FMU2GlobalSettings.h"
 
-// build MODEL_CLASS from MODEL_IDENTIFIER
-#define FMU2_PASTER(a, b) a ## b
-#define FMU2_CONCAT(a, b) FMU2_PASTER(a, b)
-#define MODEL_CLASS FMU2_CONCAT(MODEL_IDENTIFIER_SHORT, FMU)
-
 // define logger as macro that passes through variadic args
 #define FMU2_LOG(w, status, category, ...) \
-  if ((w)->logCategories & (1 << (category))) \
-    (w)->logger((w)->componentEnvironment, (w)->instanceName, \
-                status, (w)->LogCategoryFMUName(category), __VA_ARGS__)
+  if ((w)->logCategories() & (1 << (category))) \
+    (w)->callbackLogger((w)->componentEnvironment(), (w)->instanceName(), \
+                        status, (w)->LogCategoryFMUName(category), __VA_ARGS__)
 
 enum LogCategoryFMU {
   logEvents = 0,
@@ -67,6 +62,27 @@ enum LogCategoryFMU {
   logFmi2Call
 };
 
+class FMU2Wrapper;
+
+/**
+ * Forward Logger messages to FMI callback function
+ */
+class FMU2Logger: public Logger
+{
+ public:
+  static void initialize(FMU2Wrapper *wrapper, LogSettings &logSettings, bool enabled);
+
+ protected:
+  FMU2Logger(FMU2Wrapper *wrapper, LogSettings &logSettings, bool enabled);
+
+  virtual void writeInternal(string msg, LogCategory cat, LogLevel lvl,
+                             LogStructure ls);
+  FMU2Wrapper *_wrapper;
+};
+
+/**
+ * Wrap a model and a logger for FMI2
+ */
 class FMU2Wrapper
 {
  public:
@@ -79,10 +95,16 @@ class FMU2Wrapper
   virtual fmi2Status setDebugLogging(fmi2Boolean loggingOn,
                                      size_t nCategories,
                                      const fmi2String categories[]);
-  const unsigned int &logCategories;
-  const fmi2CallbackLogger &logger;
-  const fmi2ComponentEnvironment &componentEnvironment;
-  const fmi2String &instanceName;
+  const fmi2CallbackLogger &callbackLogger;
+  unsigned int logCategories() {
+    return _logCategories;
+  }
+  fmi2ComponentEnvironment componentEnvironment() {
+    return _functions.componentEnvironment;
+  }
+  fmi2String instanceName() {
+    return _instanceName.c_str();
+  }
   static fmi2String LogCategoryFMUName(LogCategoryFMU);
 
   // Enter and exit initialization mode, terminate and reset
@@ -105,6 +127,10 @@ class FMU2Wrapper
                                 fmi2Boolean value[]);
   virtual fmi2Status getString (const fmi2ValueReference vr[], size_t nvr,
                                 fmi2String  value[]);
+  virtual fmi2Status getClock  (const fmi2Integer clockIndex[],
+                                size_t nClockIndex, fmi2Boolean tick[]);
+  virtual fmi2Status getInterval(const fmi2Integer clockIndex[],
+                                 size_t nClockIndex, fmi2Real interval[]);
 
   virtual fmi2Status setReal   (const fmi2ValueReference vr[], size_t nvr,
                                 const fmi2Real    value[]);
@@ -114,6 +140,11 @@ class FMU2Wrapper
                                 const fmi2Boolean value[]);
   virtual fmi2Status setString (const fmi2ValueReference vr[], size_t nvr,
                                 const fmi2String  value[]);
+  virtual fmi2Status setClock  (const fmi2Integer clockIndex[],
+                                size_t nClockIndex, const fmi2Boolean tick[],
+                                const fmi2Boolean *subactive);
+  virtual fmi2Status setInterval(const fmi2Integer clockIndex[],
+                                 size_t nClockIndex, const fmi2Real interval[]);
 
   // Enter and exit the different modes for Model Exchange
   virtual fmi2Status newDiscreteStates      (fmi2EventInfo *eventInfo);
@@ -133,8 +164,12 @@ class FMU2Wrapper
 
  private:
   FMU2GlobalSettings _global_settings;
-  boost::shared_ptr<MODEL_CLASS> _model;
+  Logger *_logger;
+  MODEL_CLASS *_model;
   std::vector<string> _string_buffer;
+  bool *_clockTick;
+  bool *_clockSubactive;
+  int _nclockTick;
   double _need_update;
   void updateModel();
 
@@ -149,9 +184,10 @@ class FMU2Wrapper
   } ModelState;
 
   unsigned int _logCategories;
-  fmi2String _instanceName;
-  fmi2String _GUID;
+  string _instanceName;
+  string _GUID;
   fmi2CallbackFunctions _functions;
   ModelState _state;
 };
+
 /** @} */ // end of fmu2

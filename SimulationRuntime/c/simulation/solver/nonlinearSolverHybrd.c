@@ -39,11 +39,11 @@ extern "C" {
 #include <stdlib.h>
 #include <string.h> /* memcpy */
 
-#include "simulation/simulation_info_xml.h"
+#include "simulation/simulation_info_json.h"
 #include "util/omc_error.h"
 #include "util/varinfo.h"
 #include "model_help.h"
-#include "util/memory_pool.h"
+#include "gc/omc_gc.h"
 #include "meta/meta_modelica.h"
 
 #include "nonlinearSystem.h"
@@ -52,6 +52,7 @@ extern double enorm_(integer *n, double *x);
 
 struct dataAndSys {
   DATA* data;
+  threadData_t *threadData;
   int sysNumber;
 };
 
@@ -179,7 +180,7 @@ static void printStatus(DATA *data, DATA_HYBRD *solverData, int eqSystemNumber, 
   for(i=0; i<solverData->n; i++)
     infoStreamPrint(logLevel, 0, "[%ld] %s  = %.20e\n - scaling factor internal = %.16e\n"
                     " - scaling factor external = %.16e", i+1,
-                    modelInfoGetEquation(&data->modelData.modelDataXml,eqSystemNumber).vars[i],
+                    modelInfoGetEquation(&data->modelData->modelDataXml,eqSystemNumber).vars[i],
                     solverData->x[i], solverData->diag[i], solverData->xScalefactors[i]);
   messageClose(logLevel);
 
@@ -211,7 +212,7 @@ static void printStatus(DATA *data, DATA_HYBRD *solverData, int eqSystemNumber, 
 static int getNumericalJacobian(struct dataAndSys* dataAndSysNum, double* jac, const double* x, double* f)
 {
   struct dataAndSys *dataSys = (struct dataAndSys*) dataAndSysNum;
-  NONLINEAR_SYSTEM_DATA* systemData = &(dataSys->data->simulationInfo.nonlinearSystemData[dataSys->sysNumber]);
+  NONLINEAR_SYSTEM_DATA* systemData = &(dataSys->data->simulationInfo->nonlinearSystemData[dataSys->sysNumber]);
   DATA_HYBRD* solverData = (DATA_HYBRD*)(systemData->solverData);
 
   double delta_h = sqrt(solverData->epsfcn);
@@ -230,7 +231,7 @@ static int getNumericalJacobian(struct dataAndSys* dataAndSysNum, double* jac, c
     deltaInv = 1. / delta_hh;
     solverData->xSave[i] = x[i] + delta_hh;
 
-    infoStreamPrint(LOG_NLS_JAC, 0, "%d. %s = %f (delta_hh = %f)", i+1, modelInfoGetEquation(&dataSys->data->modelData.modelDataXml,systemData->equationIndex).vars[i], solverData->xSave[i], delta_hh);
+    infoStreamPrint(LOG_NLS_JAC, 0, "%d. %s = %f (delta_hh = %f)", i+1, modelInfoGetEquation(&dataSys->data->modelData->modelDataXml,systemData->equationIndex).vars[i], solverData->xSave[i], delta_hh);
     wrapper_fvec_hybrj(&solverData->n, (const double*) solverData->xSave, solverData->fvecSave, solverData->fjacobian, &solverData->ldfjac, &iflag, dataSys);
 
     for(j = 0; j < solverData->n; ++j)
@@ -258,41 +259,39 @@ static int getAnalyticalJacobian(struct dataAndSys* dataSys, double* jac)
 {
   int i, j, k, l, ii;
   DATA *data = (dataSys->data);
-  NONLINEAR_SYSTEM_DATA* systemData = &(data->simulationInfo.nonlinearSystemData[dataSys->sysNumber]);
+  threadData_t *threadData = dataSys->threadData;
+  NONLINEAR_SYSTEM_DATA* systemData = &(data->simulationInfo->nonlinearSystemData[dataSys->sysNumber]);
   DATA_HYBRD* solverData = (DATA_HYBRD*)(systemData->solverData);
   const int index = systemData->jacobianIndex;
 
   memset(jac, 0, (solverData->n)*(solverData->n)*sizeof(double));
   memset(solverData->fjacobian, 0, (solverData->n)*(solverData->n)*sizeof(double));
 
-  for(i=0; i < data->simulationInfo.analyticJacobians[index].sparsePattern.maxColors; i++)
+  for(i=0; i < data->simulationInfo->analyticJacobians[index].sparsePattern.maxColors; i++)
   {
     /* activate seed variable for the corresponding color */
-    for(ii=0; ii < data->simulationInfo.analyticJacobians[index].sizeCols; ii++)
-      if(data->simulationInfo.analyticJacobians[index].sparsePattern.colorCols[ii]-1 == i)
-        data->simulationInfo.analyticJacobians[index].seedVars[ii] = 1;
+    for(ii=0; ii < data->simulationInfo->analyticJacobians[index].sizeCols; ii++)
+      if(data->simulationInfo->analyticJacobians[index].sparsePattern.colorCols[ii]-1 == i)
+        data->simulationInfo->analyticJacobians[index].seedVars[ii] = 1;
 
-    ((systemData->analyticalJacobianColumn))(data);
+    ((systemData->analyticalJacobianColumn))(data, threadData);
 
-    for(j=0; j<data->simulationInfo.analyticJacobians[index].sizeCols; j++)
+    for(j=0; j<data->simulationInfo->analyticJacobians[index].sizeCols; j++)
     {
-      if(data->simulationInfo.analyticJacobians[index].seedVars[j] == 1)
+      if(data->simulationInfo->analyticJacobians[index].seedVars[j] == 1)
       {
-        if(j==0)
-          ii = 0;
-        else
-          ii = data->simulationInfo.analyticJacobians[index].sparsePattern.leadindex[j-1];
-        while(ii < data->simulationInfo.analyticJacobians[index].sparsePattern.leadindex[j])
+        ii = data->simulationInfo->analyticJacobians[index].sparsePattern.leadindex[j];
+        while(ii < data->simulationInfo->analyticJacobians[index].sparsePattern.leadindex[j+1])
         {
-          l  = data->simulationInfo.analyticJacobians[index].sparsePattern.index[ii];
-          k  = j*data->simulationInfo.analyticJacobians[index].sizeRows + l;
-          solverData->fjacobian[k] = jac[k] = data->simulationInfo.analyticJacobians[index].resultVars[l];
+          l  = data->simulationInfo->analyticJacobians[index].sparsePattern.index[ii];
+          k  = j*data->simulationInfo->analyticJacobians[index].sizeRows + l;
+          solverData->fjacobian[k] = jac[k] = data->simulationInfo->analyticJacobians[index].resultVars[l];
           ii++;
         };
       }
       /* de-activate seed variable for the corresponding color */
-      if(data->simulationInfo.analyticJacobians[index].sparsePattern.colorCols[j]-1 == i)
-        data->simulationInfo.analyticJacobians[index].seedVars[j] = 0;
+      if(data->simulationInfo->analyticJacobians[index].sparsePattern.colorCols[j]-1 == i)
+        data->simulationInfo->analyticJacobians[index].seedVars[j] = 0;
     }
 
   }
@@ -310,9 +309,10 @@ static int wrapper_fvec_hybrj(const integer* n, const double* x, double* f, doub
   int i,j;
   struct dataAndSys *dataSys = (struct dataAndSys*) dataAndSysNum;
   DATA *data = (dataSys->data);
-  NONLINEAR_SYSTEM_DATA* systemData = &(data->simulationInfo.nonlinearSystemData[dataSys->sysNumber]);
+  void *dataAndThreadData[2] = {data, dataSys->threadData};
+  NONLINEAR_SYSTEM_DATA* systemData = &(data->simulationInfo->nonlinearSystemData[dataSys->sysNumber]);
   DATA_HYBRD* solverData = (DATA_HYBRD*)(systemData->solverData);
-  int continuous = data->simulationInfo.solveContinuous;
+  int continuous = data->simulationInfo->solveContinuous;
 
   switch(*iflag)
   {
@@ -331,9 +331,9 @@ static int wrapper_fvec_hybrj(const integer* n, const double* x, double* f, doub
 
     /* call residual function */
     if(solverData->useXScaling){
-      (systemData->residualFunc)(data, (const double*) solverData->xScaled, f, (const int*)iflag);
+      (systemData->residualFunc)(dataAndThreadData, (const double*) solverData->xScaled, f, (const int*)iflag);
     } else {
-      (systemData->residualFunc)(data, x, f, (const int*)iflag);
+      (systemData->residualFunc)(dataAndThreadData, x, f, (const int*)iflag);
     }
 
     /* debug output */
@@ -347,10 +347,13 @@ static int wrapper_fvec_hybrj(const integer* n, const double* x, double* f, doub
   case 2:
     /* set residual function continuous for jacobian calculation */
     if(continuous)
-      data->simulationInfo.solveContinuous = 0;
+      data->simulationInfo->solveContinuous = 0;
 
     if(ACTIVE_STREAM(LOG_NLS_RES))
       infoStreamPrint(LOG_NLS_RES, 0, "-- begin calculating jacobian --");
+
+    /* performance measurement */
+    rt_ext_tp_tick(&systemData->jacobianTimeClock);
 
     /* call apropreated jacobian function */
     if(systemData->jacobianIndex != -1){
@@ -369,7 +372,7 @@ static int wrapper_fvec_hybrj(const integer* n, const double* x, double* f, doub
 
       if(ACTIVE_STREAM(LOG_NLS_JAC))
       {
-        char buffer[16384];
+        char *buffer = (char*)malloc(sizeof(char)*(*n)*25);
         infoStreamPrint(LOG_NLS_JAC, 1, "jacobian matrix [%dx%d]", (int)*n, (int)*n);
         for(i=0; i<*n; i++)
         {
@@ -379,15 +382,21 @@ static int wrapper_fvec_hybrj(const integer* n, const double* x, double* f, doub
           infoStreamPrint(LOG_NLS_JAC, 0, "%s", buffer);
         }
         messageClose(LOG_NLS_JAC);
+        free(buffer);
       }
     }
     /* reset residual function again */
     if(continuous)
-      data->simulationInfo.solveContinuous = 1;
+      data->simulationInfo->solveContinuous = 1;
+
+    /* performance measurement and statistics */
+    systemData->jacobianTime += rt_ext_tp_tock(&(systemData->jacobianTimeClock));
+    systemData->numberOfJEval++;
+
     break;
 
   default:
-    throwStreamPrint(data->threadData, "Well, this is embarrasing. The non-linear solver should never call this case.%d", (int)*iflag);
+    throwStreamPrint(NULL, "Well, this is embarrasing. The non-linear solver should never call this case.%d", (int)*iflag);
     break;
   }
 
@@ -401,16 +410,15 @@ static int wrapper_fvec_hybrj(const integer* n, const double* x, double* f, doub
  *
  *  \author wbraun
  */
-int solveHybrd(DATA *data, int sysNumber)
+int solveHybrd(DATA *data, threadData_t *threadData, int sysNumber)
 {
-  NONLINEAR_SYSTEM_DATA* systemData = &(data->simulationInfo.nonlinearSystemData[sysNumber]);
+  NONLINEAR_SYSTEM_DATA* systemData = &(data->simulationInfo->nonlinearSystemData[sysNumber]);
   DATA_HYBRD* solverData = (DATA_HYBRD*)systemData->solverData;
   /*
    * We are given the number of the non-linear system.
    * We want to look it up among all equations.
    */
   int eqSystemNumber = systemData->equationIndex;
-  threadData_t *threadData = data->threadData;
 
   int i, j;
   integer iflag = 1;
@@ -432,19 +440,19 @@ int solveHybrd(DATA *data, int sysNumber)
 
   modelica_boolean* relationsPreBackup;
 
-  struct dataAndSys dataAndSysNumber = {data, sysNumber};
+  struct dataAndSys dataAndSysNumber = {data, threadData, sysNumber};
 
-  relationsPreBackup = (modelica_boolean*) malloc(data->modelData.nRelations*sizeof(modelica_boolean));
+  relationsPreBackup = (modelica_boolean*) malloc(data->modelData->nRelations*sizeof(modelica_boolean));
 
   solverData->numberOfFunctionEvaluations = 0;
   /* debug output */
   if(ACTIVE_STREAM(LOG_NLS_V))
   {
     int indexes[2] = {1,eqSystemNumber};
-    infoStreamPrintWithEquationIndexes(LOG_NLS_V, 1, indexes, "start solving non-linear system >>%d<< at time %g", eqSystemNumber, data->localData[0]->timeValue);
+    infoStreamPrintWithEquationIndexes(LOG_NLS_V, 1, indexes, "Start solving non-linear system >>%d<< using Hybrd solver at time %g", eqSystemNumber, data->localData[0]->timeValue);
     for(i=0; i<solverData->n; i++)
     {
-      infoStreamPrint(LOG_NLS_V, 1, "%d. %s = %f", i+1, modelInfoGetEquation(&data->modelData.modelDataXml,eqSystemNumber).vars[i], systemData->nlsx[i]);
+      infoStreamPrint(LOG_NLS_V, 1, "%d. %s = %f", i+1, modelInfoGetEquation(&data->modelData->modelDataXml,eqSystemNumber).vars[i], systemData->nlsx[i]);
       infoStreamPrint(LOG_NLS_V, 0, "    nominal = %f\nold = %f\nextrapolated = %f",
           systemData->nominal[i], systemData->nlsxOld[i], systemData->nlsxExtrapolation[i]);
       messageClose(LOG_NLS_V);
@@ -453,7 +461,7 @@ int solveHybrd(DATA *data, int sysNumber)
   }
 
   /* set x vector */
-  if(data->simulationInfo.discreteCall)
+  if(data->simulationInfo->discreteCall)
     memcpy(solverData->x, systemData->nlsx, solverData->n*(sizeof(double)));
   else
     memcpy(solverData->x, systemData->nlsxExtrapolation, solverData->n*(sizeof(double)));
@@ -490,9 +498,9 @@ int solveHybrd(DATA *data, int sysNumber)
     /* set residual function continuous
      */
     if(continuous) {
-      ((DATA*)data)->simulationInfo.solveContinuous = 1;
+      ((DATA*)data)->simulationInfo->solveContinuous = 1;
     } else {
-      ((DATA*)data)->simulationInfo.solveContinuous = 0;
+      ((DATA*)data)->simulationInfo->solveContinuous = 0;
     }
 
     giveUp = 1;
@@ -535,7 +543,7 @@ int solveHybrd(DATA *data, int sysNumber)
         {
           if (ACTIVE_WARNING_STREAM(LOG_STDOUT))
           {
-            if(data->simulationInfo.initial)
+            if(data->simulationInfo->initial)
               warningStreamPrint(LOG_STDOUT, 1, "While solving non-linear system an assertion failed during initialization.");
             else
               warningStreamPrint(LOG_STDOUT, 1, "While solving non-linear system an assertion failed at time %g.", data->localData[0]->timeValue);
@@ -558,11 +566,11 @@ int solveHybrd(DATA *data, int sysNumber)
     /* set residual function continuous */
     if(continuous)
     {
-      ((DATA*)data)->simulationInfo.solveContinuous = 0;
+      ((DATA*)data)->simulationInfo->solveContinuous = 0;
     }
     else
     {
-      ((DATA*)data)->simulationInfo.solveContinuous = 1;
+      ((DATA*)data)->simulationInfo->solveContinuous = 1;
     }
 
     /* re-scaling x vector */
@@ -572,20 +580,20 @@ int solveHybrd(DATA *data, int sysNumber)
 
     /* check for proper inputs */
     if(solverData->info == 0) {
-      printErrorEqSyst(IMPROPER_INPUT, modelInfoGetEquation(&data->modelData.modelDataXml, eqSystemNumber),
+      printErrorEqSyst(IMPROPER_INPUT, modelInfoGetEquation(&data->modelData->modelDataXml, eqSystemNumber),
           data->localData[0]->timeValue);
     }
 
     if(solverData->info != -1)
     {
       /* evaluate with discontinuities */
-      if(data->simulationInfo.discreteCall){
+      if(data->simulationInfo->discreteCall){
         int scaling = solverData->useXScaling;
         int success = 0;
         if(scaling)
           solverData->useXScaling = 0;
 
-        ((DATA*)data)->simulationInfo.solveContinuous = 0;
+        ((DATA*)data)->simulationInfo->solveContinuous = 0;
 
         /* try */
 #ifndef OMC_EMCC
@@ -644,7 +652,7 @@ int solveHybrd(DATA *data, int sysNumber)
         /* debug output */
         if(ACTIVE_STREAM(LOG_NLS_JAC))
         {
-          char buffer[4096];
+          char *buffer = (char*)malloc(sizeof(char)*solverData->n*15);
 
           infoStreamPrint(LOG_NLS_JAC, 1, "jacobian matrix [%dx%d]", (int)solverData->n, (int)solverData->n);
           for(i=0; i<solverData->n; i++)
@@ -655,6 +663,7 @@ int solveHybrd(DATA *data, int sysNumber)
             infoStreamPrint(LOG_NLS_JAC, 0, "%s", buffer);
           }
           messageClose(LOG_NLS_JAC);
+          free(buffer);
         }
 
         /* check for error  */
@@ -666,7 +675,7 @@ int solveHybrd(DATA *data, int sysNumber)
     /* reset non-contunuousCase */
     if(nonContinuousCase && xerror > local_tol && xerror_scaled > local_tol)
     {
-      memcpy(data->simulationInfo.relationsPre, relationsPreBackup, sizeof(modelica_boolean)*data->modelData.nRelations);
+      memcpy(data->simulationInfo->relationsPre, relationsPreBackup, sizeof(modelica_boolean)*data->modelData->nRelations);
       nonContinuousCase = 0;
     }
 
@@ -687,7 +696,7 @@ int solveHybrd(DATA *data, int sysNumber)
         infoStreamPrintWithEquationIndexes(LOG_NLS, 1, indexes, "solution for NLS %d at t=%g", eqSystemNumber, data->localData[0]->timeValue);
         for(i=0; i<solverData->n; ++i)
         {
-          infoStreamPrint(LOG_NLS, 0, "[%d] %s = %g", i+1, modelInfoGetEquation(&data->modelData.modelDataXml,eqSystemNumber).vars[i],  solverData->x[i]);
+          infoStreamPrint(LOG_NLS, 0, "[%d] %s = %g", i+1, modelInfoGetEquation(&data->modelData->modelDataXml,eqSystemNumber).vars[i],  solverData->x[i]);
         }
         messageClose(LOG_NLS);
       }else if (ACTIVE_STREAM(LOG_NLS_V)){
@@ -770,7 +779,7 @@ int solveHybrd(DATA *data, int sysNumber)
       /* first try to decrease factor */
 
       /* set x vector */
-      if(data->simulationInfo.discreteCall)
+      if(data->simulationInfo->discreteCall)
         memcpy(solverData->x, systemData->nlsx, solverData->n*(sizeof(double)));
       else
         memcpy(solverData->x, systemData->nlsxExtrapolation, solverData->n*(sizeof(double)));
@@ -809,7 +818,7 @@ int solveHybrd(DATA *data, int sysNumber)
       /* try old values as x-Scaling factors */
 
       /* set x vector */
-      if(data->simulationInfo.discreteCall)
+      if(data->simulationInfo->discreteCall)
         memcpy(solverData->x, systemData->nlsx, solverData->n*(sizeof(double)));
       else
         memcpy(solverData->x, systemData->nlsxExtrapolation, solverData->n*(sizeof(double)));
@@ -833,7 +842,7 @@ int solveHybrd(DATA *data, int sysNumber)
       /* try to disable x-Scaling */
 
       /* set x vector */
-      if(data->simulationInfo.discreteCall)
+      if(data->simulationInfo->discreteCall)
         memcpy(solverData->x, systemData->nlsx, solverData->n*(sizeof(double)));
       else
         memcpy(solverData->x, systemData->nlsxExtrapolation, solverData->n*(sizeof(double)));
@@ -856,7 +865,7 @@ int solveHybrd(DATA *data, int sysNumber)
         printStatus(data, solverData, eqSystemNumber, &nfunc_evals, &xerror, &xerror_scaled, LOG_NLS_V);
       }
     }
-    else if((solverData->info == 4 || solverData->info == 5) && retries < 7  && data->simulationInfo.discreteCall)
+    else if((solverData->info == 4 || solverData->info == 5) && retries < 7  && data->simulationInfo->discreteCall)
     {
       /* try to solve non-continuous
        * work-a-round: since other wise some model does
@@ -870,7 +879,7 @@ int solveHybrd(DATA *data, int sysNumber)
       continuous = 0;
 
       nonContinuousCase = 1;
-      memcpy(relationsPreBackup, data->simulationInfo.relationsPre, sizeof(modelica_boolean)*data->modelData.nRelations);
+      memcpy(relationsPreBackup, data->simulationInfo->relationsPre, sizeof(modelica_boolean)*data->modelData->nRelations);
 
       giveUp = 0;
       nfunc_evals += solverData->nfev;
@@ -902,7 +911,7 @@ int solveHybrd(DATA *data, int sysNumber)
     /* try to vary the initial values */
     } else if((solverData->info == 4 || solverData->info == 5) && retries2 < 2) {
       /* set x vector */
-      if(data->simulationInfo.discreteCall)
+      if(data->simulationInfo->discreteCall)
         memcpy(solverData->x, systemData->nlsx, solverData->n*(sizeof(double)));
       else
         memcpy(solverData->x, systemData->nlsxExtrapolation, solverData->n*(sizeof(double)));
@@ -922,7 +931,7 @@ int solveHybrd(DATA *data, int sysNumber)
     /* try to vary the initial values */
     } else if((solverData->info == 4 || solverData->info == 5) && retries2 < 3) {
       /* set x vector */
-      if(data->simulationInfo.discreteCall)
+      if(data->simulationInfo->discreteCall)
         memcpy(solverData->x, systemData->nlsx, solverData->n*(sizeof(double)));
       else
         memcpy(solverData->x, systemData->nlsxExtrapolation, solverData->n*(sizeof(double)));
@@ -953,7 +962,7 @@ int solveHybrd(DATA *data, int sysNumber)
     /* try own scaling factors */
     } else if((solverData->info == 4 || solverData->info == 5) && retries2 < 5 && !assertCalled) {
       /* set x vector */
-      if(data->simulationInfo.discreteCall)
+      if(data->simulationInfo->discreteCall)
         memcpy(solverData->x, systemData->nlsx, solverData->n*(sizeof(double)));
       else
         memcpy(solverData->x, systemData->nlsxExtrapolation, solverData->n*(sizeof(double)));
@@ -975,7 +984,7 @@ int solveHybrd(DATA *data, int sysNumber)
     /* try without internal scaling */
     } else if((solverData->info == 4 || solverData->info == 5) && retries3 < 1) {
       /* set x vector */
-      if(data->simulationInfo.discreteCall)
+      if(data->simulationInfo->discreteCall)
         memcpy(solverData->x, systemData->nlsx, solverData->n*(sizeof(double)));
       else
         memcpy(solverData->x, systemData->nlsxExtrapolation, solverData->n*(sizeof(double)));
@@ -997,7 +1006,7 @@ int solveHybrd(DATA *data, int sysNumber)
     /* try to reduce the tolerance a bit */
     } else if((solverData->info == 4 || solverData->info == 5) && retries3 < 6) {
       /* set x vector */
-      if(data->simulationInfo.discreteCall)
+      if(data->simulationInfo->discreteCall)
         memcpy(solverData->x, systemData->nlsx, solverData->n*(sizeof(double)));
       else
         memcpy(solverData->x, systemData->nlsxExtrapolation, solverData->n*(sizeof(double)));
@@ -1021,8 +1030,8 @@ int solveHybrd(DATA *data, int sysNumber)
     } else if(solverData->info >= 2 && solverData->info <= 5) {
 
       /* while the initialization it's ok to every time a solution */
-      if(!data->simulationInfo.initial){
-        printErrorEqSyst(ERROR_AT_TIME, modelInfoGetEquation(&data->modelData.modelDataXml, eqSystemNumber), data->localData[0]->timeValue);
+      if(!data->simulationInfo->initial){
+        printErrorEqSyst(ERROR_AT_TIME, modelInfoGetEquation(&data->modelData->modelDataXml, eqSystemNumber), data->localData[0]->timeValue);
       }
       if (ACTIVE_STREAM(LOG_NLS)) {
         infoStreamPrint(LOG_NLS, 0, "### No Solution! ###\n after %d restarts", retries*retries2*retries3);

@@ -34,7 +34,6 @@ encapsulated package Constants
   package:     Constants
   description: definition of a set of constants
 
-  RCS: $Id$
 
   Constants defined in here (Constants.mo) are used in Interactive.mo"
 
@@ -424,9 +423,14 @@ record Dialog
 end Dialog;
 
 record Selector
-  parameter String filter=\"\";
-  parameter String caption=\"\";
+  parameter String filter;
+  parameter String caption;
 end Selector;
+
+record choices
+  Boolean checkBox = false;
+  Boolean __Dymola_checkBox = false;
+end choices;
 
 //
 // connector Frame \"Frame of a mechanical system\"

@@ -33,12 +33,15 @@ extern "C" {
 #endif
 
 #include "systemimpl.h"
+#include "is_utf8.h"
 
 /*
  * Common includes
  */
 #if !defined(_MSC_VER)
 #include <libgen.h>
+#include <dirent.h>
+#include <unistd.h>
 #endif
 
 #include "meta_modelica.h"
@@ -52,8 +55,6 @@ extern "C" {
 #include <sys/types.h>
 #include <time.h>
 #include <math.h>
-#include <dirent.h>
-#include <unistd.h>
 
 #include "rtclock.h"
 #include "omc_config.h"
@@ -76,6 +77,7 @@ typedef void* iconv_t;
 
 
 #if defined(__MINGW32__) || defined(_MSC_VER)
+#include <rpc.h>
 #define getFunctionPointerFromDLL  GetProcAddress
 #define FreeLibraryFromHandle !FreeLibrary
 
@@ -106,7 +108,9 @@ typedef void* iconv_t;
 #include <sys/types.h>
 #if defined(_MSC_VER)
   #include <win32_dirent.h>
+  #if !defined(PATH_MAX)
   #define PATH_MAX MAX_PATH
+  #endif
 #else
   #include <dirent.h>
 #endif
@@ -230,35 +234,35 @@ static int filterString(char* buf,char* bufRes)
 
 extern int SystemImpl__setCCompiler(const char *str)
 {
-  cc = GC_strdup(str);
+  cc = omc_alloc_interface.malloc_strdup(str);
   if (cc == NULL) return -1;
   return 0;
 }
 
 extern int SystemImpl__setCXXCompiler(const char *str)
 {
-  cxx = GC_strdup(str);
+  cxx = omc_alloc_interface.malloc_strdup(str);
   if (cxx == NULL) return -1;
   return 0;
 }
 
 extern int SystemImpl__setLinker(const char *str)
 {
-  linker = GC_strdup(str);
+  linker = omc_alloc_interface.malloc_strdup(str);
   if (linker == NULL) return -1;
   return 0;
 }
 
 extern int SystemImpl__setCFlags(const char *str)
 {
-  cflags = GC_strdup(str);
+  cflags = omc_alloc_interface.malloc_strdup(str);
   if (cflags == NULL) return -1;
   return 0;
 }
 
 extern int SystemImpl__setLDFlags(const char *str)
 {
-  ldflags = GC_strdup(str);
+  ldflags = omc_alloc_interface.malloc_strdup(str);
   if (ldflags == NULL) return -1;
   return 0;
 }
@@ -267,7 +271,6 @@ extern char* SystemImpl__pwd(void)
 {
   char buf[MAXPATHLEN];
 #if defined(__MINGW32__) || defined(_MSC_VER)
-  char* buf2,buf3;
   int i;
   LPTSTR bufPtr=buf;
   DWORD bufLen = MAXPATHLEN;
@@ -279,21 +282,19 @@ extern char* SystemImpl__pwd(void)
   for (i=0; i<MAXPATHLEN && buf[i]; i++) {
     if (buf[i] == '\\') buf[i] = '/';
   }
-  return GC_strdup(buf);
+  return omc_alloc_interface.malloc_strdup(buf);
 #else
   if (NULL == getcwd(buf,MAXPATHLEN)) {
     fprintf(stderr, "System.pwd failed\n");
     return NULL;
   }
-  return GC_strdup(buf);
+  return omc_alloc_interface.malloc_strdup(buf);
 #endif
 }
 
 extern int SystemImpl__regularFileExists(const char* str)
 {
 #if defined(_MSC_VER)
-  int ret_val;
-  void *res;
   WIN32_FIND_DATA FileData;
   HANDLE sh;
 
@@ -378,7 +379,7 @@ static char* SystemImpl__readFile(const char* filename)
       2);
     MMC_THROW();
   }
-  buf = (char*) GC_malloc_atomic(statstr.st_size+1);
+  buf = (char*) omc_alloc_interface.malloc_atomic(statstr.st_size+1);
 
   if( (res = fread(buf, sizeof(char), statstr.st_size, file)) != statstr.st_size) {
     const char *c_tokens[2]={strerror(errno),filename};
@@ -416,6 +417,9 @@ int SystemImpl__writeFile(const char* filename, const char* data)
 #endif
   FILE * file = NULL;
   int len = strlen(data); /* MMC_HDRSTRLEN(MMC_GETHDR(rmlA1)); */
+#if defined(__APPLE_CC__)||defined(__MINGW32__)||defined(__MINGW64__)
+  unlink(filename);
+#endif
   /* adrpo: 2010-09-22 open the file in BINARY mode as otherwise \r\n becomes \r\r\n! */
   file = fopen(filename,fileOpenMode);
   if (file == NULL) {
@@ -502,7 +506,7 @@ static char* SystemImpl__trim(const char* str, const char* chars_to_be_removed)
     str2 = str;
   //fprintf(stderr, "trim right '%s'\n", str2);
   length = str2 - str + 1;
-  res = (char*) GC_malloc_atomic(length+1);
+  res = (char*) omc_alloc_interface.malloc_atomic(length+1);
   strncpy(res,str,length);
   res[length] = '\0';
   return res;
@@ -523,7 +527,7 @@ void* SystemImpl__trimChar(const char* str, char char_to_be_trimmed)
     while(str[end_pos] == char_to_be_trimmed) {
       end_pos--;
     }
-    res = (char*)GC_malloc_atomic(end_pos - start_pos +2);
+    res = (char*)omc_alloc_interface.malloc_atomic(end_pos - start_pos +2);
     strncpy(res,&str[start_pos],end_pos - start_pos+1);
     res[end_pos - start_pos+1] = '\0';
     rmlRes = (void*) mmc_mk_scon(res);
@@ -550,7 +554,7 @@ int runProcess(const char* cmd)
   STARTUPINFO si;
   PROCESS_INFORMATION pi;
   char *c = "cmd /c";
-  char *command = (char *)GC_malloc_atomic(strlen(cmd) + strlen(c) + 2);
+  char *command = (char *)omc_alloc_interface.malloc_atomic(strlen(cmd) + strlen(c) + 2);
   DWORD exitCode = 1;
 
   ZeroMemory(&si, sizeof(si));
@@ -586,7 +590,7 @@ int SystemImpl__systemCall(const char* str, const char* outFile)
   fflush(NULL); /* flush output so the testsuite is deterministic */
 #if defined(__MINGW32__) || defined(_MSC_VER)
   if (*outFile) {
-    char *command = (char *)GC_malloc_atomic(strlen(str) + strlen(outFile) + 10);
+    char *command = (char *)omc_alloc_interface.malloc_atomic(strlen(str) + strlen(outFile) + 10);
     sprintf(command, "%s >> %s 2>&1", str, outFile);
     status = runProcess(command);
     GC_free((void*)command);
@@ -623,9 +627,14 @@ int SystemImpl__systemCall(const char* str, const char* outFile)
     return -1;
   } else {
 
-    if (waitpid(pID, &status, 0) == -1) {
-      const char *tokens[2] = {strerror(errno),str};
-      c_add_message(NULL,-1,ErrorType_scripting,ErrorLevel_error, gettext("system(%s) failed: %s"),tokens,2);
+    while (waitpid(pID, &status, 0) == -1) {
+      if (errno == EINTR) {
+        continue;
+      } else {
+        const char *tokens[2] = {strerror(errno),str};
+        c_add_message(NULL,-1,ErrorType_scripting,ErrorLevel_error, gettext("system(%s) failed: %s"),tokens,2);
+        break;
+      }
     }
   }
 #endif
@@ -678,7 +687,7 @@ char* System_popen(threadData_t *threadData, const char* command, int *status)
     fprintf(stderr, "System.pipe: returned\n"); fflush(NULL);
   }
 
-  char *res = GC_strdup(-1 == pclose(pipe) ? strerror(errno) : Print_getString(threadData));
+  char *res = omc_alloc_interface.malloc_strdup(-1 == pclose(pipe) ? strerror(errno) : Print_getString(threadData));
   Print_restoreBuf(threadData, handle);
 
   if (debug) {
@@ -697,13 +706,13 @@ int System_numProcessors(void)
 {
 #ifdef WITH_HWLOC
   hwloc_topology_t topology;
-  hwloc_topology_init(&topology);
-  hwloc_topology_load(topology);
-  int depth = hwloc_get_type_depth(topology, HWLOC_OBJ_CORE);
-  if(depth != HWLOC_TYPE_DEPTH_UNKNOWN) {
-    int res = hwloc_get_nbobjs_by_depth(topology, depth);
-    hwloc_topology_destroy(topology);
-    return intMax(res,1);
+  if (0==hwloc_topology_init(&topology) && 0==hwloc_topology_load(topology)) {
+    int depth = hwloc_get_type_depth(topology, HWLOC_OBJ_CORE);
+    if(depth != HWLOC_TYPE_DEPTH_UNKNOWN) {
+      int res = hwloc_get_nbobjs_by_depth(topology, depth);
+      hwloc_topology_destroy(topology);
+      return intMax(res,1);
+    }
   }
 #endif
 #if defined(__MINGW32__) || defined(_MSC_VER)
@@ -749,9 +758,9 @@ void* SystemImpl__systemCallParallel(void *lst, int numThreads)
     tmp = MMC_CDR(tmp);
   }
   if (sz == 0) return mmc_mk_nil();
-  calls = (char**) GC_malloc(sz*sizeof(char*));
+  calls = (char**) omc_alloc_interface.malloc(sz*sizeof(char*));
   assert(calls);
-  results = (int*) GC_malloc_atomic(sz*sizeof(int));
+  results = (int*) omc_alloc_interface.malloc_atomic(sz*sizeof(int));
   assert(results);
   tmp = lst;
   if (numThreads > sz) {
@@ -768,8 +777,9 @@ void* SystemImpl__systemCallParallel(void *lst, int numThreads)
     int index = 0;
     pthread_mutex_t mutex;
     struct systemCallWorkerThreadArgs args = {&mutex,&index,sz,calls,results};
+    pthread_t *th = NULL;
     pthread_mutex_init(&mutex,NULL);
-    pthread_t *th = GC_malloc(sizeof(pthread_t)*numThreads);
+    th = omc_alloc_interface.malloc(sizeof(pthread_t)*numThreads);
     /* Last element is NULL from GC_malloc */
     for (i=0; i<numThreads; i++) {
       GC_pthread_create(&th[i],NULL,systemCallWorkerThread,&args);
@@ -844,10 +854,17 @@ extern double SystemImpl__time(void)
 
 extern int SystemImpl__directoryExists(const char *str)
 {
+  /* if the string is NULL return 0 */
+  if (!str) return 0;
 #if defined(__MINGW32__) || defined(_MSC_VER)
   WIN32_FIND_DATA FileData;
   HANDLE sh;
-  sh = FindFirstFile(str, &FileData);
+  char* path = strdup(str);
+  int last = strlen(path)-1;
+  /* adrpo: RTFM! the path cannot end in a slash??!! https://msdn.microsoft.com/en-us/library/windows/desktop/aa364418(v=vs.85).aspx */
+  if (last > 0 && (path[last] == '\\' || path[last] == '/')) path[last] = '\0';
+  sh = FindFirstFile(path, &FileData);
+  free(path);
   if (sh == INVALID_HANDLE_VALUE)
     return 0;
   FindClose(sh);
@@ -921,7 +938,7 @@ static int SystemImpl__removeDirectoryItem(const char *path)
       }
 
       len = path_len + strlen(p->d_name) + 2;
-      buf = (char *)GC_malloc_atomic(len);
+      buf = (char *)omc_alloc_interface.malloc_atomic(len);
       if (buf != NULL)
       {
         struct stat statbuf;
@@ -931,7 +948,7 @@ static int SystemImpl__removeDirectoryItem(const char *path)
         {
           if (S_ISDIR(statbuf.st_mode))
           {
-            r2 = SystemImpl__removeDirectory(buf);
+            r2 = 0==SystemImpl__removeDirectory(buf);
           }
           else
           {
@@ -988,7 +1005,7 @@ extern int SystemImpl__removeDirectory(const char *path)
       if (res == NULL)
       {
         /* basepath is finally found */
-        pattern = GC_strdup(str);
+        pattern = omc_alloc_interface.malloc_strdup(str);
         break;
       }
       else
@@ -1002,7 +1019,7 @@ extern int SystemImpl__removeDirectory(const char *path)
         else
         {
           /* basepath is finally found */
-          pattern = GC_strdup(str);
+          pattern = omc_alloc_interface.malloc_strdup(str);
           sub = res;
           len_sub = strlen(sub);
           break;
@@ -1015,7 +1032,7 @@ extern int SystemImpl__removeDirectory(const char *path)
       basepath = ".";
     } else {
       size_t len = ctmp-path;
-      basepath = (char *)GC_malloc_atomic(len);
+      basepath = (char *)omc_alloc_interface.malloc_atomic(len);
       strncpy(basepath, path, len);
       basepath[len-1] = 0;
     }
@@ -1058,7 +1075,7 @@ extern int SystemImpl__removeDirectory(const char *path)
           {
             /* pre and post pattern do match */
             struct stat statbuf;
-            char * newdir = (char *)GC_malloc_atomic(len_base+len+len_sub+3);
+            char * newdir = (char *)omc_alloc_interface.malloc_atomic(len_base+len+len_sub+3);
 
             strcpy(newdir, basepath);
             strcat(newdir, "/");
@@ -1098,7 +1115,7 @@ extern int SystemImpl__removeDirectory(const char *path)
     }
   }
 
-  return retval;
+  return retval==0;
 }
 
 extern char* SystemImpl__readFileNoNumeric(const char* filename)
@@ -1121,8 +1138,8 @@ extern char* SystemImpl__readFileNoNumeric(const char* filename)
   }
 
   file = fopen(filename,"rb");
-  buf = (char*) GC_malloc_atomic(statstr.st_size+1);
-  bufRes = (char*) GC_malloc_atomic((statstr.st_size+70)*sizeof(char));
+  buf = (char*) omc_alloc_interface.malloc_atomic(statstr.st_size+1);
+  bufRes = (char*) omc_alloc_interface.malloc_atomic((statstr.st_size+70)*sizeof(char));
   if( (res = fread(buf, sizeof(char), statstr.st_size, file)) != statstr.st_size) {
     fclose(file);
     return "Failed while reading file";
@@ -1143,11 +1160,7 @@ extern double SystemImpl__getCurrentTime(void)
 
 #if !defined(__MINGW32__) && !defined(_MSC_VER)
 
-#ifdef __APPLE_CC__
-typedef struct dirent* direntry;
-#else
 typedef const struct dirent* direntry;
-#endif
 
 static int file_select_mo(direntry entry)
 {
@@ -1173,18 +1186,22 @@ static int file_select_mo(direntry entry)
 int setenv(const char* envname, const char* envvalue, int overwrite)
 {
   int res;
-  char *temp = (char*)GC_malloc_atomic(strlen(envname)+strlen(envvalue)+2);
+  char *temp = (char*)omc_alloc_interface.malloc_atomic(strlen(envname)+strlen(envvalue)+2);
   sprintf(temp,"%s=%s", envname, envvalue);
   res = _putenv(temp);
   return res;
 }
 #endif
 
+#if defined(WITH_LIBUUID)
+#include <uuid/uuid.h>
+#endif
+
 // Do not free the result
 static const char* SystemImpl__getUUIDStr(void)
 {
   static char uuidStr[37] = "8c4e810f-3df3-4a00-8276-176fa3c9f9e0";
-#if defined(USE_WIN32_UUID)
+#if defined(__MINGW32__) || defined(_MSC_VER)
   unsigned char *tmp;
   UUID uuid;
   if (UuidCreate(&uuid) == RPC_S_OK)
@@ -1192,6 +1209,10 @@ static const char* SystemImpl__getUUIDStr(void)
   tmp[36] = '\0';
   memcpy(uuidStr, strlwr((char*)tmp), 36);
   RpcStringFree(&tmp);
+#elif defined(WITH_LIBUUID)
+  uuid_t uu;
+  uuid_generate(uu);
+  uuid_unparse_lower(uu, uuidStr);
 #endif
   return uuidStr;
 }
@@ -1446,7 +1467,7 @@ static int SystemImpl__freeLibrary(int libIndex, int printDebug)
 
 static void free_library(modelica_ptr_t lib, modelica_integer printDebug)
 {
-  if (printDebug) { fprintf(stderr, "LIB UNLOAD handle[%lu].\n", (unsigned long) lib->data.lib); fflush(stderr); }
+  if (printDebug) { fprintf(stderr, "LIB UNLOAD handle[%" PRINT_MMC_UINT_T "].\n", (mmc_uint_t) lib->data.lib); fflush(stderr); }
   if (FreeLibraryFromHandle(lib->data.lib))
   {
     fprintf(stderr,"System.freeLibrary error code: %lu while unloading dll.\n", GetLastError());
@@ -1543,7 +1564,7 @@ extern char* SystemImpl__unescapedString(const char* str)
   len1 = strlen(str);
   len2 = SystemImpl__unescapedStringLength(str);
   if (len1 == len2) return NULL;
-  res = (char*) GC_malloc_atomic(len2+1);
+  res = (char*) omc_alloc_interface.malloc_atomic(len2+1);
   while (*str) {
     res[i] = str[0];
     if (str[0] == '\\') {
@@ -1588,7 +1609,7 @@ extern char* SystemImpl__unquoteIdentifier(const char* str)
   const char _omcQuot[]="_omcQuot_";
   if (*str != '\'') return NULL;
   len = strlen(str)-2;
-  res = (char*) GC_malloc_atomic(2*len+offset+64);
+  res = (char*) omc_alloc_interface.malloc_atomic(2*len+offset+64);
   cur = res;
   cur += sprintf(cur,"%s",_omcQuot);
   for (i=0; i<len; i++) {
@@ -1674,9 +1695,9 @@ static void decodeUri(const char *src, char **name, char **path)
   const char *srcName = src;
   int len = strlen(src);
   int lenPath = srcPath ? strlen(srcPath+1) : 0;
-  *name = (char*) GC_malloc_atomic(len - lenPath + 2);
+  *name = (char*) omc_alloc_interface.malloc_atomic(len - lenPath + 2);
   decodeUri2(src,*name,'/');
-  *path = (char*) GC_malloc_atomic(lenPath+2);
+  *path = (char*) omc_alloc_interface.malloc_atomic(lenPath+2);
   **path = '\0';
   if (srcPath == NULL) {
     return;
@@ -1744,9 +1765,9 @@ int SystemImpl__dgesv(void *lA, void *lB, void **res)
     sz++;
     tmp = MMC_CDR(tmp);
   }
-  A = (double*) GC_malloc_atomic(sz*sz*sizeof(double));
+  A = (double*) omc_alloc_interface.malloc_atomic(sz*sz*sizeof(double));
   assert(A != NULL);
-  B = (double*) GC_malloc_atomic(sz*sizeof(double));
+  B = (double*) omc_alloc_interface.malloc_atomic(sz*sizeof(double));
   assert(B != NULL);
   for (i=0; i<sz; i++) {
     tmp = MMC_CAR(lA);
@@ -1758,7 +1779,7 @@ int SystemImpl__dgesv(void *lA, void *lB, void **res)
     lA = MMC_CDR(lA);
     lB = MMC_CDR(lB);
   }
-  ipiv = (integer*) GC_malloc_atomic(sz*sizeof(integer));
+  ipiv = (integer*) omc_alloc_interface.malloc_atomic(sz*sizeof(integer));
   memset(ipiv,0,sz*sizeof(integer));
   assert(ipiv != 0);
   lda = sz;
@@ -1795,7 +1816,7 @@ int SystemImpl__lpsolve55(void *lA, void *lB, void *ix, void **res)
     sz++;
     tmp = MMC_CDR(tmp);
   }
-  vres = (double*)GC_malloc_atomic(sz*sizeof(double));
+  vres = (double*)omc_alloc_interface.malloc_atomic(sz*sizeof(double));
   memset(vres,0,sz*sizeof(double));
   lp = make_lp(sz, sz);
   set_verbose(lp, 1);
@@ -1857,7 +1878,7 @@ void splitVersion(const char *version, long *versionNum, char **versionExtra)
     buf = next;
   } while (cont && ++i < MODELICAPATH_LEVELS);
   if (*buf == ' ') buf++;
-  *versionExtra = GC_strdup(buf);
+  *versionExtra = omc_alloc_interface.malloc_strdup(buf);
   len = strlen(*versionExtra);
   /* fprintf(stderr, "have len %ld versionExtra %s\n", len, *versionExtra); */
   if (len >= 2 && 0==strcmp("mo", *versionExtra+len-2)) {
@@ -1869,7 +1890,7 @@ static int regularFileExistsInDirectory(const char *dir1, const char *dir2, cons
 {
   char *str;
   int res;
-  str = (char*) GC_malloc_atomic(strlen(dir1) + strlen(dir2) + strlen(file) + 3);
+  str = (char*) omc_alloc_interface.malloc_atomic(strlen(dir1) + strlen(dir2) + strlen(file) + 3);
   sprintf(str,"%s/%s/%s", dir1, dir2, file);
   res = SystemImpl__regularFileExists(str);
   return res;
@@ -1878,9 +1899,9 @@ static int regularFileExistsInDirectory(const char *dir1, const char *dir2, cons
 static modelicaPathEntry* getAllModelicaPaths(const char *name, size_t nlen, void *mps, int *numMatches)
 {
   int i = 0;
-  *numMatches = 0;
   modelicaPathEntry* res;
   void *save_mps = mps;
+  *numMatches = 0;
   while (MMC_NILHDR != MMC_GETHDR(mps)) {
     const char *mp = MMC_STRINGDATA(MMC_CAR(mps));
     DIR *dir = opendir(mp);
@@ -1911,7 +1932,7 @@ static modelicaPathEntry* getAllModelicaPaths(const char *name, size_t nlen, voi
   }
   /* fprintf(stderr, "numMatches: %ld\n", *numMatches); */
   /*** NOTE: Doing the same thing again. It is very important the same (number of) entries are match as in the loop above ***/
-  res = (modelicaPathEntry*) GC_malloc(*numMatches*sizeof(modelicaPathEntry));
+  res = (modelicaPathEntry*) omc_alloc_interface.malloc(*numMatches*sizeof(modelicaPathEntry));
   mps = save_mps;
   while (MMC_NILHDR != MMC_GETHDR(mps)) {
     const char *mp = MMC_STRINGDATA(MMC_CAR(mps));
@@ -1941,7 +1962,7 @@ static modelicaPathEntry* getAllModelicaPaths(const char *name, size_t nlen, voi
         if (!ok)
           continue;
         res[i].dir = mp;
-        res[i].file = GC_strdup(ent->d_name);
+        res[i].file = omc_alloc_interface.malloc_strdup(ent->d_name);
         if (res[i].file[nlen] == ' ') {
           splitVersion(res[i].file+nlen+1, res[i].version, &res[i].versionExtra);
         } else {
@@ -2103,18 +2124,19 @@ static void free_system_mo(void *data)
   free(members);
 }
 
-static void make_key()
+static void make_key(void)
 {
   pthread_key_create(&systemMoKey,free_system_mo);
 }
 
 static systemMoData* getSystemMoData(threadData_t *threadData)
 {
+  systemMoData *res;
   if (threadData && threadData->localRoots[LOCAL_ROOT_SYSTEM_MO]) {
     return (systemMoData*) threadData->localRoots[LOCAL_ROOT_SYSTEM_MO];
   }
   pthread_once(&system_once_create_key,make_key);
-  systemMoData *res = (systemMoData*) pthread_getspecific(systemMoKey);
+  res = (systemMoData*) pthread_getspecific(systemMoKey);
   if (res != NULL) return res;
   /* We use malloc instead of new because when we do dynamic loading of functions, C++ objects in TLS might be free'd upon return to the main process. */
   res = (systemMoData*) calloc(1,sizeof(systemMoData));
@@ -2174,15 +2196,17 @@ extern int SystemImpl_tmpTickMaximum(threadData_t *threadData, int index)
   return data->tmp_tick_max_no[index];
 }
 
+#if defined(OPENMODELICA_BOOTSTRAPPING_STAGE_1)
 extern int SystemImpl_tmpTick(threadData_t *threadData)
 {
   int res = SystemImpl_tmpTickIndex(threadData,0);
   return res;
 }
+#endif
 
 extern void SystemImpl_tmpTickReset(threadData_t *threadData, int start)
 {
-  return SystemImpl_tmpTickResetIndex(threadData,start,0);
+  SystemImpl_tmpTickResetIndex(threadData,start,0);
 }
 
 extern int SystemImpl__reopenStandardStream(int id,const char *filename)
@@ -2208,30 +2232,46 @@ extern int SystemImpl__reopenStandardStream(int id,const char *filename)
 char* SystemImpl__iconv__ascii(const char * str)
 {
   char *buf = 0;
-  char *in_str,*res;
-  size_t sz,out_sz;
-  iconv_t ic;
+  size_t sz;
   int i;
   sz = strlen(str);
-  buf = GC_malloc_atomic(sz+1);
+  buf = omc_alloc_interface.malloc_atomic(sz+1);
   *buf = 0;
   for (i=0; i<=sz; i++)
     buf[i] = str[i] & 0x80 ? '?' : str[i];
   return buf;
 }
 
+static int isUtf8Encoding(const char *str)
+{
+  return strcasecmp(str, "UTF-8") || strcasecmp(str, "UTF8");
+}
+
 extern char* SystemImpl__iconv(const char * str, const char *from, const char *to, int printError)
 {
-  char *in_str,*res;
+  char *in_str,*res=NULL;
   size_t sz,out_sz,buflen;
   iconv_t ic;
   int count;
   char *buf;
   sz = strlen(str);
-  buflen = sz*8;
-  buf = (char*) GC_malloc_atomic(buflen);
-  assert(buf != 0);
-  *buf = 0;
+  if (isUtf8Encoding(from) && isUtf8Encoding(to))
+  {
+    is_utf8(str, sz, &res, &count);
+    if (res==NULL) {
+      /* Converting from UTF-8 to UTF-8 and the sequence is already UTF-8... */
+      return str;
+    }
+    /* Converting from UTF-8, but is not valid UTF-8. Just quit early. */
+    if (printError) {
+      char *ignore = SystemImpl__iconv__ascii(str);
+      const char *tokens[4] = {res,from,to,ignore};
+      c_add_message(NULL,-1,ErrorType_scripting,ErrorLevel_error,gettext("iconv(\"%s\",to=\"%s\",from=\"%s\") failed: %s"),tokens,4);
+      omc_alloc_interface.free_uncollectable(ignore);
+    }
+    return (char*) "";
+  }
+  buflen = sz*4;
   /* fprintf(stderr,"iconv(%s,to=%s,%s) of size %d, buflen %d\n",str,to,from,sz,buflen); */
   ic = iconv_open(to, from);
   if (ic == (iconv_t) -1) {
@@ -2239,9 +2279,19 @@ extern char* SystemImpl__iconv(const char * str, const char *from, const char *t
       char *ignore = SystemImpl__iconv__ascii(str);
       const char *tokens[4] = {strerror(errno),from,to,ignore};
       c_add_message(NULL,-1,ErrorType_scripting,ErrorLevel_error,gettext("iconv(\"%s\",to=\"%s\",from=\"%s\") failed: %s"),tokens,4);
+      omc_alloc_interface.free_uncollectable(ignore);
     }
     return (char*) "";
   }
+  buf = (char*) omc_alloc_interface.malloc_atomic(buflen);
+  if (0 == buf) {
+    if (printError) {
+      /* Make the error message small so we perhaps have a chance to recover */
+      c_add_message(NULL,-1,ErrorType_scripting,ErrorLevel_error,gettext("iconv() ran out of memory"),NULL,0);
+    }
+    return (char*) "";
+  }
+  *buf = 0;
   in_str = (char*) str;
   out_sz = buflen-1;
   res = buf;
@@ -2252,13 +2302,21 @@ extern char* SystemImpl__iconv(const char * str, const char *from, const char *t
       char *ignore = SystemImpl__iconv__ascii(str);
       const char *tokens[4] = {strerror(errno),from,to,ignore};
       c_add_message(NULL,-1,ErrorType_scripting,ErrorLevel_error,gettext("iconv(\"%s\",to=\"%s\",from=\"%s\") failed: %s"),tokens,4);
+      omc_alloc_interface.free_uncollectable(ignore);
     }
+    omc_alloc_interface.free_uncollectable(buf);
     return (char*) "";
   }
   buf[(buflen-1)-out_sz] = 0;
   if (strlen(buf) != (buflen-1)-out_sz) {
     if (printError) c_add_message(NULL,-1,ErrorType_scripting,ErrorLevel_error,gettext("iconv(to=%s) failed because the character set output null bytes in the middle of the string."),&to,1);
+    omc_alloc_interface.free_uncollectable(buf);
     return (char*) "";
+  }
+  if (!strcmp(from, to) && !strcmp(str, buf))
+  {
+    omc_alloc_interface.free_uncollectable(buf);
+    return (char*)str;
   }
   return buf;
 }
@@ -2291,14 +2349,6 @@ double SystemImpl__realRand(void)
   return tinymt64_generate_double(&system_random_seed);
 }
 
-/* Returns an integer (0,n] (i.e. the highest value is n-1)
- * TODO: Remove once we update the bootstrapping tarball
- */
-int SystemImpl__intRand(int n)
-{
-  return SystemImpl__realRand()*n;
-}
-
 /* Returns an integer [0,n) using the C function rand() */
 int SystemImpl__intRandom(int n)
 {
@@ -2307,7 +2357,7 @@ int SystemImpl__intRandom(int n)
 
 char* alloc_locale_str(const char *locale, int llen, const char *suffix, int slen)
 {
-  char *loc = (char*)GC_malloc_atomic(sizeof(char) * (llen + slen + 1));
+  char *loc = (char*)omc_alloc_interface.malloc_atomic(sizeof(char) * (llen + slen + 1));
   assert(loc != NULL);
   strncpy(loc, locale, llen);
   strncpy(loc + llen, suffix, slen + 1);
@@ -2343,7 +2393,7 @@ void SystemImpl__gettextInit(const char *locale)
   char *old_ctype_default = setlocale(LC_CTYPE, "");
   if (!old_ctype_default)
     old_ctype_default = "UTF-8";
-  char *old_ctype = GC_strdup(old_ctype_default);
+  char *old_ctype = omc_alloc_interface.malloc_strdup(old_ctype_default);
   int old_ctype_is_utf8 = strcmp(nl_langinfo(CODESET), "UTF-8") == 0;
 
   int res =
@@ -2354,12 +2404,16 @@ void SystemImpl__gettextInit(const char *locale)
   if (!res && *locale) {
     fprintf(stderr, gettext("Warning: Failed to set locale: '%s'\n"), locale);
   }
+  if (!setlocale(LC_NUMERIC, "C")) {
+    fputs(gettext("Warning: Failed to set LC_NUMERIC to C locale\n"), stderr);
+  }
   clocale = setlocale(LC_CTYPE, NULL);
   int have_utf8 = strcmp(nl_langinfo(CODESET), "UTF-8") == 0;
   /* We succesfully forced a new non-system locale; let's clear some variables */
   if (*locale) {
     unsetenv("LANG");
     unsetenv("LANGUAGE");
+    unsetenv("LC_ALL");
   }
   /* Try to make sure we force UTF-8; else gettext will fail */
   if (have_utf8)
@@ -2381,7 +2435,7 @@ void SystemImpl__gettextInit(const char *locale)
   return;
   }
   omlen = strlen(omhome);
-  localedir = (char*) GC_malloc_atomic(omlen + 25);
+  localedir = (char*) omc_alloc_interface.malloc_atomic(omlen + 25);
   sprintf(localedir, "%s/share/locale", omhome);
   bindtextdomain ("openmodelica", localedir);
   textdomain ("openmodelica");
@@ -2408,7 +2462,7 @@ char *realpath(const char *path, char resolved_path[PATH_MAX])
   {
     const char *c_tokens[0]={};
     const char* fmt = "System.realpath failed on %s with errno: %d";
-    char* msg = (char*)GC_malloc_atomic(strlen(path) + strlen(fmt) + 10);
+    char* msg = (char*)omc_alloc_interface.malloc_atomic(strlen(path) + strlen(fmt) + 10);
     sprintf(msg, fmt, path, errno);
     c_add_message(NULL,6000,
       ErrorType_scripting,
@@ -2557,7 +2611,6 @@ char *realpath(const char *path, char resolved_path[PATH_MAX])
 
   if (return_path == NULL)
   {
-    const char *c_tokens[0]={};
     const char* fmt = "System.realpath failed on %s with errno: %d";
     char* msg = (char*)malloc(strlen(path) + strlen(fmt) + 10);
     sprintf(msg, fmt, path, errno);
@@ -2565,7 +2618,7 @@ char *realpath(const char *path, char resolved_path[PATH_MAX])
       ErrorType_scripting,
       ErrorLevel_warning,
       msg,
-      c_tokens,
+      NULL,
       0);
     resolved_path = (char*)path;
     return_path = (char*)path;
@@ -2737,12 +2790,16 @@ int SystemImpl__fileIsNewerThan(const char *file1, const char *file2)
 
 void SystemImpl__initGarbageCollector(void)
 {
-  GC_init();
-  GC_register_displacement(0);
+  static init=0;
+  if (!init) {
+    GC_init();
+    GC_register_displacement(0);
 #ifdef RML_STYLE_TAGPTR
-  GC_register_displacement(3);
+    GC_register_displacement(3);
 #endif
-  GC_set_force_unmap_on_gcollect(1);
+    GC_set_force_unmap_on_gcollect(1);
+    init=1;
+  }
 }
 
 int SystemImpl__fileContentsEqual(const char *file1, const char *file2)
@@ -2791,7 +2848,7 @@ char* SystemImpl__ctime(double time)
 {
   char buf[64] = {0}; /* needs to be >=26 char */
   time_t t = (time_t) time;
-  return GC_strdup(ctime_r(&t,buf));
+  return omc_alloc_interface.malloc_strdup(ctime_r(&t,buf));
 }
 
 #if defined(__MINGW32__)
@@ -2873,56 +2930,115 @@ int SystemImpl__alarm(int seconds)
 
 #endif
 
-int SystemImpl__covertTextFileToCLiteral(const char *textFile, const char *outFile)
+int SystemImpl__covertTextFileToCLiteral(const char *textFile, const char *outFile, const char* target)
 {
   FILE *fin;
   FILE *fout = NULL;
-  int result = 0, n, i, j;
+  int result = 0, n, i, j, k, isMSVC = !strcmp(target, "msvc");
   char buffer[512];
   char obuffer[1024];
   fin = fopen(textFile, "r");
   if (!fin) {
     goto done;
   }
+  errno = 0;
+#if defined(__APPLE_CC__)||defined(__MINGW32__)||defined(__MINGW64__)
+  unlink(outFile);
+#endif
   fout = fopen(outFile, "w");
   if (!fout) {
+    const char *c_token[1]={strerror(errno)};
+    c_add_message(NULL,85,
+        ErrorType_scripting,
+        ErrorLevel_error,
+        gettext("SystemImpl__covertTextFileToCLiteral failed: %s. Maybe the total file name is too long."),
+        c_token,
+        1);
     goto done;
   }
-  fputc('\"', fout);
-  do {
-    n = fread(buffer,1,128,fin);
 
-    j = 0;
-    for (i=0; i<n; i++) {
-      switch (buffer[i]) {
-      case '\n':
-        obuffer[j++] = '\\';
-        obuffer[j++] = 'n';
-        break;
-      case '\r':
-        obuffer[j++] = '\\';
-        obuffer[j++] = 'r';
-        break;
-      case '\\':
-        obuffer[j++] = '\\';
-        obuffer[j++] = '\\';
-        break;
-      case '"':
-        obuffer[j++] = '\\';
-        obuffer[j++] = '"';
-        break;
-      default:
-        obuffer[j++] = buffer[i];
+  if (isMSVC) /* handle joke compilers */
+  {
+    fputc('{', fout);
+    fputc('\n', fout);
+    do {
+      n = fread(buffer,1,511,fin);
+      j = 0;
+      /* adrpo: encode each char */
+      for (i=0; i<n; i++) {
+      fputc('\'', fout);
+
+        switch (buffer[i]) {
+        case '\n':
+          fputc('\\', fout);
+          fputc('n', fout);
+          break;
+        case '\r':
+          fputc('\\', fout);
+          fputc('r', fout);
+          break;
+        case '\\':
+          fputc('\\', fout);
+          fputc('\\', fout);
+          break;
+    case '"':
+          fputc('\\', fout);
+          fputc('\"', fout);
+          break;
+    case '\'':
+          fputc('\\', fout);
+          fputc('\'', fout);
+          break;
+        default:
+          fputc(buffer[i], fout);
+        }
+        fputc('\'', fout);
+        fputc(',', fout);
       }
-    }
-    if (j!=fwrite(obuffer,1,j,fout)) {
-      fprintf(stderr, "failed to write\n");
-      return 1;
-    }
-  } while (!feof(fin));
-  fputc('\"', fout);
+      fputc('\n', fout);
+    } while (!feof(fin));
+
+    fputc('\'', fout); fputc('\\', fout); fputc('0', fout); fputc('\'', fout); fputc('\n', fout);
+    fputc('}', fout);
+  }
+  else /* handle real compilers */
+  {
+    fputc('\"', fout);
+    do {
+      n = fread(buffer,1,511,fin);
+      j = 0;
+      for (i=0; i<n; i++) {
+        switch (buffer[i]) {
+        case '\n':
+          obuffer[j++] = '\\';
+          obuffer[j++] = 'n';
+          break;
+        case '\r':
+          obuffer[j++] = '\\';
+          obuffer[j++] = 'r';
+          break;
+        case '\\':
+          obuffer[j++] = '\\';
+          obuffer[j++] = '\\';
+          break;
+        case '"':
+          obuffer[j++] = '\\';
+          obuffer[j++] = '"';
+          break;
+        default:
+          obuffer[j++] = buffer[i];
+        }
+      }
+      if (j!=fwrite(obuffer,1,j,fout)) {
+        fprintf(stderr, "failed to write\n");
+        return 1;
+      }
+    } while (!feof(fin));
+    fputc('\"', fout);
+  }
 
   result = 1;
+
 done:
   if (fin) {
     fclose(fin);
@@ -2935,29 +3051,33 @@ done:
 
 void SystemImpl__dladdr(void *symbol, const char **file, const char **name)
 {
-#if defined(__MINGW32__) || defined(_MSC_VER)
+#if defined(_MSC_VER)
   *file = "dladdr failed";
   *name = "not available on Windows";
-#else
+#else /* mingw & Linux */
   Dl_info info;
-  if (0 == dladdr((MMC_FETCH(MMC_OFFSET(MMC_UNTAGPTR(symbol), 1))), &info)) {
+  void *ptr = (MMC_FETCH(MMC_OFFSET(MMC_UNTAGPTR(symbol), 1)));
+  if (0 == dladdr(ptr, &info)) {
     *file = "dladdr failed";
     *name = "";
   } else {
-    *file = GC_strdup(info.dli_fname);
-    *name = GC_strdup(info.dli_sname);
+    *file = info.dli_fname ? omc_alloc_interface.malloc_strdup(info.dli_fname) : "(null)";
+    *name = info.dli_sname ? omc_alloc_interface.malloc_strdup(info.dli_sname) : "(null)";
   }
 #endif
 }
 
 const char* SystemImpl__createTemporaryDirectory(const char *templatePrefix)
 {
-  char template[strlen(templatePrefix) + 7];
+  char *template = (char*) omc_alloc_interface.malloc_atomic(strlen(templatePrefix) + 7);
+  const char *c_tokens[2];
   sprintf(template, "%sXXXXXX", templatePrefix);
   if (template==mkdtemp(template)) {
-    return GC_strdup(template);
+    return template;
   }
-  const char *c_tokens[2]={strerror(errno),templatePrefix};
+  GC_free(template);
+  c_tokens[0]=strerror(errno);
+  c_tokens[1]=templatePrefix;
   c_add_message(NULL,85, /* ERROR_OPENING_FILE */
     ErrorType_scripting,
     ErrorLevel_error,
@@ -2971,6 +3091,70 @@ const char* System_getTriple()
 {
   return DEFAULT_TRIPLE;
 }
+
+#if defined(OMC_GENERATE_RELOCATABLE_CODE)
+static void addDLError(const char *msg, const char *fileName)
+{
+  const char *err[2] = {dlerror(),fileName};
+  c_add_message(NULL, 85,
+  ErrorType_scripting,
+  ErrorLevel_error,
+  msg,
+  err,
+  2
+  );
+}
+
+int SystemImpl__relocateFunctions(const char *fileName, void *names)
+{
+  void *localHandle,*remoteHandle;
+  remoteHandle = dlopen(fileName, RTLD_NOW | RTLD_GLOBAL | RTLD_NODELETE);
+  if (!remoteHandle) {
+    addDLError(gettext("Error opening library %s: %s."), fileName);
+    return 0;
+  }
+  localHandle = dlopen(NULL, RTLD_NOW);
+  if (!localHandle) {
+    addDLError(gettext("Error opening library %s: %s."), fileName);
+    return 0;
+  }
+  int length = listLength(names);
+  void **localSyms[length], *remoteSyms[length];
+  for (int i=0; i<length; i++) {
+    void *tpl = MMC_CAR(names);
+    const char *local = MMC_STRINGDATA(MMC_CAR(tpl));
+    const char *remote = MMC_STRINGDATA(MMC_CDR(tpl));
+
+    remoteSyms[i] = dlsym(remoteHandle, remote);
+    if (remoteSyms[i]==0) {
+      addDLError(gettext("Error opening library %s: %s."), fileName);
+    }
+    localSyms[i] = (void**) dlsym(localHandle, local);
+    if (localSyms[i]==0) {
+      addDLError(gettext("Error opening library %s: %s."), fileName);
+    }
+
+    names = MMC_CDR(names);
+  }
+  /* All loaded fine. Now relocate all the symbols. */
+  for (int i=0; i<length; i++) {
+    *localSyms[i] = remoteSyms[i];
+  }
+  return 1;
+}
+#else
+int SystemImpl__relocateFunctions(const char *fileName, void *names)
+{
+  c_add_message(NULL, 85,
+  ErrorType_scripting,
+  ErrorLevel_error,
+  gettext("OMC not compiled with support for relocatable functions."),
+  NULL,
+  0
+  );
+  return 0;
+}
+#endif
 
 #ifdef __cplusplus
 }

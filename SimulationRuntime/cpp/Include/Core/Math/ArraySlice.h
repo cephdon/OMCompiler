@@ -38,8 +38,9 @@
 
 /**
  * Modelica slice.
- * Defined by start:stop or start:step:stop, start = 0 or stop = 0 meaning end,
- * or by an index vector if step = 0.
+ * Defined by an index vector iset != NULL or by start:stop or start:step:stop,
+ * start == stop and step == 0 meaning reduction of dimension,
+ * start == 0 or stop == 0 meaning end.
  */
 class Slice {
  public:
@@ -51,10 +52,10 @@ class Slice {
     iset = NULL;
   }
 
-  // one index
+  // one index (reduction)
   Slice(int index) {
     start = index;
-    step = 1;
+    step = 0;
     stop = index;
     iset = NULL;
   }
@@ -73,6 +74,7 @@ class Slice {
     iset = NULL;
   }
 
+  // index set, reduction if size(indices) == 1
   Slice(const BaseArray<int> &indices) {
     start = 0;
     step = 0;
@@ -84,9 +86,9 @@ class Slice {
     iset = &indices;
   }
 
-  size_t start;
-  size_t step;
-  size_t stop;
+  int start;
+  int step;
+  int stop;
   const BaseArray<int> *iset;
 };
 
@@ -101,39 +103,53 @@ class ArraySliceConst: public BaseArray<T> {
     , _baseArray(baseArray)
     , _isets(slice.size())
     , _idxs(slice.size())
-    , _baseIdx(slice.size()) {
+    , _baseIdx(slice.size())
+    , _tmp_data(NULL) {
 
     if (baseArray.getNumDims() != slice.size())
       throw ModelicaSimulationError(MODEL_ARRAY_FUNCTION,
                                     "Wrong dimensions for ArraySlice");
     // create an explicit index set per dimension,
     // except for all indices that are indicated with an empty index set
-    size_t dim;
+    size_t dim, size;
     vector<Slice>::const_iterator sit;
     vector< vector<size_t> >::iterator dit = _idxs.begin();
     for (dim = 1, sit = slice.begin(); sit != slice.end(); dim++, sit++) {
-      if (sit->step == 0)
+      if (sit->iset != NULL) {
         _isets[dim - 1] = sit->iset;
+        size = sit->iset->getNumElems();
+      }
       else {
         _isets[dim - 1] = NULL;
-        size_t maxIndex = baseArray.getDim(dim);
-        size_t start = sit->start > 0? sit->start: maxIndex;
-        size_t stop = sit->stop > 0? sit->stop: maxIndex;
+        int maxIndex = baseArray.getDim(dim);
+        int start = sit->start > 0? sit->start: maxIndex;
+        int stop = sit->stop > 0? sit->stop: maxIndex;
+        int step = sit->step;
         if (start > maxIndex || stop > maxIndex)
           throw ModelicaSimulationError(MODEL_ARRAY_FUNCTION,
                                         "Wrong slice exceeding array size");
-        if (start > 1 || sit->step > 1 || stop < maxIndex)
-          for (size_t i = start; i <= stop; i += sit->step)
-            dit->push_back(i);
+        if (start == 1 && step == 1 && stop == maxIndex)
+          // all indices; avoid trivial fill of _idxs
+          size = _baseArray.getDim(dim);
+        else {
+          size = step == 0? 1: std::max(0, (stop - start) / step + 1);
+          for (int i = 0; i < size; i++)
+            dit->push_back(start + i * step);
+        }
       }
-      if (dit->size() == 1)
-        // prefill constant _baseIdx in case of reduction
-        _baseIdx[dim - 1] = (*dit)[0];
+      if (size == 1 && sit->step == 0)
+        // preset constant _baseIdx in case of reduction
+        _baseIdx[dim - 1] = sit->iset != NULL? (*_isets[dim - 1])(1): (*dit)[0];
       else
         // store dimension of array slice
-        _dims.push_back(dit->size() != 0? dit->size(): _baseArray.getDim(dim));
+        _dims.push_back(size);
       dit++;
     }
+  }
+
+  virtual ~ArraySliceConst() {
+    if (_tmp_data != NULL)
+      delete [] _tmp_data;
   }
 
   virtual const T& operator()(const vector<size_t> &idx) const {
@@ -176,11 +192,11 @@ class ArraySliceConst: public BaseArray<T> {
   }
 
   virtual const T* getData() const {
-    if (_tmp_data.num_elements() == 0)
+    if (_tmp_data == NULL)
       // allocate on first use
-      _tmp_data.resize(boost::extents[getNumElems()]);
-    getDataDim(_idxs.size(), _tmp_data.data());
-    return _tmp_data.data();
+      _tmp_data = new T [getNumElems()];
+    getDataDim(_idxs.size(), _tmp_data);
+    return _tmp_data;
   }
 
   virtual size_t getNumElems() const {
@@ -217,7 +233,7 @@ class ArraySliceConst: public BaseArray<T> {
   vector< vector<size_t> > _idxs;  // created index sets per dimension
   vector<size_t> _dims;            // dimensions of array slice
   mutable vector<size_t> _baseIdx; // idx into underlying array
-  mutable boost::multi_array<T, 1> _tmp_data; // storage for const T* getData()
+  mutable T *_tmp_data;            // storage for const T* getData()
 
   /**
    * returns idx vector to access an element

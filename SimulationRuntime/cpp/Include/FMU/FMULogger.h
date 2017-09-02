@@ -9,8 +9,8 @@
 #define FMULOGGER_H_
 
 #include <Core/Modelica.h>
-#include <FMU/FactoryExport.h>
-#include <Core/Utils/extension/logger.hpp>
+
+//#include <Core/Utils/extension/logger.hpp>
 #include "fmiModelFunctions.h"
 
 class BOOST_EXTENSION_EXPORT_DECL FMULogger : Logger
@@ -21,14 +21,11 @@ class BOOST_EXTENSION_EXPORT_DECL FMULogger : Logger
 
     static void initialize(fmiCallbackLogger callbackLogger, fmiComponent component, fmiString instanceName)
     {
-      if(instance != NULL)
-        delete instance;
-
-      instance = new FMULogger(callbackLogger, component, instanceName);
+      _instance = new FMULogger(callbackLogger, component, instanceName);
     }
 
   protected:
-    virtual void writeInternal(std::string errorMsg, LogCategory cat, LogLevel lvl);
+    virtual void writeInternal(std::string errorMsg, LogCategory cat, LogLevel lvl, LogStructure ls);
   private:
     fmiCallbackLogger callbackLogger;
     fmiComponent component;

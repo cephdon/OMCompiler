@@ -34,36 +34,39 @@ encapsulated package Inline
   package:     Inline
   description: inline functions
 
-  RCS: $Id$
 
   This module contains data structures and functions for inline functions.
 
   The entry point is the inlineCalls function, or inlineCallsInFunctions
   "
 
-public import Absyn;
-public import BaseHashTable;
-public import DAE;
-public import HashTableCG;
-public import SCode;
-public import Util;
+import Absyn;
+import AvlSetPath;
+import BaseHashTable;
+import DAE;
+import HashTableCG;
+import SCode;
+import Util;
 
-public type Functiontuple = tuple<Option<DAE.FunctionTree>,list<DAE.InlineType>>;
+type Functiontuple = tuple<Option<DAE.FunctionTree>,list<DAE.InlineType>>;
 
-protected import Ceval;
-protected import ClassInf;
-protected import ComponentReference;
-protected import Config;
-protected import DAEUtil;
-protected import Debug;
-protected import Error;
-protected import Expression;
-protected import ExpressionDump;
-protected import ExpressionSimplify;
-protected import Flags;
-protected import List;
-protected import Types;
-protected import VarTransform;
+protected
+
+import Ceval;
+import ClassInf;
+import ComponentReference;
+import Config;
+import Debug;
+import ElementSource;
+import Error;
+import Expression;
+import ExpressionDump;
+import ExpressionSimplify;
+import Flags;
+import Global;
+import List;
+import Types;
+import VarTransform;
 
 public function inlineStartAttribute
   input Option<DAE.VariableAttributes> inVariableAttributesOption;
@@ -378,11 +381,26 @@ algorithm
       then
         (DAE.ASSERT(exp1_1,exp2_1,exp3_1,source),true);
 
+    case(DAE.INITIAL_ASSERT(exp1,exp2,exp3,source) ,fns)
+      equation
+        (exp1_1,source,b1,_) = inlineExp(exp1,fns,source);
+        (exp2_1,source,b2,_) = inlineExp(exp2,fns,source);
+        (exp3_1,source,b3,_) = inlineExp(exp3,fns,source);
+        true = b1 or b2 or b3;
+      then
+        (DAE.INITIAL_ASSERT(exp1_1,exp2_1,exp3_1,source),true);
+
     case(DAE.TERMINATE(exp,source),fns)
       equation
         (exp_1,source,true,_) = inlineExp(exp,fns,source);
       then
         (DAE.TERMINATE(exp_1,source),true);
+
+    case(DAE.INITIAL_TERMINATE(exp,source),fns)
+      equation
+        (exp_1,source,true,_) = inlineExp(exp,fns,source);
+      then
+        (DAE.INITIAL_TERMINATE(exp_1,source),true);
 
     case(DAE.REINIT(componentRef,exp,source),fns)
       equation
@@ -649,15 +667,21 @@ algorithm
       DAE.Exp e,e_1,e_2;
       DAE.ElementSource source;
       list<DAE.Statement> assrtLst;
+      DAE.EquationExp eq;
 
     // never inline WILD!
     case (DAE.CREF(componentRef = DAE.WILD()),_,_) then (inExp,inSource,false,{});
 
     case (e,fns,source)
-      equation
-        (e_1,(_,true,assrtLst)) = Expression.Expression.traverseExpBottomUp(e,inlineCall,(fns,false,{}));
-        source = DAEUtil.addSymbolicTransformation(source,DAE.OP_INLINE(DAE.PARTIAL_EQUATION(e),DAE.PARTIAL_EQUATION(e_1)));
-        (DAE.PARTIAL_EQUATION(e_2),source) = ExpressionSimplify.simplifyAddSymbolicOperation(DAE.PARTIAL_EQUATION(e_1), source);
+      algorithm
+        (e_1,assrtLst) := Expression.traverseExpBottomUp(e,function inlineCall(fns=fns),{});
+        false := referenceEq(e, e_1);
+        if Flags.isSet(Flags.INFO_XML_OPERATIONS) then
+          source := ElementSource.addSymbolicTransformation(source,DAE.OP_INLINE(DAE.PARTIAL_EQUATION(e),DAE.PARTIAL_EQUATION(e_1)));
+          (DAE.PARTIAL_EQUATION(e_2),source) := ExpressionSimplify.simplifyAddSymbolicOperation(DAE.PARTIAL_EQUATION(e_1), source);
+        else
+          e_2 := ExpressionSimplify.simplify(e_1);
+        end if;
       then
         (e_2,source,true,assrtLst);
 
@@ -675,28 +699,33 @@ function: inlineExp
   output DAE.ElementSource outSource;
   output Boolean inlineperformed;
 algorithm
-  (outExp,outSource,inlineperformed) := matchcontinue (inExp,inElementList,inSource)
+  (outExp,outSource,inlineperformed) := match (inExp,inElementList,inSource)
     local
       Functiontuple fns;
       DAE.Exp e,e_1,e_2;
       DAE.ElementSource source;
       list<DAE.Statement> assrtLst;
       DAE.FunctionTree functionTree;
+      Boolean b;
     case (e,(SOME(functionTree),_),source)
+      guard
+        Expression.isConst(inExp)
       equation
-        true = Expression.isConst(inExp);
         e_1 = Ceval.cevalSimpleWithFunctionTreeReturnExp(inExp, functionTree);
-        source = DAEUtil.addSymbolicTransformation(source,DAE.OP_INLINE(DAE.PARTIAL_EQUATION(e),DAE.PARTIAL_EQUATION(e_1)));
+        source = ElementSource.addSymbolicTransformation(source,DAE.OP_INLINE(DAE.PARTIAL_EQUATION(e),DAE.PARTIAL_EQUATION(e_1)));
       then (e_1,source,true);
     case (e,fns,source)
       equation
-        (e_1,(_,true,_)) = Expression.Expression.traverseExpBottomUp(e,forceInlineCall,(fns,false,{}));
-        source = DAEUtil.addSymbolicTransformation(source,DAE.OP_INLINE(DAE.PARTIAL_EQUATION(e),DAE.PARTIAL_EQUATION(e_1)));
-        (DAE.PARTIAL_EQUATION(e_2),source) = ExpressionSimplify.simplifyAddSymbolicOperation(DAE.PARTIAL_EQUATION(e_1), source);
+        (e_1,_) = Expression.traverseExpBottomUp(e,function forceInlineCall(fns=fns, visitedPaths=AvlSetPath.Tree.EMPTY()),{});
+        b = not referenceEq(e, e_1);
+        if b then
+        source = ElementSource.addSymbolicTransformation(source,DAE.OP_INLINE(DAE.PARTIAL_EQUATION(e),DAE.PARTIAL_EQUATION(e_1)));
+        (DAE.PARTIAL_EQUATION(e_1),source) = ExpressionSimplify.simplifyAddSymbolicOperation(DAE.PARTIAL_EQUATION(e_1), source);
+        end if;
       then
-        (e_2,source,true);
+        (e_1,source,b);
     else (inExp,inSource,false);
-  end matchcontinue;
+  end match;
 end forceInlineExp;
 
 public function inlineExps "
@@ -768,104 +797,107 @@ algorithm
   end match;
 end checkExpsTypeEquiv;
 
-protected function inlineCall
+public function inlineCall
 "replaces an inline call with the expression from the function"
-  input DAE.Exp inExp;
-  input tuple<Functiontuple,Boolean,list<DAE.Statement>> inTuple;
-  output DAE.Exp outExp;
-  output tuple<Functiontuple,Boolean,list<DAE.Statement>> outTuple;
+  input output DAE.Exp exp;
+  input output list<DAE.Statement> assrtLst;
+  input Functiontuple fns;
 algorithm
-  (outExp,outTuple) := matchcontinue (inExp,inTuple)
+  (exp,assrtLst) := matchcontinue exp
     local
-      Functiontuple fns,fns1;
       list<DAE.Element> fn;
       Absyn.Path p;
       list<DAE.Exp> args;
       list<DAE.ComponentRef> crefs;
       list<tuple<DAE.ComponentRef, DAE.Exp>> argmap;
-      DAE.ComponentRef cr;
+      list<DAE.ComponentRef> lst_cr;
       DAE.ElementSource source;
       DAE.Exp newExp,newExp1, e1, cond, msg, level, newAssrtCond, newAssrtMsg, newAssrtLevel;
       DAE.InlineType inlineType;
       DAE.Statement assrt;
       HashTableCG.HashTable checkcr;
-      list<DAE.Statement> stmts,assrtStmts, assrtLstIn, assrtLst;
+      list<DAE.Statement> stmts,assrtStmts;
       VarTransform.VariableReplacements repl;
       Boolean generateEvents;
       Option<SCode.Comment> comment;
       DAE.Type ty;
 
     // If we disable inlining by use of flags, we still inline builtin functions
-    case (DAE.CALL(attr=DAE.CALL_ATTR(inlineType=inlineType)),_)
+    case DAE.CALL(attr=DAE.CALL_ATTR(inlineType=inlineType))
       equation
         false = Flags.isSet(Flags.INLINE_FUNCTIONS);
         false = valueEq(DAE.BUILTIN_EARLY_INLINE(), inlineType);
-      then (inExp,inTuple);
+      then (exp,assrtLst);
 
-    case (e1 as DAE.CALL(p,args,DAE.CALL_ATTR(ty=ty,inlineType=inlineType)),(fns,_,assrtLstIn))
+    case (e1 as DAE.CALL(p,args,DAE.CALL_ATTR(ty=ty,inlineType=inlineType)))
       equation
-        true = DAEUtil.convertInlineTypeToBool(inlineType);
+        //true = DAEUtil.convertInlineTypeToBool(inlineType);
         true = checkInlineType(inlineType,fns);
         (fn,comment) = getFunctionBody(p,fns);
+        (checkcr,repl) = getInlineHashTableVarTransform();
         if (Config.acceptMetaModelicaGrammar())
         then // MetaModelica
           crefs = List.map(fn,getInputCrefs);
           crefs = List.select(crefs,removeWilds);
           argmap = List.threadTuple(crefs,args);
           false = List.exist(fn,DAEUtil.isProtectedVar);
-          (argmap,checkcr) = extendCrefRecords(argmap,HashTableCG.emptyHashTable());
           newExp = getRhsExp(fn);
           // compare types
           true = checkExpsTypeEquiv(e1, newExp);
+          (argmap,checkcr) = extendCrefRecords(argmap,checkcr);
           // add noEvent to avoid events as usually for functions
           // MSL 3.2.1 need GenerateEvents to disable this
           newExp = Expression.addNoEventToRelationsAndConds(newExp);
-          (newExp,(_,_,true)) = Expression.Expression.traverseExpBottomUp(newExp,replaceArgs,(argmap,checkcr,true));
+          (newExp,(_,_,true)) = Expression.traverseExpBottomUp(newExp,replaceArgs,(argmap,checkcr,true));
           // for inlinecalls in functions
-          (newExp1,(_,_,assrtLst)) = Expression.Expression.traverseExpBottomUp(newExp,inlineCall,(fns,true,assrtLstIn));
+          (newExp1,assrtLst) = Expression.traverseExpBottomUp(newExp,function inlineCall(fns=fns),assrtLst);
         else // normal Modelica
           // get inputs, body and output
-          (crefs,{cr},stmts,repl) = getFunctionInputsOutputBody(fn,{},{},{},VarTransform.emptyReplacements());
+          (crefs,lst_cr,stmts,repl) = getFunctionInputsOutputBody(fn,{},{},{},repl);
           // merge statements to one line
           (repl,assrtStmts) = mergeFunctionBody(stmts,repl,{});
           // depend on detection of assert or not
           if (listEmpty(assrtStmts))
           then // no assert detected
-            newExp = getReplacementCheckComplex(repl,cr,ty);
-            argmap = List.threadTuple(crefs,args);
-            (argmap,checkcr) = extendCrefRecords(argmap,HashTableCG.emptyHashTable());
+            // output
+            newExp = Expression.makeTuple(list( getReplacementCheckComplex(repl,cr,ty) for cr in lst_cr));
             // compare types
             true = checkExpsTypeEquiv(e1, newExp);
+            // input map cref again function args
+            argmap = List.threadTuple(crefs,args);
+            (checkcr,_) = getInlineHashTableVarTransform();
+            (argmap,checkcr) = extendCrefRecords(argmap,checkcr);
             // add noEvent to avoid events as usually for functions
             // MSL 3.2.1 need GenerateEvents to disable this
             generateEvents = hasGenerateEventsAnnotation(comment);
             newExp = if not generateEvents then Expression.addNoEventToRelationsAndConds(newExp) else newExp;
-            (newExp,(_,_,true)) = Expression.Expression.traverseExpBottomUp(newExp,replaceArgs,(argmap,checkcr,true));
+            (newExp,(_,_,true)) = Expression.traverseExpBottomUp(newExp,replaceArgs,(argmap,checkcr,true));
             // for inlinecalls in functions
-            (newExp1,(_,_,assrtLst)) = Expression.Expression.traverseExpBottomUp(newExp,inlineCall,(fns,true,assrtLstIn));
+            (newExp1,assrtLst) = Expression.traverseExpBottomUp(newExp,function inlineCall(fns=fns),assrtLst);
           else // assert detected
             true = listLength(assrtStmts) == 1;
             assrt = listHead(assrtStmts);
             DAE.STMT_ASSERT() = assrt;
-            newExp = getReplacementCheckComplex(repl,cr,ty); // the function that replaces the output variable
-            argmap = List.threadTuple(crefs,args);
-            (argmap,checkcr) = extendCrefRecords(argmap,HashTableCG.emptyHashTable());
+            //newExp = getReplacementCheckComplex(repl,cr,ty); // the function that replaces the output variable
+            newExp = Expression.makeTuple(list( getReplacementCheckComplex(repl,cr,ty) for cr in lst_cr));
             // compare types
             true = checkExpsTypeEquiv(e1, newExp);
+            argmap = List.threadTuple(crefs,args);
+            (argmap,checkcr) = extendCrefRecords(argmap,checkcr);
             // add noEvent to avoid events as usually for functions
             // MSL 3.2.1 need GenerateEvents to disable this
             generateEvents = hasGenerateEventsAnnotation(comment);
             newExp = if not generateEvents then Expression.addNoEventToRelationsAndConds(newExp) else newExp;
-            (newExp,(_,_,true)) = Expression.Expression.traverseExpBottomUp(newExp,replaceArgs,(argmap,checkcr,true));
+            (newExp,(_,_,true)) = Expression.traverseExpBottomUp(newExp,replaceArgs,(argmap,checkcr,true));
             assrt = inlineAssert(assrt,fns,argmap,checkcr);
             // for inlinecalls in functions
-            (newExp1,(_,_,assrtLst)) = Expression.Expression.traverseExpBottomUp(newExp,inlineCall,(fns,true,assrt::assrtLstIn));
+            (newExp1,assrtLst) = Expression.traverseExpBottomUp(newExp,function inlineCall(fns=fns),assrt::assrtLst);
           end if;
         end if;
       then
-        (newExp1,(fns,true,assrtLst));
+        (newExp1,assrtLst);
 
-    else (inExp,inTuple);
+    else (exp,assrtLst);
 
   end matchcontinue;
 end inlineCall;
@@ -883,16 +915,17 @@ protected
   DAE.Exp cond, msg, level;
 algorithm
   DAE.STMT_ASSERT(cond=cond, msg=msg, level=level, source=source) := assrtIn;
-  (cond,_,_,_) := inlineExp(cond,fns,source);
-  (cond,(_,_,true)) := Expression.Expression.traverseExpBottomUp(cond,replaceArgs,(argmap,checkcr,true));
+  (cond,(_,_,true)) := Expression.traverseExpBottomUp(cond,replaceArgs,(argmap,checkcr,true));
   //print("ASSERT inlined: "+ExpressionDump.printExpStr(cond)+"\n");
-  (msg,_,_,_) := inlineExp(msg,fns,source);
-  (msg,(_,_,true)) := Expression.Expression.traverseExpBottomUp(msg,replaceArgs,(argmap,checkcr,true));
+  (msg,(_,_,true)) := Expression.traverseExpBottomUp(msg,replaceArgs,(argmap,checkcr,true));
+  // These clear checkcr/repl and need to be performed last
+  // (cond,_,_,_) := inlineExp(cond,fns,source);
+  // (msg,_,_,_) := inlineExp(msg,fns,source);
   assrtOut := DAE.STMT_ASSERT(cond, msg, level, source);
 end inlineAssert;
 
 
-protected function hasGenerateEventsAnnotation
+public function hasGenerateEventsAnnotation
   input Option<SCode.Comment> comment;
   output Boolean b;
 algorithm
@@ -919,18 +952,17 @@ end dumpArgmap;
 
 public function forceInlineCall
 "replaces an inline call with the expression from the function"
-  input DAE.Exp inExp;
-  input tuple<Functiontuple,Boolean,list<DAE.Statement>> inTuple;
-  output DAE.Exp outExp;
-  output tuple<Functiontuple,Boolean,list<DAE.Statement>> outTuple;
+  input output DAE.Exp exp;
+  input output list<DAE.Statement> assrtLst;
+  input Functiontuple fns;
+  input AvlSetPath.Tree visitedPaths = AvlSetPath.EMPTY();
 algorithm
-  (outExp,outTuple) := matchcontinue (inExp,inTuple)
+  (exp,assrtLst) := matchcontinue exp
     local
-      Functiontuple fns,fns1;
       list<DAE.Element> fn;
       Absyn.Path p;
       list<DAE.Exp> args;
-      DAE.ComponentRef cr;
+      list<DAE.ComponentRef> lst_cr;
       list<DAE.ComponentRef> crefs;
       list<DAE.Statement> assrtStmts;
       list<tuple<DAE.ComponentRef, DAE.Exp>> argmap;
@@ -938,35 +970,38 @@ algorithm
       DAE.InlineType inlineType;
       DAE.Statement assrt;
       HashTableCG.HashTable checkcr;
-      list<DAE.Statement> stmts, assrtLstIn, assrtLst;
+      list<DAE.Statement> stmts;
       VarTransform.VariableReplacements repl;
       Boolean generateEvents,b;
       Option<SCode.Comment> comment;
 
-    case (e1 as DAE.CALL(p,args,DAE.CALL_ATTR(inlineType=inlineType)),(fns,_,assrtLstIn))
+    case (e1 as DAE.CALL(p,args,DAE.CALL_ATTR(inlineType=inlineType))) guard not AvlSetPath.hasKey(visitedPaths, p)
       equation
+        //print(printInlineTypeStr(inlineType));
         false = Config.acceptMetaModelicaGrammar();
         true = checkInlineType(inlineType,fns);
         (fn,comment) = getFunctionBody(p,fns);
+        (checkcr,repl) = getInlineHashTableVarTransform();
         // get inputs, body and output
-        (crefs,{cr},stmts,repl) = getFunctionInputsOutputBody(fn,{},{},{},VarTransform.emptyReplacements());
+        (crefs,lst_cr,stmts,repl) = getFunctionInputsOutputBody(fn,{},{},{},repl);
         // merge statements to one line
         (repl,_) = mergeFunctionBody(stmts,repl,{});
-        newExp = VarTransform.getReplacement(repl,cr);
-        argmap = List.threadTuple(crefs,args);
-        (argmap,checkcr) = extendCrefRecords(argmap,HashTableCG.emptyHashTable());
+        //newExp = VarTransform.getReplacement(repl,cr);
+        newExp = Expression.makeTuple(list( VarTransform.getReplacement(repl,cr) for cr in lst_cr));
         // compare types
         true = checkExpsTypeEquiv(e1, newExp);
+        argmap = List.threadTuple(crefs,args);
+        (argmap,checkcr) = extendCrefRecords(argmap,checkcr);
         // add noEvent to avoid events as usually for functions
         // MSL 3.2.1 need GenerateEvents to disable this
         generateEvents = hasGenerateEventsAnnotation(comment);
         newExp = if not generateEvents then Expression.addNoEventToRelationsAndConds(newExp) else newExp;
-        (newExp,(_,_,true)) = Expression.Expression.traverseExpBottomUp(newExp,replaceArgs,(argmap,checkcr,true));
+        (newExp,(_,_,true)) = Expression.traverseExpBottomUp(newExp,replaceArgs,(argmap,checkcr,true));
         // for inlinecalls in functions
-        (newExp1,(_,b,assrtLst)) = Expression.Expression.traverseExpBottomUp(newExp,forceInlineCall,(fns,true,assrtLstIn));
-      then (newExp1,(fns,b,assrtLst));
+        (newExp1,assrtLst) = Expression.traverseExpBottomUp(newExp,function forceInlineCall(fns=fns,visitedPaths=AvlSetPath.add(visitedPaths, p)),assrtLst);
+      then (newExp1,assrtLst);
 
-    else (inExp,inTuple);
+    else (exp,assrtLst);
   end matchcontinue;
 end forceInlineCall;
 
@@ -1075,8 +1110,11 @@ algorithm
         (oInputs,oOutput,oBody,repl) = getFunctionInputsOutputBody(rest,iInputs,cr::iOutput,iBody,iRepl);
       then
         (oInputs,oOutput,oBody,repl);
-    case (DAE.VAR(componentRef=cr,protection=DAE.PROTECTED(),ty=tp,binding=binding)::rest,_,_,_,_)
+    case (DAE.VAR(componentRef=cr,protection=DAE.PROTECTED(),binding=binding)::rest,_,_,_,_)
       equation
+        // use type of cref, since var type is different
+        // and has no hint on array or record type
+        tp = ComponentReference.crefTypeFull(cr);
         false = Expression.isArrayType(tp);
         false = Expression.isRecordType(tp);
         repl = addOptBindingReplacements(cr,binding,iRepl);
@@ -1116,14 +1154,14 @@ algorithm
     local
       DAE.Type tp;
     case (DAE.CREF_IDENT(identType=tp),_,_)
-      equation
-        false = Expression.isArrayType(tp);
-        false = Expression.isRecordType(tp);
+      guard
+        not Expression.isArrayType(tp) and not Expression.isRecordType(tp)
       then VarTransform.addReplacement(iRepl, iCr, iExp);
+    else fail();
   end match;
 end addReplacement;
 
-protected function checkInlineType "
+public function checkInlineType "
 Author: Frenkel TUD, 2010-05"
   input DAE.InlineType inIT;
   input Functiontuple fns;
@@ -1142,7 +1180,7 @@ algorithm
   end matchcontinue;
 end checkInlineType;
 
-protected function extendCrefRecords
+public function extendCrefRecords
 "extends crefs from records"
   input list<tuple<DAE.ComponentRef, DAE.Exp>> inArgmap;
   input HashTableCG.HashTable inCheckCr;
@@ -1300,7 +1338,7 @@ algorithm
   end matchcontinue;
 end extendCrefRecords2;
 
-protected function getFunctionBody
+public function getFunctionBody
 "returns the body of a function"
   input Absyn.Path p;
   input Functiontuple fns;
@@ -1314,7 +1352,7 @@ algorithm
       Option<SCode.Comment> comment;
     case(_,(SOME(ftree),_))
       equation
-        SOME(DAE.FUNCTION( functions = DAE.FUNCTION_DEF(body = body)::_,comment=comment)) = DAEUtil.avlTreeGet(ftree,p);
+        SOME(DAE.FUNCTION( functions = DAE.FUNCTION_DEF(body = body)::_,comment=comment)) = DAE.AvlTreePathFunction.get(ftree,p);
       then (body,comment);
     else
       equation
@@ -1331,7 +1369,7 @@ protected function getRhsExp
   input list<DAE.Element> inElementList;
   output DAE.Exp outExp;
 algorithm
-  outExp := matchcontinue(inElementList)
+  outExp := match(inElementList)
     local
       list<DAE.Element> cdr;
       DAE.Exp res;
@@ -1349,10 +1387,10 @@ algorithm
         res = getRhsExp(cdr);
       then
         res;
-  end matchcontinue;
+  end match;
 end getRhsExp;
 
-protected function replaceArgs
+public function replaceArgs
 "finds DAE.CREF and replaces them with new exps if the cref is in the argmap"
   input DAE.Exp inExp;
   input tuple<list<tuple<DAE.ComponentRef,DAE.Exp>>,HashTableCG.HashTable,Boolean> inTuple;
@@ -1372,6 +1410,7 @@ algorithm
       DAE.TailCall tc;
       HashTableCG.HashTable checkcr;
       Boolean replacedfailed;
+
     case (DAE.CREF(componentRef = cref),(argmap,checkcr,true))
       equation
         e = getExpFromArgMap(argmap,cref);
@@ -1379,8 +1418,8 @@ algorithm
       then (e,(argmap,checkcr,true));
 
     case (e as DAE.CREF(componentRef = cref),(argmap,checkcr,true))
-      equation
-        true = BaseHashTable.hasKey(cref,checkcr);
+      guard
+        BaseHashTable.hasKey(cref,checkcr)
       then (e,(argmap,checkcr,false));
 
     case (DAE.UNBOX(DAE.CALL(path,expLst,DAE.CALL_ATTR(_,tuple_,false,isImpure,_,inlineType,tc)),ty),(argmap,checkcr,true))
@@ -1470,33 +1509,32 @@ protected function getExpFromArgMap
   input list<tuple<DAE.ComponentRef, DAE.Exp>> inArgMap;
   input DAE.ComponentRef inComponentRef;
   output DAE.Exp outExp;
+protected
+  tuple<DAE.ComponentRef, DAE.Exp> arg;
+  list<DAE.Subscript> subs;
+  DAE.ComponentRef key,cref;
+  DAE.Exp exp;
 algorithm
-  outExp := matchcontinue(inArgMap,inComponentRef)
-    local
-      DAE.ComponentRef key,cref;
-      DAE.Exp exp,e;
-      list<tuple<DAE.ComponentRef, DAE.Exp>> cdr;
-      list<DAE.Subscript> subs;
-    case({},_)
-      equation
-        true = Flags.isSet(Flags.FAILTRACE);
-        Debug.traceln("Inline.getExpFromArgMap failed with empty argmap and cref: " + ComponentReference.printComponentRefStr(inComponentRef));
-      then
-        fail();
-    case((cref,exp) :: _,key)
-      equation
-        subs = ComponentReference.crefSubs(key);
-        key = ComponentReference.crefStripSubs(key);
-        true = ComponentReference.crefEqual(cref,key);
-        e = Expression.applyExpSubscripts(exp,subs);
-      then
-        e;
-    case(_ :: cdr,key)
-      equation
-        exp = getExpFromArgMap(cdr,key);
-      then
-        exp;
-  end matchcontinue;
+  subs := ComponentReference.crefSubs(inComponentRef);
+  key := ComponentReference.crefStripSubs(inComponentRef);
+
+  for arg in inArgMap loop
+    (cref, exp) := arg;
+    if ComponentReference.crefEqual(cref,key) then
+      try
+        outExp := Expression.applyExpSubscripts(exp,subs);
+      else
+        continue;
+      end try;
+      return ;
+    end if;
+  end for;
+
+  if  Flags.isSet(Flags.FAILTRACE) then
+    Debug.traceln("Inline.getExpFromArgMap failed with empty argmap and cref: " + ComponentReference.printComponentRefStr(inComponentRef));
+  end if;
+  fail();
+
 end getExpFromArgMap;
 
 protected function getInputCrefs
@@ -1534,6 +1572,7 @@ algorithm
     case(DAE.EARLY_INLINE()) then "Inline as soon as possible";
     case(DAE.BUILTIN_EARLY_INLINE()) then "Inline as soon as possible, even if inlining is globally disabled";
     case(DAE.NORM_INLINE()) then "Inline before index reduction";
+    case(DAE.DEFAULT_INLINE()) then "Inline if necessary";
   end match;
 end printInlineTypeStr;
 
@@ -1548,7 +1587,7 @@ public function simplifyAndInlineEquationExp "
   output DAE.ElementSource source;
 algorithm
   (exp,source) := ExpressionSimplify.simplifyAddSymbolicOperation(inExp,inSource);
-  (exp,source) := inlineEquationExp(exp,inlineCall,fns,source);
+  (exp,source) := inlineEquationExp(exp,function inlineCall(fns=fns),source);
 end simplifyAndInlineEquationExp;
 
 public function simplifyAndForceInlineEquationExp "
@@ -1562,7 +1601,7 @@ public function simplifyAndForceInlineEquationExp "
   output DAE.ElementSource source;
 algorithm
   (exp,source) := ExpressionSimplify.simplifyAddSymbolicOperation(inExp,inSource);
-  (exp,source) := inlineEquationExp(exp,forceInlineCall,fns,source);
+  (exp,source) := inlineEquationExp(exp,function forceInlineCall(fns=fns, visitedPaths=AvlSetPath.Tree.EMPTY()),source);
 end simplifyAndForceInlineEquationExp;
 
 public function inlineEquationExp "
@@ -1571,45 +1610,47 @@ public function inlineEquationExp "
 "
   input DAE.EquationExp inExp;
   input Func fn;
-  input Functiontuple infns;
   input DAE.ElementSource inSource;
   output DAE.EquationExp outExp;
   output DAE.ElementSource source;
   partial function Func
     input DAE.Exp inExp;
-    input tuple<Functiontuple,Boolean,list<DAE.Statement>> inTuple;
+    input list<DAE.Statement> inTuple;
     output DAE.Exp outExp;
-    output tuple<Functiontuple,Boolean,list<DAE.Statement>> outTuple;
+    output list<DAE.Statement> outTuple;
   end Func;
   type Functiontuple = tuple<Option<DAE.FunctionTree>,list<DAE.InlineType>>;
 algorithm
-  (outExp,source) := match (inExp,fn,infns,inSource)
+  (outExp,source) := match inExp
     local
       Boolean changed;
       DAE.Exp e,e_1,e1,e1_1,e2,e2_1;
       DAE.EquationExp eq2;
       Functiontuple fns;
       list<DAE.Statement> assrtLst;
-    case (DAE.PARTIAL_EQUATION(e),_,fns,_)
+    case DAE.PARTIAL_EQUATION(e)
       equation
-        (e_1,(_,changed,_)) = Expression.Expression.traverseExpBottomUp(e,fn,(fns,false,{}));
+        (e_1,_) = Expression.traverseExpBottomUp(e,fn,{});
+        changed = not referenceEq(e, e_1);
         eq2 = DAE.PARTIAL_EQUATION(e_1);
-        source = DAEUtil.condAddSymbolicTransformation(changed,inSource,DAE.OP_INLINE(inExp,eq2));
+        source = ElementSource.condAddSymbolicTransformation(changed,inSource,DAE.OP_INLINE(inExp,eq2));
         (eq2,source) = ExpressionSimplify.condSimplifyAddSymbolicOperation(changed, eq2, source);
       then (eq2,source);
-    case (DAE.RESIDUAL_EXP(e),_,fns,_)
+    case DAE.RESIDUAL_EXP(e)
       equation
-        (e_1,(_,changed,_)) = Expression.Expression.traverseExpBottomUp(e,fn,(fns,false,{}));
+        (e_1,_) = Expression.traverseExpBottomUp(e,fn,{});
+        changed = not referenceEq(e, e_1);
         eq2 = DAE.RESIDUAL_EXP(e_1);
-        source = DAEUtil.condAddSymbolicTransformation(changed,inSource,DAE.OP_INLINE(inExp,eq2));
+        source = ElementSource.condAddSymbolicTransformation(changed,inSource,DAE.OP_INLINE(inExp,eq2));
         (eq2,source) = ExpressionSimplify.condSimplifyAddSymbolicOperation(changed, eq2, source);
       then (eq2,source);
-    case (DAE.EQUALITY_EXPS(e1,e2),_,fns,_)
+    case DAE.EQUALITY_EXPS(e1,e2)
       equation
-        (e1_1,(fns,changed,_)) = Expression.Expression.traverseExpBottomUp(e1,fn,(fns,false,{}));
-        (e2_1,(_,changed,_)) = Expression.Expression.traverseExpBottomUp(e2,fn,(fns,changed,{}));
+        (e1_1,_) = Expression.traverseExpBottomUp(e1,fn,{});
+        (e2_1,_) = Expression.traverseExpBottomUp(e2,fn,{});
+        changed = not (referenceEq(e1, e1_1) and referenceEq(e2, e2_1));
         eq2 = DAE.EQUALITY_EXPS(e1_1,e2_1);
-        source = DAEUtil.condAddSymbolicTransformation(changed,inSource,DAE.OP_INLINE(inExp,eq2));
+        source = ElementSource.condAddSymbolicTransformation(changed,inSource,DAE.OP_INLINE(inExp,eq2));
         (eq2,source) = ExpressionSimplify.condSimplifyAddSymbolicOperation(changed, eq2, source);
       then (eq2,source);
     else
@@ -1640,6 +1681,32 @@ algorithm
       then DAE.CALL(path,exps,DAE.CALL_ATTR(ty,false,false,false,false,DAE.NO_INLINE(),DAE.NO_TAIL()));
   end matchcontinue;
 end getReplacementCheckComplex;
+
+protected function getInlineHashTableVarTransform
+  output HashTableCG.HashTable ht;
+  output VarTransform.VariableReplacements repl;
+protected
+  Option<tuple<HashTableCG.HashTable,VarTransform.VariableReplacements>> opt;
+  HashTable2.HashTable regRepl;
+  HashTable3.HashTable invRepl;
+algorithm
+  opt := getGlobalRoot(Global.inlineHashTable);
+  (ht,repl) := match opt
+    case SOME((ht,repl as VarTransform.REPLACEMENTS(regRepl,invRepl)))
+      algorithm
+        // Always stored with n=0, etc with the first global root
+        BaseHashTable.clearAssumeNoDelete(ht);
+        BaseHashTable.clearAssumeNoDelete(regRepl);
+        BaseHashTable.clearAssumeNoDelete(invRepl);
+      then (ht,repl);
+    else
+      algorithm
+        ht := HashTableCG.emptyHashTable();
+        repl := VarTransform.emptyReplacements();
+        setGlobalRoot(Global.inlineHashTable, SOME((ht,repl)));
+      then (ht,repl);
+  end match;
+end getInlineHashTableVarTransform;
 
 annotation(__OpenModelica_Interface="frontend");
 end Inline;

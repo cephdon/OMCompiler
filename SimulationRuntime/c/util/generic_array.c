@@ -31,7 +31,7 @@
 
 #include "generic_array.h"
 #include "index_spec.h"
-#include "memory_pool.h"
+#include "gc/omc_gc.h"
 #include "division.h"
 
 #include <stdio.h>
@@ -41,8 +41,8 @@
 #include <math.h>
 
 
-void* generic_ptrget(const base_array_t *a, size_t sze, size_t i) {
-  return (a->data) + (i*sze);
+static inline void* generic_ptrget(const base_array_t *a, size_t sze, size_t i) {
+  return ((char*)a->data) + (i*sze);
 }
 
 void alloc_generic_array(base_array_t* dest, size_t sze, int ndims,...)
@@ -63,6 +63,10 @@ void* generic_array_element_addr(const base_array_t* source, size_t sze, int ndi
   tmp = generic_ptrget(source, calc_base_index_va(source, ndims, ap), sze);
   va_end(ap);
   return tmp;
+}
+
+void* generic_array_element_addr1(const base_array_t* source, size_t sze, int dim1) {
+  return generic_ptrget(source, dim1-1, sze);
 }
 
 

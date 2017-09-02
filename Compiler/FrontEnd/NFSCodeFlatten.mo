@@ -34,7 +34,6 @@ encapsulated package NFSCodeFlatten
   package:     NFSCodeFlatten
   description: SCode flattening
 
-  RCS: $Id$
 
   This module flattens the SCode representation by removing all extends, imports
   and redeclares, and fully qualifying class names.
@@ -51,7 +50,6 @@ protected import NFEnvExtends;
 protected import Flags;
 protected import List;
 protected import System;
-protected import NFSCodeLookup;
 
 public type Env = NFSCodeEnv.Env;
 
@@ -75,7 +73,7 @@ protected
   String name;
 algorithm
   prog := listReverse(inProgram);
-  SCode.CLASS(name = name) := List.selectFirst(prog, isClass);
+  SCode.CLASS(name = name) := List.find(prog, isClass);
   outClassName := Absyn.IDENT(name);
 end getLastClassNameInProgram;
 
@@ -115,6 +113,7 @@ algorithm
         //System.startTimer();
         System.tmpTickResetIndex(0, NFSCodeEnv.tmpTickIndex);
         System.tmpTickResetIndex(1, NFSCodeEnv.extendsTickIndex);
+        System.setUsesCardinality(false);
         // TODO: Enable this when NFSCodeEnv.tmpTickIndex is removed.
         //System.tmpTickResetIndex(0, NFSCodeEnv.tmpTickIndex);
 
@@ -123,7 +122,6 @@ algorithm
         env = NFEnvExtends.update(env);
 
         (prog, env) = NFSCodeDependency.analyse(inClassName, env, prog);
-        checkForCardinality(env);
         (prog, env) = NFSCodeFlattenImports.flattenProgram(prog, env);
 
         //System.stopTimer();
@@ -143,29 +141,6 @@ algorithm
 
   end matchcontinue;
 end flattenClassInProgram;
-
-protected function checkForCardinality
-  "Checks if the cardinality operator is used or not and sets the system flag,
-  so that some work can be avoided in Inst if cardinality isn't used."
-  input Env inEnv;
-algorithm
-  _ := matchcontinue(inEnv)
-    case _
-      equation
-        (_, _, _) = NFSCodeLookup.lookupNameSilent(Absyn.IDENT("cardinality"),
-          inEnv, Absyn.dummyInfo);
-        System.setUsesCardinality(true);
-      then
-        ();
-
-    else
-      equation
-        System.setUsesCardinality(false);
-      then
-        ();
-
-  end matchcontinue;
-end checkForCardinality;
 
 public function flattenCompleteProgram
   input SCode.Program inProgram;

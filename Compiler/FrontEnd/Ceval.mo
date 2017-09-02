@@ -34,7 +34,6 @@ encapsulated package Ceval
   package:     Ceval
   description: Constant propagation of expressions
 
-  RCS: $Id$
 
   This module handles constant propagation (or evaluation)
   When elaborating expressions, in the Static module, expressions are checked to
@@ -65,7 +64,6 @@ public import Lookup;
 
 // protected imports
 protected import BackendInterface;
-protected import BaseHashTable;
 protected import ComponentReference;
 protected import Config;
 protected import Debug;
@@ -74,7 +72,6 @@ protected import Expression;
 protected import ExpressionDump;
 protected import ExpressionSimplify;
 protected import Flags;
-protected import HashTable;
 protected import InstBinding;
 protected import InstUtil;
 protected import List;
@@ -89,6 +86,7 @@ protected import Util;
 protected import ValuesUtil;
 protected import ClassInf;
 protected import Global;
+protected import MetaModelica.Dangerous.listReverseInPlace;
 
 public function ceval "
   This function is used when the value of a constant expression is
@@ -846,7 +844,7 @@ algorithm
 
     case (cache, env, DAE.REDUCTION(reductionInfo=DAE.REDUCTIONINFO(iterType = iterType, path = path, foldName=foldName, resultName=resultName, foldExp = foldExp, defaultValue = ov, exprType = ty), expr = daeExp, iterators = iterators), impl, stOpt, msg,_)
       equation
-        env = FGraph.openScope(env, SCode.NOT_ENCAPSULATED(), SOME(FCore.forScopeName), NONE());
+        env = FGraph.openScope(env, SCode.NOT_ENCAPSULATED(), FCore.forScopeName, NONE());
         (cache, valMatrix, names, dims, tys, stOpt) = cevalReductionIterators(cache, env, iterators, impl, stOpt,msg,numIter+1);
         // print("Before:\n");print(stringDelimitList(List.map1(List.mapList(valMatrix, ValuesUtil.valString), stringDelimitList, ","), "\n") + "\n");
         valMatrix = makeReductionAllCombinations(valMatrix,iterType);
@@ -856,6 +854,19 @@ algorithm
         value = Util.getOptionOrDefault(ov, Values.META_FAIL());
         value = backpatchArrayReduction(path, iterType, value, dims);
       then (cache, value, stOpt);
+
+    case (_, _, DAE.EMPTY(), _, _, _, _)
+      algorithm
+        s := ComponentReference.printComponentRefStr(inExp.name);
+        v := Types.typeToValue(inExp.ty);
+      then
+        (inCache, Values.EMPTY(inExp.scope, s, v, inExp.tyStr), inST);
+
+    case (_,env,e,_,_,_,_) guard Config.getGraphicsExpMode()
+      algorithm
+        ty := Expression.typeof(inExp);
+        v := Types.typeToValue(ty);
+      then (inCache, Values.EMPTY("#graphicsExp#", ExpressionDump.printExpStr(inExp), v, Types.unparseType(ty)), inST);
 
     // ceval can fail and that is ok, caught by other rules...
     case (_,env,e,_,_,_,_) // Absyn.MSG())
@@ -1131,6 +1142,7 @@ algorithm
     case "max" then cevalBuiltinMax;
     case "min" then cevalBuiltinMin;
     case "rem" then cevalBuiltinRem;
+    case "sum" then cevalBuiltinSum;
     case "diagonal" then cevalBuiltinDiagonal;
     case "simplify" then cevalBuiltinSimplify;
     case "sign" then cevalBuiltinSign;
@@ -1208,7 +1220,7 @@ protected
   list<Absyn.Exp> args;
   SCode.FunctionRestriction funcRest;
 algorithm
-  (outCache,cdef,env_1) := Lookup.lookupClass(inCache,env, funcpath, false);
+  (outCache,cdef,env_1) := Lookup.lookupClass(inCache,env, funcpath);
   SCode.CLASS(name=fid,restriction = SCode.R_FUNCTION(funcRest), classDef=SCode.PARTS(externalDecl=extdecl)) := cdef;
   SCode.FR_EXTERNAL_FUNCTION(_) := funcRest;
   SOME(SCode.EXTERNALDECL(oid,_,_,_,_)) := extdecl;
@@ -3571,6 +3583,49 @@ algorithm
   end matchcontinue;
 end cevalBuiltinMod;
 
+protected function cevalBuiltinSum "Evaluates the builtin sum function."
+  input FCore.Cache inCache;
+  input FCore.Graph inEnv;
+  input list<DAE.Exp> inExpExpLst;
+  input Boolean inBoolean;
+  input Option<GlobalScript.SymbolTable> inST;
+  input Absyn.Msg inMsg;
+  input Integer numIter;
+  output FCore.Cache outCache;
+  output Values.Value outValue;
+  output Option<GlobalScript.SymbolTable> outST;
+algorithm
+  (outCache,outValue,outST):=
+  match (inCache,inEnv,inExpExpLst,inBoolean,inST,inMsg,numIter)
+    local
+      Values.Value v;
+      list<Values.Value> vals;
+      FCore.Graph env;
+      DAE.Exp arr;
+      Boolean impl;
+      Option<GlobalScript.SymbolTable> st;
+      Absyn.Msg msg;
+      FCore.Cache cache;
+    case (cache,env,{arr},impl,st,msg,_)
+      algorithm
+        (cache, Values.ARRAY(valueLst = vals), _) := ceval(cache,env, arr, impl, st,msg, numIter+1);
+        if Types.isInteger(Expression.typeof(arr)) then
+          if listEmpty(vals) then
+            v := Values.INTEGER(0);
+          else
+            (v as Values.INTEGER()) := ValuesUtil.sumArrayelt(vals);
+          end if;
+        else
+          if listEmpty(vals) then
+            v := Values.REAL(0.0);
+          else
+            (v as Values.REAL()) := ValuesUtil.sumArrayelt(vals);
+          end if;
+        end if;
+      then (cache,v,st);
+  end match;
+end cevalBuiltinSum;
+
 protected function cevalBuiltinMax "author: LP
   Evaluates the builtin max function."
   input FCore.Cache inCache;
@@ -4245,45 +4300,30 @@ protected function cevalRelation
   input DAE.Operator inOperator;
   input Values.Value inValue2;
   output Values.Value outValue;
-
 protected
   Boolean result;
 algorithm
-  result := cevalRelation_dispatch(inValue1, inOperator, inValue2);
-  outValue := Values.BOOL(result);
-end cevalRelation;
+  result := matchcontinue inOperator
+    case DAE.GREATER()   then cevalRelationLess(inValue2, inValue1);
+    case DAE.LESS()      then cevalRelationLess(inValue1, inValue2);
+    case DAE.LESSEQ()    then cevalRelationLessEq(inValue1, inValue2);
+    case DAE.GREATEREQ() then cevalRelationGreaterEq(inValue1, inValue2);
+    case DAE.EQUAL()     then cevalRelationEqual(inValue1, inValue2);
+    case DAE.NEQUAL()    then cevalRelationNotEqual(inValue1, inValue2);
 
-protected function cevalRelation_dispatch
-  "Dispatch function for cevalRelation. Call the right relation function
-  depending on the operator."
-  input Values.Value inValue1;
-  input DAE.Operator inOperator;
-  input Values.Value inValue2;
-  output Boolean result;
-algorithm
-  result := matchcontinue(inValue1, inOperator, inValue2)
-    local
-      Values.Value v1, v2;
-      DAE.Operator op;
-
-    case (v1, DAE.GREATER(), v2) then cevalRelationLess(v2, v1);
-    case (v1, DAE.LESS(), v2) then cevalRelationLess(v1, v2);
-    case (v1, DAE.LESSEQ(), v2) then cevalRelationLessEq(v1, v2);
-    case (v1, DAE.GREATEREQ(), v2) then cevalRelationGreaterEq(v1, v2);
-    case (v1, DAE.EQUAL(), v2) then cevalRelationEqual(v1, v2);
-    case (v1, DAE.NEQUAL(), v2) then cevalRelationNotEqual(v1, v2);
-
-    case (v1, op, v2)
-      equation
-        true = Flags.isSet(Flags.FAILTRACE);
+    else
+      algorithm
+        true := Flags.isSet(Flags.FAILTRACE);
         Debug.traceln("- Ceval.cevalRelation failed on: " +
-          ValuesUtil.printValStr(v1) +
-          ExpressionDump.binopSymbol(op) +
-          ValuesUtil.printValStr(v2));
+          ValuesUtil.printValStr(inValue1) +
+          ExpressionDump.relopSymbol(inOperator) +
+          ValuesUtil.printValStr(inValue2));
       then
         fail();
   end matchcontinue;
-end cevalRelation_dispatch;
+
+  outValue := Values.BOOL(result);
+end cevalRelation;
 
 protected function cevalRelationLess
   "Returns whether the first value is less than the second value."
@@ -4292,26 +4332,15 @@ protected function cevalRelationLess
   output Boolean result;
 algorithm
   result := match(inValue1, inValue2)
-    local
-      String s1, s2;
-      Integer i1, i2;
-      Real r1, r2;
-    case (Values.STRING(string = s1), Values.STRING(string = s2))
-      then (stringCompare(s1, s2) < 0);
-    case (Values.INTEGER(integer = i1), Values.INTEGER(integer = i2))
-      then (i1 < i2);
-    case (Values.REAL(real = r1), Values.REAL(real = r2))
-      then (r1 < r2);
-    case (Values.BOOL(boolean = false), Values.BOOL(boolean = true))
-      then true;
-    case (Values.BOOL(), Values.BOOL())
-      then false;
-    case (Values.ENUM_LITERAL(index = i1), Values.ENUM_LITERAL(index = i2))
-      then (i1 < i2);
-    case (Values.ENUM_LITERAL(index = i1), Values.INTEGER(integer = i2))
-      then (i1 < i2);
-    case (Values.INTEGER(integer = i1), Values.ENUM_LITERAL(index = i2))
-      then (i1 < i2);
+    case (Values.STRING(),       Values.STRING())       then (stringCompare(inValue1.string, inValue2.string) < 0);
+    case (Values.BOOL(),         Values.BOOL())         then (inValue1.boolean < inValue2.boolean);
+    case (Values.INTEGER(),      Values.INTEGER())      then (inValue1.integer < inValue2.integer);
+    case (Values.REAL(),         Values.REAL())         then (inValue1.real < inValue2.real);
+    case (Values.INTEGER(),      Values.REAL())         then (intReal(inValue1.integer) < inValue2.real);
+    case (Values.REAL(),         Values.INTEGER())      then (inValue1.real < intReal(inValue2.integer));
+    case (Values.ENUM_LITERAL(), Values.ENUM_LITERAL()) then (inValue1.index < inValue2.index);
+    case (Values.ENUM_LITERAL(), Values.INTEGER())      then (inValue1.index < inValue2.integer);
+    case (Values.INTEGER(),      Values.ENUM_LITERAL()) then (inValue1.integer < inValue2.index);
   end match;
 end cevalRelationLess;
 
@@ -4322,26 +4351,15 @@ protected function cevalRelationLessEq
   output Boolean result;
 algorithm
   result := match(inValue1, inValue2)
-    local
-      String s1, s2;
-      Integer i1, i2;
-      Real r1, r2;
-    case (Values.STRING(string = s1), Values.STRING(string = s2))
-      then (stringCompare(s1, s2) <= 0);
-    case (Values.INTEGER(integer = i1), Values.INTEGER(integer = i2))
-      then (i1 <= i2);
-    case (Values.REAL(real = r1), Values.REAL(real = r2))
-      then (r1 <= r2);
-    case (Values.BOOL(boolean = true), Values.BOOL(boolean = false))
-      then false;
-    case (Values.BOOL(), Values.BOOL())
-      then true;
-    case (Values.ENUM_LITERAL(index = i1), Values.ENUM_LITERAL(index = i2))
-      then (i1 <= i2);
-    case (Values.ENUM_LITERAL(index = i1), Values.INTEGER(integer = i2))
-      then (i1 <= i2);
-    case (Values.INTEGER(integer = i1), Values.ENUM_LITERAL(index = i2))
-      then (i1 <= i2);
+    case (Values.STRING(),       Values.STRING())       then (stringCompare(inValue1.string, inValue2.string) <= 0);
+    case (Values.BOOL(),         Values.BOOL())         then (inValue1.boolean <= inValue2.boolean);
+    case (Values.INTEGER(),      Values.INTEGER())      then (inValue1.integer <= inValue2.integer);
+    case (Values.REAL(),         Values.REAL())         then (inValue1.real <= inValue2.real);
+    case (Values.INTEGER(),      Values.REAL())         then (intReal(inValue1.integer) <= inValue2.real);
+    case (Values.REAL(),         Values.INTEGER())      then (inValue1.real <= intReal(inValue2.integer));
+    case (Values.ENUM_LITERAL(), Values.ENUM_LITERAL()) then (inValue1.index <= inValue2.index);
+    case (Values.ENUM_LITERAL(), Values.INTEGER())      then (inValue1.index <= inValue2.integer);
+    case (Values.INTEGER(),      Values.ENUM_LITERAL()) then (inValue1.integer <= inValue2.index);
   end match;
 end cevalRelationLessEq;
 
@@ -4352,26 +4370,15 @@ protected function cevalRelationGreaterEq
   output Boolean result;
 algorithm
   result := match(inValue1, inValue2)
-    local
-      String s1, s2;
-      Integer i1, i2;
-      Real r1, r2;
-    case (Values.STRING(string = s1), Values.STRING(string = s2))
-      then (stringCompare(s1, s2) >= 0);
-    case (Values.INTEGER(integer = i1), Values.INTEGER(integer = i2))
-      then (i1 >= i2);
-    case (Values.REAL(real = r1), Values.REAL(real = r2))
-      then (r1 >= r2);
-    case (Values.BOOL(boolean = false), Values.BOOL(boolean = true))
-      then false;
-    case (Values.BOOL(), Values.BOOL())
-      then true;
-    case (Values.ENUM_LITERAL(index = i1), Values.ENUM_LITERAL(index = i2))
-      then (i1 >= i2);
-    case (Values.ENUM_LITERAL(index = i1), Values.INTEGER(integer = i2))
-      then (i1 >= i2);
-    case (Values.INTEGER(integer = i1), Values.ENUM_LITERAL(index = i2))
-      then (i1 >= i2);
+    case (Values.STRING(),       Values.STRING())       then (stringCompare(inValue1.string, inValue2.string) >= 0);
+    case (Values.BOOL(),         Values.BOOL())         then (inValue1.boolean >= inValue2.boolean);
+    case (Values.INTEGER(),      Values.INTEGER())      then (inValue1.integer >= inValue2.integer);
+    case (Values.REAL(),         Values.REAL())         then (inValue1.real >= inValue2.real);
+    case (Values.INTEGER(),      Values.REAL())         then (intReal(inValue1.integer) >= inValue2.real);
+    case (Values.REAL(),         Values.INTEGER())      then (inValue1.real >= intReal(inValue2.integer));
+    case (Values.ENUM_LITERAL(), Values.ENUM_LITERAL()) then (inValue1.index >= inValue2.index);
+    case (Values.ENUM_LITERAL(), Values.INTEGER())      then (inValue1.index >= inValue2.integer);
+    case (Values.INTEGER(),      Values.ENUM_LITERAL()) then (inValue1.integer >= inValue2.index);
   end match;
 end cevalRelationGreaterEq;
 
@@ -4382,25 +4389,15 @@ protected function cevalRelationEqual
   output Boolean result;
 algorithm
   result := match(inValue1, inValue2)
-    local
-      String s1, s2;
-      Integer i1, i2;
-      Real r1, r2;
-      Boolean b1, b2;
-    case (Values.STRING(string = s1), Values.STRING(string = s2))
-      then (stringCompare(s1, s2) == 0);
-    case (Values.INTEGER(integer = i1), Values.INTEGER(integer = i2))
-      then (i1 == i2);
-    case (Values.REAL(real = r1), Values.REAL(real = r2))
-      then (r1 == r2);
-    case (Values.BOOL(boolean = b1), Values.BOOL(boolean = b2))
-      then boolEq(b1, b2);
-    case (Values.ENUM_LITERAL(index = i1), Values.ENUM_LITERAL(index = i2))
-      then (i1 == i2);
-    case (Values.ENUM_LITERAL(index = i1), Values.INTEGER(integer = i2))
-      then (i1 == i2);
-    case (Values.INTEGER(integer = i1), Values.ENUM_LITERAL(index = i2))
-      then (i1 == i2);
+    case (Values.STRING(),       Values.STRING())       then (stringCompare(inValue1.string, inValue2.string) == 0);
+    case (Values.BOOL(),         Values.BOOL())         then (inValue1.boolean == inValue2.boolean);
+    case (Values.INTEGER(),      Values.INTEGER())      then (inValue1.integer == inValue2.integer);
+    case (Values.REAL(),         Values.REAL())         then (inValue1.real == inValue2.real);
+    case (Values.INTEGER(),      Values.REAL())         then (intReal(inValue1.integer) == inValue2.real);
+    case (Values.REAL(),         Values.INTEGER())      then (inValue1.real == intReal(inValue2.integer));
+    case (Values.ENUM_LITERAL(), Values.ENUM_LITERAL()) then (inValue1.index == inValue2.index);
+    case (Values.ENUM_LITERAL(), Values.INTEGER())      then (inValue1.index == inValue2.integer);
+    case (Values.INTEGER(),      Values.ENUM_LITERAL()) then (inValue1.integer == inValue2.index);
   end match;
 end cevalRelationEqual;
 
@@ -4411,25 +4408,15 @@ protected function cevalRelationNotEqual
   output Boolean result;
 algorithm
   result := match(inValue1, inValue2)
-    local
-      String s1, s2;
-      Integer i1, i2;
-      Real r1, r2;
-      Boolean b1, b2;
-    case (Values.STRING(string = s1), Values.STRING(string = s2))
-      then (stringCompare(s1, s2) <> 0);
-    case (Values.INTEGER(integer = i1), Values.INTEGER(integer = i2))
-      then (i1 <> i2);
-    case (Values.REAL(real = r1), Values.REAL(real = r2))
-      then (r1 <> r2);
-    case (Values.BOOL(boolean = b1), Values.BOOL(boolean = b2))
-      then not boolEq(b1, b2);
-    case (Values.ENUM_LITERAL(index = i1), Values.ENUM_LITERAL(index = i2))
-      then (i1 <> i2);
-    case (Values.ENUM_LITERAL(index = i1), Values.INTEGER(integer = i2))
-      then (i1 <> i2);
-    case (Values.INTEGER(integer = i1), Values.ENUM_LITERAL(index = i2))
-      then (i1 <> i2);
+    case (Values.STRING(),       Values.STRING())       then (stringCompare(inValue1.string, inValue2.string) <> 0);
+    case (Values.BOOL(),         Values.BOOL())         then (inValue1.boolean <> inValue2.boolean);
+    case (Values.INTEGER(),      Values.INTEGER())      then (inValue1.integer <> inValue2.integer);
+    case (Values.REAL(),         Values.REAL())         then (inValue1.real <> inValue2.real);
+    case (Values.INTEGER(),      Values.REAL())         then (intReal(inValue1.integer) <> inValue2.real);
+    case (Values.REAL(),         Values.INTEGER())      then (inValue1.real <> intReal(inValue2.integer));
+    case (Values.ENUM_LITERAL(), Values.ENUM_LITERAL()) then (inValue1.index <> inValue2.index);
+    case (Values.ENUM_LITERAL(), Values.INTEGER())      then (inValue1.index <> inValue2.integer);
+    case (Values.INTEGER(),      Values.ENUM_LITERAL()) then (inValue1.integer <> inValue2.index);
   end match;
 end cevalRelationNotEqual;
 
@@ -4477,30 +4464,23 @@ public function cevalList "This function does constant
   input Option<GlobalScript.SymbolTable> inST;
   input Absyn.Msg inMsg;
   input Integer numIter;
-  output FCore.Cache outCache;
-  output list<Values.Value> outValuesValueLst;
+  output FCore.Cache outCache = inCache;
+  output list<Values.Value> outValuesValueLst = {};
   output Option<GlobalScript.SymbolTable> outInteractiveInteractiveSymbolTableOption;
+protected
+  list<DAE.Exp> expLstNew = inExpExpLst;
+  DAE.Exp exp;
+  Values.Value v;
+  Option<GlobalScript.SymbolTable> st = inST;
+
 algorithm
-  (outCache,outValuesValueLst,outInteractiveInteractiveSymbolTableOption) :=
-  match (inCache,inEnv,inExpExpLst,inBoolean,inST,inMsg,numIter)
-    local
-      FCore.Graph env;
-      Absyn.Msg msg;
-      Values.Value v;
-      DAE.Exp exp;
-      Boolean impl;
-      Option<GlobalScript.SymbolTable> st;
-      list<Values.Value> vs;
-      list<DAE.Exp> exps;
-      FCore.Cache cache;
-    case (cache,_,{},_,st,_,_) then (cache,{},st);
-    case (cache,env,(exp :: exps ),impl,st,msg,_)
-      equation
-        (cache,v,st) = ceval(cache,env, exp, impl, st,msg,numIter+1);
-        (cache,vs,st) = cevalList(cache,env, exps, impl, st,msg,numIter);
-      then
-        (cache,v :: vs,st);
-  end match;
+  while not listEmpty(expLstNew) loop
+    exp::expLstNew := expLstNew;
+    (outCache, v, st) := ceval(outCache, inEnv, exp, inBoolean, st, inMsg, numIter+1);
+    outValuesValueLst := v :: outValuesValueLst;
+  end while;
+  outValuesValueLst := listReverseInPlace(outValuesValueLst);
+  outInteractiveInteractiveSymbolTableOption := st;
 end cevalList;
 
 public function cevalCref "Evaluates ComponentRef, i.e. variables, by
@@ -4705,19 +4685,11 @@ algorithm
       then
         (cache,res);
 
-    // arbitrary expressions, C_VAR, value exists.
-    case (cache,env,cr,DAE.EQBOUND(evaluatedExp = SOME(e_val),constant_ = DAE.C_VAR()),impl,msg,_)
+    // arbitrary expressions, value exists.
+    case (cache,env,cr,DAE.EQBOUND(evaluatedExp = SOME(e_val)),impl,msg,_)
       equation
         subsc = ComponentReference.crefLastSubs(cr);
         (cache,res) = cevalSubscriptValue(cache,env, subsc, e_val, impl,msg,numIter+1);
-      then
-        (cache,res);
-
-    // arbitrary expressions, C_PARAM, value exists.
-    case (cache,env,cr,DAE.EQBOUND(evaluatedExp = SOME(e_val),constant_ = DAE.C_PARAM()),impl,msg,_)
-      equation
-        subsc = ComponentReference.crefLastSubs(cr);
-        (cache,res)= cevalSubscriptValue(cache,env, subsc, e_val, impl,msg,numIter+1);
       then
         (cache,res);
 
@@ -4776,7 +4748,7 @@ output Boolean res;
 algorithm
   res := matchcontinue(cr,exp)
     case(_,_) equation
-      res = Util.boolOrList(List.map1(Expression.extractCrefsFromExp(exp),ComponentReference.crefEqual,cr));
+      res = List.map1BoolOr(Expression.extractCrefsFromExp(exp),ComponentReference.crefEqual,cr);
     then res;
     else false;
   end matchcontinue;
@@ -5409,10 +5381,10 @@ protected
   Values.Value val;
   FCore.Cache cache;
   FCore.StructuralParameters structuralParameters;
-  array<DAE.FunctionTree> functionTree;
+  Mutable<DAE.FunctionTree> functionTree;
 algorithm
-  structuralParameters := (HashTable.emptyHashTableSized(BaseHashTable.lowBucketSize),{});
-  functionTree := arrayCreate(1,functions);
+  structuralParameters := (AvlSetCR.EMPTY(),{});
+  functionTree := Mutable.create(functions);
   cache := FCore.CACHE(NONE(), functionTree, structuralParameters, Absyn.IDENT(""), Absyn.dummyProgram);
   (_,val,_) := ceval(cache, FGraph.empty(), exp, false, NONE(), Absyn.NO_MSG(),0);
   oexp := ValuesUtil.valueExp(val);

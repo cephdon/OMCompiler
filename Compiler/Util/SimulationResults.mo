@@ -34,7 +34,6 @@ encapsulated package SimulationResults
   package:     SimulationResults
   description: Read simulation results into the Values.Value structure.
 
-  RCS: $Id$
 
   "
 
@@ -109,6 +108,14 @@ public function cmpSimulationResults
   external "C" res=SimulationResults_cmpSimulationResults(runningTestsuite,filename,reffilename,logfilename,refTol,absTol,vars) annotation(Library = "omcruntime");
 end cmpSimulationResults;
 
+public function deltaSimulationResults
+  input String filename;
+  input String reffilename;
+  input String method;
+  input list<String> vars;
+  output Real res;
+  external "C" res=SimulationResults_deltaSimulationResults(filename,reffilename,method,vars) annotation(Library = "omcruntime");
+end deltaSimulationResults;
 
 public function diffSimulationResults
   input Boolean runningTestsuite;

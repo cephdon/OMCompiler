@@ -1,25 +1,33 @@
-cmake_minimum_required (VERSION 2.8.6)
+cmake_minimum_required(VERSION 2.8.9)
 
 project(${PeerName})
 
-# add the solver default implementation library
-add_library(${PeerName}_static STATIC Peer.cpp PeerSettings.cpp FactoryExport.cpp)
-set_target_properties(${PeerName}_static PROPERTIES COMPILE_DEFINITIONS "RUNTIME_STATIC_LINKING")
-add_precompiled_header(${PeerName}_static Include/Core/Modelica.h )
-install (TARGETS ${PeerName}_static DESTINATION ${LIBINSTALLEXT})
+add_library(${PeerName} Peer.cpp PeerSettings.cpp FactoryExport.cpp)
 
-add_library(${PeerName} SHARED Peer.cpp PeerSettings.cpp FactoryExport.cpp  )
-target_link_libraries (${PeerName} ${SolverName} ${ExtensionUtilitiesName} ${Boost_LIBRARIES})
+set(PEER_COMPILE_DEFINITIONS "")
+if(OPENMP_FOUND)
+  set(PEER_COMPILE_DEFINITIONS "USE_OPENMP")
+else(OPENMP_FOUND)
+  set(OpenMP_CXX_FLAGS "")
+endif(OPENMP_FOUND)
 
-if (UNIX)
-	set_target_properties(${PeerName}_static PROPERTIES COMPILE_FLAGS -fPIC)
-	set_target_properties(${PeerName} PROPERTIES COMPILE_FLAGS -fPIC)
-endif(UNIX)
+target_link_libraries(${PeerName} ${SolverName} ${ExtensionUtilitiesName} ${Boost_LIBRARIES})
 
-add_precompiled_header(${PeerName} Include/Core/Modelica.h )
+if(OPENMP_FOUND)
+  set_target_properties(${PeerName} PROPERTIES LINK_FLAGS ${OpenMP_CXX_FLAGS})
+endif(OPENMP_FOUND)
 
-install (TARGETS ${PeerName} ${PeerName}_static DESTINATION ${LIBINSTALLEXT})
+if(NOT BUILD_SHARED_LIBS)
+  set_target_properties(${PeerName} PROPERTIES COMPILE_DEFINITIONS "RUNTIME_STATIC_LINKING")
+endif(NOT BUILD_SHARED_LIBS)
 
-install (FILES  ${CMAKE_SOURCE_DIR}/Include/Solver/Peer/Peer.h
-                  ${CMAKE_SOURCE_DIR}/Include/Solver/Peer/FactoryExport.h
-DESTINATION include/omc/cpp/Solver/Peer)
+set_target_properties(${PeerName} PROPERTIES COMPILE_DEFINITIONS "${PEER_COMPILE_DEFINITIONS}")
+set_target_properties(${PeerName} PROPERTIES COMPILE_FLAGS "${OpenMP_CXX_FLAGS}")
+
+add_precompiled_header(${PeerName} Include/Core/Modelica.h)
+
+install(TARGETS ${PeerName} DESTINATION ${LIBINSTALLEXT})
+install(FILES
+  ${CMAKE_SOURCE_DIR}/Include/Solver/Peer/Peer.h
+  ${CMAKE_SOURCE_DIR}/Include/Solver/Peer/FactoryExport.h
+  DESTINATION include/omc/cpp/Solver/Peer)

@@ -34,6 +34,7 @@
 #include <string.h>
 #include <assert.h>
 #include "omc_config.h"
+#include "OpenModelicaBootstrappingHeader.h"
 
 #if defined(_MSC_VER) || defined(__MINGW32__)
 #else
@@ -59,7 +60,7 @@ extern char* _replace(char* source_str,char* search_str,char* replace_str); //De
 
 static char* winPath = NULL;
 
-#if defined(linux) || defined(__APPLE_CC__)
+#if !defined(OPENMODELICA_BOOTSTRAPPING_STAGE_1) && (defined(linux) || defined(__APPLE_CC__))
 /* Helper function to strip /bin/... or /lib/... from the executable path of omc */
 static void stripbinpath(char *omhome)
 {
@@ -73,7 +74,12 @@ static void stripbinpath(char *omhome)
 #endif
 
 /* Do not free or modify the returned variable of getInstallationDirectoryPath. It's part of the environment! */
-#if defined(linux)
+#if defined(OPENMODELICA_BOOTSTRAPPING_STAGE_1) && !(defined(_MSC_VER) || defined(__MINGW32__))
+const char* SettingsImpl__getInstallationDirectoryPath(void) {
+  const char *path = getenv("OPENMODELICAHOME");
+  return path ? path : "OPENMODELICA_BOOTSTRAPPING_STAGE_1_NO_OPENMODELICAHOME";
+}
+#elif defined(linux)
 #include <sys/stat.h>
 #include <linux/limits.h>
 #include <unistd.h>
@@ -118,7 +124,7 @@ const char* SettingsImpl__getInstallationDirectoryPath(void) {
     fprintf(stderr, "proc_pidpath() failed: %s\n", strerror(errno));
     exit(EXIT_FAILURE);
   } else {
-    omhome = GC_strdup(info.dli_fname);
+    omhome = omc_alloc_interface.malloc_strdup(info.dli_fname);
     stripbinpath(omhome);
   }
   init = 1;
@@ -155,28 +161,40 @@ const char* SettingsImpl__getInstallationDirectoryPath(void) {
 }
 #endif /* dylib */
 
-#else
+#else /* Not linux or Apple */
 const char* SettingsImpl__getInstallationDirectoryPath(void) {
   const char *path = getenv("OPENMODELICAHOME");
   int i = 0;
-  if (path == NULL)
-    return CONFIG_DEFAULT_OPENMODELICAHOME; // On Windows, this is NULL; on Unix it is the configured --prefix
-#if defined(__MINGW32__) || defined(_MSC_VER)
+  if (path == NULL) {
+#if defined(__MINGW32__) || defined(__MINGW64__) || defined(_MSC_VER)
+    char filename[MAX_PATH];
+    if (0 != GetModuleFileName(NULL, filename, MAX_PATH)) {
+      path = filename;
+      *strrchr(path, '\\') = '\0';
+      *strrchr(path, '\\') = '\0';
+    } else
+#endif
+    {
+      return CONFIG_DEFAULT_OPENMODELICAHOME; // On Windows, this is NULL; on Unix it is the configured --prefix
+    }
+  }
+#if defined(__MINGW64__) || defined(__MINGW32__) || defined(_MSC_VER)
   /* adrpo: translate this to forward slashes! */
   /* already set, set it only once! */
-  if (winPath != NULL)
+  if (winPath != NULL) {
     return (const char*)winPath;
+  }
 
   /* duplicate the path */
   winPath = strdup(path);
 
   /* ?? not enough memory for duplication */
-  if (!winPath)
+  if (!winPath) {
     return path;
+  }
 
   /* convert \\ to / */
-  while(winPath[i] != '\0')
-  {
+  while(winPath[i] != '\0') {
     if (winPath[i] == '\\') winPath[i] = '/';
     i++;
   }
@@ -200,9 +218,9 @@ char* Settings_getHomeDir(int runningTestsuite)
   return "%APPDATA%";
 #endif
   if (homePath == NULL || runningTestsuite) {
-    return "";
+    return omc_alloc_interface.malloc_strdup("");
   }
-  return GC_strdup(homePath);
+  return omc_alloc_interface.malloc_strdup(homePath);
 }
 
 // Do not free the returned variable. It's malloc'ed
@@ -225,7 +243,7 @@ char* SettingsImpl__getModelicaPath(int runningTestsuite) {
 #if !(defined(_MSC_VER) || defined(__MINGW32__))
     } else {
       int lenHome = strlen(homePath);
-      buffer = (char*) GC_malloc_atomic(lenOmhome+lenHome+41);
+      buffer = (char*) omc_alloc_interface.malloc_atomic(lenOmhome+lenHome+41);
       snprintf(buffer,lenOmhome+lenHome+41,"%s/lib/omlibrary:%s/.openmodelica/libraries/",omhome,homePath);
     }
 #endif
@@ -235,11 +253,11 @@ char* SettingsImpl__getModelicaPath(int runningTestsuite) {
 #if defined(__MINGW32__) || defined(_MSC_VER)
   /* adrpo: translate this to forward slashes! */
   /* duplicate the path */
-  winLibPath = GC_strdup(path);
+  winLibPath = omc_alloc_interface.malloc_strdup(path);
 
   /* ?? not enough memory for duplication */
   if (!winLibPath)
-    return GC_strdup(path);
+    return omc_alloc_interface.malloc_strdup(path);
 
   /* convert \\ to / */
   while(winLibPath[i] != '\0')
@@ -250,7 +268,7 @@ char* SettingsImpl__getModelicaPath(int runningTestsuite) {
   return winLibPath;
 #endif
 
-  return GC_strdup(path);
+  return omc_alloc_interface.malloc_strdup(path);
 }
 
 static const char* SettingsImpl__getCompileCommand(void)

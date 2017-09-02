@@ -34,7 +34,7 @@
 
 #include "openmodelica.h"
 #include "base_array.h"
-#include "memory_pool.h"
+#include "gc/omc_gc.h"
 #include "index_spec.h"
 #include "omc_msvc.h"
 #include <stdarg.h>
@@ -160,6 +160,8 @@ extern void range_real_array(modelica_real start,modelica_real stop, modelica_re
 
 extern real_array_t add_alloc_real_array(const real_array_t a, const real_array_t b);
 extern void add_real_array(const real_array_t * a, const real_array_t * b, real_array_t* dest);
+extern real_array_t add_alloc_scalar_real_array(const modelica_real sc, const real_array_t *arr);
+extern real_array_t sub_alloc_scalar_real_array(const modelica_real sc, const real_array_t *arr);
 
 /* Unary subtraction */
 extern void usub_real_array(real_array_t* a);

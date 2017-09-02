@@ -13,6 +13,7 @@ AR = @AR_SH@
 CC = @CC@
 CXX = @CXX@
 CONFIG_CPPFLAGS = @CPPFLAGS@
+CXXFLAGS = @CXXFLAGS@
 ifeq ($(OMC_MINIMAL_RUNTIME),)
 IPOPT_CFLAGS=@IPOPT_CFLAGS@
 else
@@ -30,6 +31,8 @@ LDFLAGS=-L$(OMBUILDDIR)/lib/@host_short@/omc @RT_LDFLAGS@
 LDFLAGS_SIM=-L$(OMBUILDDIR)/lib/@host_short@/omc @RT_LDFLAGS_SIM@
 endif
 
+defaultMakefileTarget = Makefile
+
 LIBMAKEFILE = Makefile
 QMAKE=@QMAKE@
 CONFIG_H=$(top_builddir)/Compiler/runtime/config.h $(top_builddir)/Compiler/runtime/config.unix.h
@@ -39,7 +42,11 @@ LIBFMIRUNTIME=@LIBFMIRUNTIME@
 ifeq ($(OMC_MINIMAL_RUNTIME),)
 OBJ_EXT=.o
 else
+ifeq ($(OMC_FMI_RUNTIME),)
 OBJ_EXT=.minimal.o
+else
+OBJ_EXT=.o
+endif
 endif
 
 REGEN = Makefile.in

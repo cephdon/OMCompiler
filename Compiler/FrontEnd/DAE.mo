@@ -34,7 +34,6 @@ encapsulated package DAE
   package:     DAE
   description: DAE management and output
 
-  RCS: $Id$
 
   This module defines data structures for DAE equations and declarations of
   variables and functions. The DAE data structure is the result of flattening,
@@ -42,10 +41,16 @@ encapsulated package DAE
   functions."
 
 // public imports
-public import Absyn;
-public import ClassInf;
-public import SCode;
-public import Values;
+import Absyn;
+import BaseAvlTree;
+import ClassInf;
+import SCode;
+import Prefix;
+import Values;
+import Connect;
+
+protected
+import DAEDump;
 
 public type Ident = String;
 
@@ -57,6 +62,7 @@ public constant String UNIQUEIO = "$unique$outer$";
 
 public constant String derivativeNamePrefix = "$DER";
 public constant String preNamePrefix = "$PRE";
+public constant String previousNamePrefix = "$CLKPRE";
 public constant String startNamePrefix = "$START";
 
 
@@ -68,9 +74,12 @@ public uniontype VarKind
 end VarKind;
 
 public uniontype ConnectorType
+  "The type of a connector element."
   record POTENTIAL end POTENTIAL;
   record FLOW end FLOW;
-  record STREAM end STREAM;
+  record STREAM
+    Option<ComponentRef> associatedFlow;
+  end STREAM;
   record NON_CONNECTOR end NON_CONNECTOR;
 end ConnectorType;
 
@@ -102,15 +111,15 @@ uniontype ElementSource "gives information about the origin of the element"
   record SOURCE
     SourceInfo info "the line and column numbers of the equations and algorithms this element came from";
     list<Absyn.Within> partOfLst "the model(s) this element came from";
-    Option<ComponentRef> instanceOpt "the instance(s) this element is part of";
-    list<Option<tuple<ComponentRef, ComponentRef>>> connectEquationOptLst "this element came from this connect(s)";
+    Prefix.ComponentPrefix instance "the instance(s) this element is part of";
+    list<tuple<ComponentRef, ComponentRef>> connectEquationOptLst "this element came from this connect(s)";
     list<Absyn.Path> typeLst "the classes where the type(s) of the element is defined";
     list<SymbolicOperation> operations "the symbolic operations used to end up with the final state of the element";
     list<SCode.Comment> comment;
   end SOURCE;
 end ElementSource;
 
-public constant ElementSource emptyElementSource = SOURCE(Absyn.dummyInfo,{},NONE(),{},{},{},{});
+public constant ElementSource emptyElementSource = SOURCE(Absyn.dummyInfo,{},Prefix.NOCOMPPRE(),{},{},{},{});
 
 public uniontype SymbolicOperation
   record FLATTEN "From one equation/statement to an element"
@@ -235,6 +244,14 @@ public uniontype Element
     ElementSource source "the origin of the component/equation/algorithm" ;
   end INITIAL_ARRAY_EQUATION;
 
+  record CONNECT_EQUATION "a connect equation"
+    Element lhsElement;
+    Connect.Face lhsFace;
+    Element rhsElement;
+    Connect.Face rhsFace;
+    ElementSource source "the origin of the component/equation/algorithm";
+  end CONNECT_EQUATION;
+
   record COMPLEX_EQUATION "an equation of complex type, e.g. record = func(..)"
     Exp lhs;
     Exp rhs;
@@ -303,10 +320,22 @@ public uniontype Element
     ElementSource source "the origin of the component/equation/algorithm" ;
   end ASSERT;
 
+  record INITIAL_ASSERT " The Modelica builtin assert"
+    Exp condition;
+    Exp message;
+    Exp level;
+    ElementSource source "the origin of the component/equation/algorithm" ;
+  end INITIAL_ASSERT;
+
   record TERMINATE " The Modelica builtin terminate(msg)"
     Exp message;
     ElementSource source "the origin of the component/equation/algorithm" ;
   end TERMINATE;
+
+  record INITIAL_TERMINATE " The Modelica builtin terminate(msg)"
+    Exp message;
+    ElementSource source "the origin of the component/equation/algorithm" ;
+  end INITIAL_TERMINATE;
 
   record REINIT " reinit operator for reinitialization of states"
     ComponentRef componentRef;
@@ -337,10 +366,21 @@ public uniontype Element
     ClassAttributes classAttrs;
   end CLASS_ATTRIBUTES;
 
+  record FLAT_SM "Flat state machine section"
+    Ident ident;
+    list<Element> dAElist "The states/modes transitions and variable
+                      merging equations within the the flat state machine";
+  end FLAT_SM;
+
+  record SM_COMP "A state/mode component in a state machine"
+    ComponentRef componentRef;
+    list<Element> dAElist "a component with subelements";
+  end SM_COMP;
+
 
 end Element;
 
-public constant Type T_ASSERTIONLEVEL = T_ENUMERATION(NONE(), Absyn.FULLYQUALIFIED(Absyn.IDENT("AssertionLevel")), {"error","warning"}, {}, {}, emptyTypeSource);
+public constant Type T_ASSERTIONLEVEL = T_ENUMERATION(NONE(), Absyn.FULLYQUALIFIED(Absyn.IDENT("AssertionLevel")), {"error","warning"}, {}, {});
 public constant Exp ASSERTIONLEVEL_ERROR = ENUM_LITERAL(Absyn.QUALIFIED("AssertionLevel",Absyn.IDENT("error")),1);
 public constant Exp ASSERTIONLEVEL_WARNING = ENUM_LITERAL(Absyn.QUALIFIED("AssertionLevel",Absyn.IDENT("warning")),2);
 
@@ -361,7 +401,6 @@ public uniontype Function
     Absyn.Path path;
     Type type_;
     ElementSource source "the origin of the component/equation/algorithm" ;
-    VarKind kind;
   end RECORD_CONSTRUCTOR;
 end Function;
 
@@ -375,7 +414,10 @@ public uniontype InlineType
   record EARLY_INLINE "Inline even earlier than NORM_INLINE. This will display the inlined code in the flattened model and also works for functions calling other functions that should be inlined."
   end EARLY_INLINE;
 
-  record NO_INLINE "Avoid inline, this is default behaviour but is also possible to set with Inline=false"
+  record DEFAULT_INLINE "no user option, tool can inline this functio if necessary"
+  end DEFAULT_INLINE;
+
+  record NO_INLINE "don't inline this function, set with Inline=false"
   end NO_INLINE;
 
   record AFTER_INDEX_RED_INLINE "Try to inline after index reduction"
@@ -453,7 +495,6 @@ uniontype VariableAttributes
     Option<Exp> startOrigin "where did start=X came from? NONE()|SOME(DAE.SCONST binding|type|undefined)";
   end VAR_ATTR_BOOL;
 
-  // BTH
   record VAR_ATTR_CLOCK
     Option<Boolean> isProtected;
     Option<Boolean> finalPrefix;
@@ -506,7 +547,7 @@ end Distribution;
 public uniontype ExtArg
   record EXTARG
     ComponentRef componentRef;
-    Attributes attributes;
+    Absyn.Direction direction;
     Type type_;
   end EXTARG;
 
@@ -517,7 +558,6 @@ public uniontype ExtArg
 
   record EXTARGSIZE
     ComponentRef componentRef;
-    Attributes attributes;
     Type type_;
     Exp exp;
   end EXTARGSIZE;
@@ -544,32 +584,35 @@ public uniontype DAElist "A DAElist is a list of Elements. Variables, equations,
 end DAElist;
 
 /* AVLTree for functions */
-public type AvlKey = Absyn.Path;
+public type FunctionTree = AvlTreePathFunction.Tree;
 
-public type AvlValue = Option<Function>;
-
-public type FunctionTree = AvlTree;
-
+package AvlTreePathFunction "AvlTree for Path to Function"
+protected
+  import DAEDump;
 public
-uniontype AvlTree "The binary tree data structure
- "
-  record AVLTREENODE
-    Option<AvlTreeValue> value "Value" ;
-    Integer height "heigth of tree, used for balancing";
-    Option<AvlTree> left "left subtree" ;
-    Option<AvlTree> right "right subtree" ;
-  end AVLTREENODE;
+  extends BaseAvlTree;
+  redeclare type Key = Absyn.Path;
+  redeclare type Value = Option<Function>;
+  redeclare function extends keyStr
+  algorithm
+    outString := Absyn.pathString(inKey);
+  end keyStr;
+  redeclare function extends valueStr
+  algorithm
+    outString := match inValue
+      local
+        Function f;
+      case SOME(f) then DAEDump.dumpFunctionStr(f);
+      else "<NO_FUNCTION>";
+    end match;
+  end valueStr;
+  redeclare function extends keyCompare
+  algorithm
+    outResult := Absyn.pathCompareNoQual(inKey1,inKey2);
+  end keyCompare;
 
-end AvlTree;
-
-public
-uniontype AvlTreeValue "Each node in the binary tree can have a value associated with it."
-  record AVLTREEVALUE
-    AvlKey key "Key" ;
-    AvlValue value "Value" ;
-  end AVLTREEVALUE;
-
-end AvlTreeValue;
+  redeclare function addConflictDefault = addConflictReplace;
+end AvlTreePathFunction;
 
 /* -- Algorithm.mo -- */
 public
@@ -588,6 +631,10 @@ uniontype Constraint "Optimica extension: The `Constraints\' type corresponds to
     list<Exp> constraintLst;
   end CONSTRAINT_EXPS;
 
+  record CONSTRAINT_DT "Constraints needed for proper Dynamic Tearing"
+    Exp constraint;
+    Boolean localCon "local or global constraint; local constraints depend on variables that are computed within the algebraic loop itself";
+  end CONSTRAINT_DT;
 end Constraint;
 
 public
@@ -753,7 +800,7 @@ end Var;
 public
 uniontype Attributes "- Attributes"
   record ATTR
-    SCode.ConnectorType connectorType "flow, stream or unspecified";
+    ConnectorType       connectorType "flow, stream or unspecified";
     SCode.Parallelism   parallelism "parallelism";
     SCode.Variability   variability "variability" ;
     Absyn.Direction     direction "direction" ;
@@ -763,10 +810,10 @@ uniontype Attributes "- Attributes"
 end Attributes;
 
 public
-constant Attributes dummyAttrVar   = ATTR(SCode.POTENTIAL(), SCode.NON_PARALLEL(), SCode.VAR(),   Absyn.BIDIR(), Absyn.NOT_INNER_OUTER(), SCode.PUBLIC());
-constant Attributes dummyAttrParam = ATTR(SCode.POTENTIAL(), SCode.NON_PARALLEL(), SCode.PARAM(), Absyn.BIDIR(), Absyn.NOT_INNER_OUTER(), SCode.PUBLIC());
-constant Attributes dummyAttrConst = ATTR(SCode.POTENTIAL(), SCode.NON_PARALLEL(), SCode.CONST(), Absyn.BIDIR(), Absyn.NOT_INNER_OUTER(), SCode.PUBLIC());
-constant Attributes dummyAttrInput = ATTR(SCode.POTENTIAL(), SCode.NON_PARALLEL(), SCode.VAR(),   Absyn.INPUT(), Absyn.NOT_INNER_OUTER(), SCode.PUBLIC());
+constant Attributes dummyAttrVar   = ATTR(NON_CONNECTOR(), SCode.NON_PARALLEL(), SCode.VAR(),   Absyn.BIDIR(), Absyn.NOT_INNER_OUTER(), SCode.PUBLIC());
+constant Attributes dummyAttrParam = ATTR(NON_CONNECTOR(), SCode.NON_PARALLEL(), SCode.PARAM(), Absyn.BIDIR(), Absyn.NOT_INNER_OUTER(), SCode.PUBLIC());
+constant Attributes dummyAttrConst = ATTR(NON_CONNECTOR(), SCode.NON_PARALLEL(), SCode.CONST(), Absyn.BIDIR(), Absyn.NOT_INNER_OUTER(), SCode.PUBLIC());
+constant Attributes dummyAttrInput = ATTR(NON_CONNECTOR(), SCode.NON_PARALLEL(), SCode.VAR(),   Absyn.INPUT(), Absyn.NOT_INNER_OUTER(), SCode.PUBLIC());
 
 public uniontype BindingSource "where this binding came from: either default binding or start value"
   record BINDING_FROM_DEFAULT_VALUE "the binding came from the default value" end BINDING_FROM_DEFAULT_VALUE;
@@ -795,64 +842,65 @@ type EqualityConstraint = Option<tuple<Absyn.Path, Integer, InlineType>>
   "contains the path to the equalityConstraint function,
    the dimension of the output and the inline type of the function";
 
-public type TypeSource = list<Absyn.Path> "the class(es) where the type originated";
-public constant TypeSource emptyTypeSource = {} "an empty origin for the type";
-
 // default constants that can be used
-constant Type T_REAL_DEFAULT        = T_REAL({}, emptyTypeSource);
-constant Type T_INTEGER_DEFAULT     = T_INTEGER({}, emptyTypeSource);
-constant Type T_STRING_DEFAULT      = T_STRING({}, emptyTypeSource);
-constant Type T_BOOL_DEFAULT        = T_BOOL({}, emptyTypeSource);
-constant Type T_CLOCK_DEFAULT       = T_CLOCK({}, emptyTypeSource);
-constant Type T_ENUMERATION_DEFAULT = T_ENUMERATION(NONE(), Absyn.IDENT(""), {}, {}, {}, emptyTypeSource);
-constant Type T_REAL_BOXED          = T_METABOXED(T_REAL_DEFAULT, emptyTypeSource);
-constant Type T_INTEGER_BOXED       = T_METABOXED(T_INTEGER_DEFAULT, emptyTypeSource);
-constant Type T_STRING_BOXED        = T_METABOXED(T_STRING_DEFAULT, emptyTypeSource);
-constant Type T_BOOL_BOXED          = T_METABOXED(T_BOOL_DEFAULT, emptyTypeSource);
-constant Type T_METABOXED_DEFAULT   = T_METABOXED(T_UNKNOWN_DEFAULT, emptyTypeSource);
-constant Type T_METALIST_DEFAULT    = T_METALIST(T_UNKNOWN_DEFAULT, emptyTypeSource);
-constant Type T_NONE_DEFAULT        = T_METAOPTION(T_UNKNOWN_DEFAULT, emptyTypeSource);
-constant Type T_ANYTYPE_DEFAULT     = T_ANYTYPE(NONE(), emptyTypeSource);
-constant Type T_UNKNOWN_DEFAULT     = T_UNKNOWN(emptyTypeSource);
-constant Type T_NORETCALL_DEFAULT   = T_NORETCALL(emptyTypeSource);
-constant Type T_FUNCTION_DEFAULT    = T_FUNCTION({},T_ANYTYPE_DEFAULT,FUNCTION_ATTRIBUTES_DEFAULT,emptyTypeSource);
-constant Type T_METATYPE_DEFAULT    = T_METATYPE(T_UNKNOWN_DEFAULT, emptyTypeSource);
-constant Type T_COMPLEX_DEFAULT     = T_COMPLEX(ClassInf.UNKNOWN(Absyn.IDENT("")), {}, NONE(), emptyTypeSource) "default complex with unknown CiState";
-constant Type T_COMPLEX_DEFAULT_RECORD = T_COMPLEX(ClassInf.RECORD(Absyn.IDENT("")), {}, NONE(), emptyTypeSource) "default complex with record CiState";
-constant Type T_SOURCEINFO_DEFAULT  = T_METAUNIONTYPE({Absyn.QUALIFIED("SourceInfo",Absyn.IDENT("SOURCEINFO"))},true,{"fileName","isReadOnly","lineNumberStart","columnNumberStart","lineNumberEnd","columnNumberEnd","lastModification"},Absyn.IDENT("SourceInfo")::{});
+constant Type T_REAL_DEFAULT        = T_REAL({});
+constant Type T_INTEGER_DEFAULT     = T_INTEGER({});
+constant Type T_STRING_DEFAULT      = T_STRING({});
+constant Type T_BOOL_DEFAULT        = T_BOOL({});
+constant Type T_CLOCK_DEFAULT       = T_CLOCK({});
+constant Type T_ENUMERATION_DEFAULT = T_ENUMERATION(NONE(), Absyn.IDENT(""), {}, {}, {});
+constant Type T_REAL_BOXED          = T_METABOXED(T_REAL_DEFAULT);
+constant Type T_INTEGER_BOXED       = T_METABOXED(T_INTEGER_DEFAULT);
+constant Type T_STRING_BOXED        = T_METABOXED(T_STRING_DEFAULT);
+constant Type T_BOOL_BOXED          = T_METABOXED(T_BOOL_DEFAULT);
+constant Type T_METABOXED_DEFAULT   = T_METABOXED(T_UNKNOWN_DEFAULT);
+constant Type T_METALIST_DEFAULT    = T_METALIST(T_UNKNOWN_DEFAULT);
+constant Type T_NONE_DEFAULT        = T_METAOPTION(T_UNKNOWN_DEFAULT);
+constant Type T_ANYTYPE_DEFAULT     = T_ANYTYPE(NONE());
+constant Type T_UNKNOWN_DEFAULT     = T_UNKNOWN();
+constant Type T_NORETCALL_DEFAULT   = T_NORETCALL();
+constant Type T_METATYPE_DEFAULT    = T_METATYPE(T_UNKNOWN_DEFAULT);
+constant Type T_COMPLEX_DEFAULT     = T_COMPLEX(ClassInf.UNKNOWN(Absyn.IDENT("")), {}, NONE()) "default complex with unknown CiState";
+constant Type T_COMPLEX_DEFAULT_RECORD = T_COMPLEX(ClassInf.RECORD(Absyn.IDENT("")), {}, NONE()) "default complex with record CiState";
+
+constant Type T_SOURCEINFO_DEFAULT_METARECORD = T_METARECORD(Absyn.QUALIFIED("SourceInfo",Absyn.IDENT("SOURCEINFO")), Absyn.IDENT("SourceInfo"), {}, 1, {
+    TYPES_VAR("fileName", dummyAttrVar, T_STRING_DEFAULT, UNBOUND(), NONE()),
+    TYPES_VAR("isReadOnly", dummyAttrVar, T_BOOL_DEFAULT, UNBOUND(), NONE()),
+    TYPES_VAR("lineNumberStart", dummyAttrVar, T_INTEGER_DEFAULT, UNBOUND(), NONE()),
+    TYPES_VAR("columnNumberStart", dummyAttrVar, T_INTEGER_DEFAULT, UNBOUND(), NONE()),
+    TYPES_VAR("lineNumberEnd", dummyAttrVar, T_INTEGER_DEFAULT, UNBOUND(), NONE()),
+    TYPES_VAR("columnNumberEnd", dummyAttrVar, T_INTEGER_DEFAULT, UNBOUND(), NONE()),
+    TYPES_VAR("lastModification", dummyAttrVar, T_REAL_DEFAULT, UNBOUND(), NONE())
+  }, true);
+constant Type T_SOURCEINFO_DEFAULT  = T_METAUNIONTYPE({Absyn.QUALIFIED("SourceInfo",Absyn.IDENT("SOURCEINFO"))},{},true,EVAL_SINGLETON_KNOWN_TYPE(T_SOURCEINFO_DEFAULT_METARECORD),Absyn.IDENT("SourceInfo"));
 
 // Arrays of unknown dimension, eg. Real[:]
-public constant Type T_ARRAY_REAL_NODIM    = T_ARRAY(T_REAL_DEFAULT,{DIM_UNKNOWN()}, emptyTypeSource);
-public constant Type T_ARRAY_INT_NODIM     = T_ARRAY(T_INTEGER_DEFAULT,{DIM_UNKNOWN()}, emptyTypeSource);
-public constant Type T_ARRAY_BOOL_NODIM    = T_ARRAY(T_BOOL_DEFAULT,{DIM_UNKNOWN()}, emptyTypeSource);
-public constant Type T_ARRAY_STRING_NODIM  = T_ARRAY(T_STRING_DEFAULT,{DIM_UNKNOWN()}, emptyTypeSource);
+public constant Type T_ARRAY_REAL_NODIM    = T_ARRAY(T_REAL_DEFAULT,{DIM_UNKNOWN()});
+public constant Type T_ARRAY_INT_NODIM     = T_ARRAY(T_INTEGER_DEFAULT,{DIM_UNKNOWN()});
+public constant Type T_ARRAY_BOOL_NODIM    = T_ARRAY(T_BOOL_DEFAULT,{DIM_UNKNOWN()});
+public constant Type T_ARRAY_STRING_NODIM  = T_ARRAY(T_STRING_DEFAULT,{DIM_UNKNOWN()});
 
 
 public uniontype Type "models the different front-end and back-end types"
 
   record T_INTEGER
     list<Var> varLst;
-    TypeSource source;
   end T_INTEGER;
 
   record T_REAL
     list<Var> varLst;
-    TypeSource source;
   end T_REAL;
 
   record T_STRING
     list<Var> varLst;
-    TypeSource source;
   end T_STRING;
 
   record T_BOOL
     list<Var> varLst;
-    TypeSource source;
   end T_BOOL;
 
   record T_CLOCK
     list<Var> varLst; // BTH Since Clock type has no attributes, this is not really needed, but at the moment kept for unified treatment of fundamental types
-    TypeSource source;
   end T_CLOCK;
 
   record T_ENUMERATION "If the list of names is empty, this is the super-enumeration that is the super-class of all enumerations"
@@ -861,7 +909,6 @@ public uniontype Type "models the different front-end and back-end types"
     list<String> names "names" ;
     list<Var> literalVarLst;
     list<Var> attributeLst;
-    TypeSource source;
   end T_ENUMERATION;
 
   record T_ARRAY
@@ -871,22 +918,18 @@ public uniontype Type "models the different front-end and back-end types"
        In general Inst generates 1 and all the others generates 2"
     Type ty "Type";
     Dimensions dims "dims";
-    TypeSource source;
   end T_ARRAY;
 
   record T_NORETCALL "For functions not returning any values."
-    TypeSource source;
   end T_NORETCALL;
 
   record T_UNKNOWN "Used when type is not yet determined"
-    TypeSource source;
   end T_UNKNOWN;
 
   record T_COMPLEX
     ClassInf.State complexClassType "The type of a class";
     list<Var> varLst "The variables of a complex type";
     EqualityConstraint equalityConstraint;
-    TypeSource source;
   end T_COMPLEX;
 
   record T_SUBTYPE_BASIC
@@ -894,95 +937,84 @@ public uniontype Type "models the different front-end and back-end types"
     list<Var> varLst "complexVarLst; The variables of a complex type! Should be empty, kept here to verify!";
     Type complexType "complexType; A complex type can be a subtype of another (primitive) type (through extends)";
     EqualityConstraint equalityConstraint;
-    TypeSource source;
   end T_SUBTYPE_BASIC;
 
   record T_FUNCTION
     list<FuncArg> funcArg "funcArg" ;
     Type funcResultType "Only single-result" ;
     FunctionAttributes functionAttributes;
-    TypeSource source;
+    Absyn.Path path;
   end T_FUNCTION;
 
   record T_FUNCTION_REFERENCE_VAR "MetaModelica Function Reference that is a variable"
     Type functionType "the type of the function";
-    TypeSource source;
   end T_FUNCTION_REFERENCE_VAR;
 
   record T_FUNCTION_REFERENCE_FUNC "MetaModelica Function Reference that is a direct reference to a function"
     Boolean builtin;
     Type functionType "type of the non-boxptr function";
-    TypeSource source;
   end T_FUNCTION_REFERENCE_FUNC;
 
   record T_TUPLE
     list<Type> types "For functions returning multiple values.";
     Option<list<String>> names "For tuples elements that have names (function outputs)";
-    TypeSource source;
   end T_TUPLE;
 
   record T_CODE
     CodeType ty;
-    TypeSource source;
   end T_CODE;
 
   record T_ANYTYPE
     Option<ClassInf.State> anyClassType "anyClassType - used for generic types. When class state present the type is assumed to be a complex type which has that restriction.";
-    TypeSource source;
   end T_ANYTYPE;
 
   // MetaModelica extensions
   record T_METALIST "MetaModelica list type"
     Type ty "listType";
-    TypeSource source;
   end T_METALIST;
 
   record T_METATUPLE "MetaModelica tuple type"
     list<Type> types;
-    TypeSource source;
   end T_METATUPLE;
 
   record T_METAOPTION "MetaModelica option type"
     Type ty;
-    TypeSource source;
   end T_METAOPTION;
 
   record T_METAUNIONTYPE "MetaModelica Uniontype, added by simbj"
     // TODO: You can't trust these fields as it seems MetaUtil.fixUniontype is sent empty elements when running dependency analysis
     list<Absyn.Path> paths;
+    list<Type> typeVars;
     Boolean knownSingleton "The runtime system (dynload), does not know if the value is a singleton. But optimizations are safe if this is true.";
-    list<String> singletonFields "The field names of the singleton";
-    TypeSource source;
+    EvaluateSingletonType singletonType;
+    Absyn.Path path;
   end T_METAUNIONTYPE;
 
   record T_METARECORD "MetaModelica Record, used by Uniontypes. added by simbj"
+    Absyn.Path path "the path to the record";
     Absyn.Path utPath "the path to its uniontype; this is what we match the type against";
     // If the metarecord constructor was added to the FunctionTree, this would
     // not be needed. They are used to create the datatype in the runtime...
+    list<Type> typeVars;
     Integer index; //The index in the uniontype
     list<Var> fields;
     Boolean knownSingleton "The runtime system (dynload), does not know if the value is a singleton. But optimizations are safe if this is true.";
-    TypeSource source;
   end T_METARECORD;
 
   record T_METAARRAY
     Type ty;
-    TypeSource source;
   end T_METAARRAY;
 
   record T_METABOXED "Used for MetaModelica generic types"
     Type ty;
-    TypeSource source;
   end T_METABOXED;
 
   record T_METAPOLYMORPHIC
     String name;
-    TypeSource source;
   end T_METAPOLYMORPHIC;
 
   record T_METATYPE "this type contains all the meta types"
     Type ty;
-    TypeSource source;
   end T_METATYPE;
 
 end Type;
@@ -990,6 +1022,12 @@ end Type;
 public uniontype CodeType
   record C_EXPRESSION
   end C_EXPRESSION;
+
+  record C_EXPRESSION_OR_MODIFICATION
+  end C_EXPRESSION_OR_MODIFICATION;
+
+  record C_MODIFICATION
+  end C_MODIFICATION;
 
   record C_TYPENAME
   end C_TYPENAME;
@@ -1001,11 +1039,27 @@ public uniontype CodeType
   end C_VARIABLENAMES;
 end CodeType;
 
-public constant FunctionAttributes FUNCTION_ATTRIBUTES_BUILTIN = FUNCTION_ATTRIBUTES(NO_INLINE(),true,false,false,FUNCTION_BUILTIN(NONE()),FP_NON_PARALLEL());
-public constant FunctionAttributes FUNCTION_ATTRIBUTES_DEFAULT = FUNCTION_ATTRIBUTES(NO_INLINE(),true,false,false,FUNCTION_NOT_BUILTIN(),FP_NON_PARALLEL());
+uniontype EvaluateSingletonType "Is here because constants are not allowed to contain function pointers for some reason"
+  record EVAL_SINGLETON_TYPE_FUNCTION
+    EvaluateSingletonTypeFunction fun;
+  end EVAL_SINGLETON_TYPE_FUNCTION;
+
+  record EVAL_SINGLETON_KNOWN_TYPE
+    Type ty;
+  end EVAL_SINGLETON_KNOWN_TYPE;
+
+  record NOT_SINGLETON
+  end NOT_SINGLETON;
+end EvaluateSingletonType;
+
+partial function EvaluateSingletonTypeFunction
+  output Type ty;
+end EvaluateSingletonTypeFunction;
+
+public constant FunctionAttributes FUNCTION_ATTRIBUTES_BUILTIN = FUNCTION_ATTRIBUTES(NO_INLINE(),true,false,false,FUNCTION_BUILTIN(NONE(), false),FP_NON_PARALLEL());
+public constant FunctionAttributes FUNCTION_ATTRIBUTES_DEFAULT = FUNCTION_ATTRIBUTES(DEFAULT_INLINE(),true,false,false,FUNCTION_NOT_BUILTIN(),FP_NON_PARALLEL());
 public constant FunctionAttributes FUNCTION_ATTRIBUTES_IMPURE = FUNCTION_ATTRIBUTES(NO_INLINE(),false,true,false,FUNCTION_NOT_BUILTIN(),FP_NON_PARALLEL());
-//BTH
-public constant FunctionAttributes FUNCTION_ATTRIBUTES_BUILTIN_IMPURE = FUNCTION_ATTRIBUTES(NO_INLINE(),false,true,false,FUNCTION_BUILTIN(NONE()),FP_NON_PARALLEL());
+public constant FunctionAttributes FUNCTION_ATTRIBUTES_BUILTIN_IMPURE = FUNCTION_ATTRIBUTES(NO_INLINE(),false,true,false,FUNCTION_BUILTIN(NONE(), false),FP_NON_PARALLEL());
 
 public
 uniontype FunctionAttributes
@@ -1026,6 +1080,7 @@ uniontype FunctionBuiltin
 
   record FUNCTION_BUILTIN "Function is builtin"
     Option<String> name;
+    Boolean unboxArgs;
   end FUNCTION_BUILTIN;
 
   record FUNCTION_BUILTIN_PTR "The function has a body, but its function pointer is builtin. This means inline code+optimized pointer if need be."
@@ -1165,7 +1220,6 @@ uniontype EqMod "To generate the correct set of equations, the translator has to
 
   record UNTYPED
     Absyn.Exp exp;
-    SourceInfo info;
   end UNTYPED;
 
 end EqMod;
@@ -1184,21 +1238,20 @@ uniontype Mod "Modification"
     SCode.Final   finalPrefix "final prefix";
     SCode.Each    eachPrefix "each prefix";
     list<SubMod>  subModLst;
-    Option<EqMod> eqModOption;
+    Option<EqMod> binding;
+    SourceInfo    info;
   end MOD;
 
   record REDECL
     SCode.Final finalPrefix "final prefix";
     SCode.Each  eachPrefix "each prefix";
-    list<tuple<SCode.Element, Mod>> tplSCodeElementModLst;
+    SCode.Element element;
+    Mod mod;
   end REDECL;
 
   record NOMOD end NOMOD;
-
 end Mod;
 
-
-// BTH
 public
 uniontype ClockKind
   record INFERRED_CLOCK
@@ -1206,7 +1259,7 @@ uniontype ClockKind
 
   record INTEGER_CLOCK
     Exp intervalCounter;
-    Integer resolution;
+    Exp resolution " integer type >= 1 ";
   end INTEGER_CLOCK;
 
   record REAL_CLOCK
@@ -1215,12 +1268,12 @@ uniontype ClockKind
 
   record BOOLEAN_CLOCK
     Exp condition;
-    Real startInterval;
+    Exp startInterval " real type >= 0.0 ";
   end BOOLEAN_CLOCK;
 
   record SOLVER_CLOCK
     Exp c;
-    String solverMethod;
+    Exp solverMethod " string type ";
   end SOLVER_CLOCK;
 end ClockKind;
 
@@ -1256,9 +1309,8 @@ uniontype Exp "Expressions
     Boolean bool "Bool constants" ;
   end BCONST;
 
-  // BTH
-  record CLKCONST
-    ClockKind clk "Clock constants" ;
+  record CLKCONST "Clock constructors"
+    ClockKind clk "Clock kinds";
   end CLKCONST;
 
   record ENUM_LITERAL "Enumeration literal"
@@ -1370,6 +1422,13 @@ uniontype Exp "Expressions
     Type ty;
   end TSUB;
 
+  record RSUB "Record field indexing"
+    Exp exp;
+    Integer ix; // Used when generating code for MetaModelica records
+    String fieldName;
+    Type ty;
+  end RSUB;
+
   record SIZE "The size operator"
     Exp exp;
     Option<Exp> sz;
@@ -1424,6 +1483,7 @@ uniontype Exp "Expressions
     list<Exp> args;
     list<String> fieldNames;
     Integer index; //Index in the uniontype
+    list<Type> typeVars;
   end METARECORDCALL;
 
   record MATCHEXPRESSION
@@ -1536,6 +1596,7 @@ end MatchCase;
 
 public uniontype MatchType
   record MATCHCONTINUE end MATCHCONTINUE;
+  record TRY_STACKOVERFLOW end TRY_STACKOVERFLOW;
   record MATCH
     Option<tuple<Integer,Type,Integer>> switch "The index of the pattern to switch over, its type and the value to divide string hashes with";
   end MATCH;
@@ -1573,6 +1634,7 @@ public uniontype Pattern "Patterns deconstruct expressions"
     Integer index;
     list<Pattern> patterns;
     list<Var> fields; // Needed to be able to bind a variable to the fields
+    list<Type> typeVars;
     Boolean knownSingleton "The runtime system (dynload), does not know if the value is a singleton. But optimizations are safe if this is true.";
   end PAT_CALL;
   record PAT_CALL_NAMED "RECORD(pat1,...,patn); all patterns are named"
@@ -1755,6 +1817,7 @@ end ComponentRef;
 
 public constant ComponentRef crefTime = CREF_IDENT("time", T_REAL_DEFAULT, {});
 public constant ComponentRef crefTimeState = CREF_IDENT("$time", T_REAL_DEFAULT, {});
+public constant ComponentRef emptyCref = CREF_IDENT("", T_UNKNOWN_DEFAULT, {});
 
 public
 uniontype Subscript "The `Subscript\' and `ComponentRef\' datatypes are simple
@@ -1783,7 +1846,6 @@ uniontype Expand "array cref expansion strategy"
   record NOT_EXPAND "not expand crefs" end NOT_EXPAND;
 end Expand;
 
-public constant AvlTree emptyFuncTree = AVLTREENODE(NONE(),0,NONE(),NONE());
 public constant DAElist emptyDae = DAE({});
 
 annotation(__OpenModelica_Interface="frontend");

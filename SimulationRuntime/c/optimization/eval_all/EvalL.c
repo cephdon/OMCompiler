@@ -127,10 +127,10 @@ Bool ipopt_h(int n, double *vopt, Bool new_x, double obj_factor, int m, double *
     const int nJ = optData->dim.nJ;
     modelica_boolean upC;
     modelica_boolean upC2;
-    const int nBoolean = optData->data->modelData.nVariablesBoolean;
-    const int nInteger = optData->data->modelData.nVariablesInteger;
+    const int nBoolean = optData->data->modelData->nVariablesBoolean;
+    const int nInteger = optData->data->modelData->nVariablesInteger;
     const int nReal = optData->dim.nReal;
-    const int nRelations =  optData->data->modelData.nRelations;
+    const int nRelations =  optData->data->modelData->nRelations;
     DATA * data = optData->data;
 
     upC = obj_factor != 0;
@@ -139,17 +139,20 @@ Bool ipopt_h(int n, double *vopt, Bool new_x, double obj_factor, int m, double *
       optData2ModelData(optData, vopt, 1);
     }
     */
+    if(optData->ipop.csvOstep)
+      debugeSteps(optData, vopt, lambda);
+    ++optData->dim.iter;
     optData->dim.iter_updateHessian = 0;
     upC2 = upC && optData->s.mayer;
     upC = upC && optData->s.lagrange;
 
     memcpy(data->localData[0]->integerVars, optData->i0, nInteger*sizeof(modelica_integer));
     memcpy(data->localData[0]->booleanVars, optData->b0, nBoolean*sizeof(modelica_boolean));
-    memcpy(data->simulationInfo.integerVarsPre, optData->i0Pre, nInteger*sizeof(modelica_integer));
-    memcpy(data->simulationInfo.booleanVarsPre, optData->b0Pre, nBoolean*sizeof(modelica_boolean));
-    memcpy(data->simulationInfo.realVarsPre, optData->v0Pre, nReal*sizeof(modelica_real));
-    memcpy(data->simulationInfo.relationsPre, optData->rePre, nRelations*sizeof(modelica_boolean));
-    memcpy(data->simulationInfo.relations, optData->re, nRelations*sizeof(modelica_boolean));
+    memcpy(data->simulationInfo->integerVarsPre, optData->i0Pre, nInteger*sizeof(modelica_integer));
+    memcpy(data->simulationInfo->booleanVarsPre, optData->b0Pre, nBoolean*sizeof(modelica_boolean));
+    memcpy(data->simulationInfo->realVarsPre, optData->v0Pre, nReal*sizeof(modelica_real));
+    memcpy(data->simulationInfo->relationsPre, optData->rePre, nRelations*sizeof(modelica_boolean));
+    memcpy(data->simulationInfo->relations, optData->re, nRelations*sizeof(modelica_boolean));
 
     for(ii = 0, k = 0, v = vopt, la = lambda; ii + 1 < nsi; ++ii){
       for(p = 1; p < np1; ++p, v += nv, la += nJ){
@@ -202,6 +205,7 @@ static inline void num_hessian0(double * v, const double * const lambda,
   const modelica_boolean la = optData->s.lagrange;
   const modelica_boolean upCost = la && objFactor != 0;
   DATA * data = optData->data;
+  threadData_t *threadData = optData->threadData;
 
   const int nv = optData->dim.nv;
   const int nx = optData->dim.nx;
@@ -234,10 +238,10 @@ static inline void num_hessian0(double * v, const double * const lambda,
     for(l = 0; l < nx; ++l)
       data->localData[0]->realVars[l] = v[l]*vnom[l];
     for(; l <nv; ++l)
-      data->simulationInfo.inputVars[l-nx] = (modelica_real) v[l]*vnom[l];
-    data->callback->input_function(data);
+      data->simulationInfo->inputVars[l-nx] = (modelica_real) v[l]*vnom[l];
+    data->callback->input_function(data, threadData);
     /*data->callback->functionDAE(data);*/
-    updateDiscreteSystem(data);
+    updateDiscreteSystem(data, threadData);
     /********************/
     diffSynColoredOptimizerSystem(optData, optData->tmpJ, i,j,2);
     /********************/
@@ -299,6 +303,7 @@ static inline void num_hessian1(double * v, const double * const lambda,
   int ii,jj, l,k;
   long double v_save, h;
   DATA * data = optData->data;
+  threadData_t *threadData = optData->threadData;
 
   modelica_real * realV[3];
 
@@ -322,11 +327,11 @@ static inline void num_hessian1(double * v, const double * const lambda,
     for(l = 0; l < nx; ++l)
       data->localData[0]->realVars[l] = v[l]*vnom[l];
     for(; l <nv; ++l)
-      data->simulationInfo.inputVars[l-nx] = (modelica_real) v[l]*vnom[l];
+      data->simulationInfo->inputVars[l-nx] = (modelica_real) v[l]*vnom[l];
 
-    data->callback->input_function(data);
+    data->callback->input_function(data, threadData);
     /*data->callback->functionDAE(data);*/
-    updateDiscreteSystem(data);
+    updateDiscreteSystem(data, threadData);
     /********************/
     diffSynColoredOptimizerSystem(optData, optData->tmpJ, i,j,indexJ);
     /********************/

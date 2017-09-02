@@ -11,6 +11,18 @@ package builtin
     input Integer y;
     output Boolean outResult;
   end intLt;
+
+  function intEq
+    input Integer x;
+    input Integer y;
+    output Boolean outResult;
+  end intEq;
+
+  function listLength "Return the length of the list"
+    replaceable type TypeVar subtypeof Any;
+    input list<TypeVar> lst;
+    output Integer result;
+  end listLength;
 end builtin;
 
 package Absyn
@@ -296,6 +308,7 @@ package Absyn
   uniontype Direction
     record INPUT end INPUT;
     record OUTPUT end OUTPUT;
+    record INPUT_OUTPUT end INPUT_OUTPUT;
     record BIDIR end BIDIR;
   end Direction;
 
@@ -356,9 +369,11 @@ package SCode
     record R_METARECORD
       Absyn.Path name;
       Integer index;
+      list<String> typeVars;
     end R_METARECORD;
 
     record R_UNIONTYPE
+      list<String> typeVars;
     end R_UNIONTYPE;
   end Restriction;
 
@@ -489,6 +504,14 @@ package SCode
       Comment comment;
       SourceInfo info;
     end EQ_EQUALS;
+
+    record EQ_PDE
+      Absyn.Exp expLeft;
+      Absyn.Exp expRight;
+      ComponentRef domain;
+      Comment comment;
+      SourceInfo info;
+    end EQ_PDE;
 
     record EQ_CONNECT
       Absyn.ComponentRef crefLeft;
@@ -830,5 +853,21 @@ package System
     output String escapedString;
   end escapedString;
 end System;
+
+package Util
+  type StatefulBoolean = array<Boolean>;
+  function getStatefulBoolean
+    input StatefulBoolean sb;
+    output Boolean b;
+  end getStatefulBoolean;
+  function setStatefulBoolean
+    input StatefulBoolean sb;
+    input Boolean b;
+  end setStatefulBoolean;
+  function makeStatefulBoolean
+    input Boolean b;
+    output StatefulBoolean sb;
+  end makeStatefulBoolean;
+end Util;
 
 end SCodeTV;

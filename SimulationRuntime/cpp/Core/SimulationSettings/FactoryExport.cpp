@@ -1,4 +1,3 @@
-#pragma once
 /** @addtogroup coreSimulationSettings
  *
  *  @{
@@ -29,7 +28,7 @@ extern "C" void BOOST_EXTENSION_EXPORT_DECL extension_export_simulation_settings
   fm.get<ISettingsFactory,int,PATH,PATH,PATH>()[1].set<SettingsFactory>();
 }
 
-#elif defined(OMC_BUILD)
+#elif defined(OMC_BUILD) && !defined(RUNTIME_STATIC_LINKING)
 
 
 
@@ -40,8 +39,15 @@ extern "C" void BOOST_EXTENSION_EXPORT_DECL extension_export_simulation_settings
 using boost::extensions::factory;
 BOOST_EXTENSION_TYPE_MAP_FUNCTION {
 
-  types.get<std::map<std::string, factory<ISettingsFactory,PATH,PATH,PATH> > >()
+  types.get<std::map<std::string, boost::extensions::factory<ISettingsFactory,PATH,PATH,PATH> > >()
     ["SettingsFactory"].set<SettingsFactory>();
+}
+#elif defined(OMC_BUILD) && defined(RUNTIME_STATIC_LINKING)
+#include <Core/SimulationSettings/Factory.h>
+shared_ptr<ISettingsFactory> createFactory(PATH libraries_path, PATH config_path, PATH modelicasystem_path)
+{
+    shared_ptr<ISettingsFactory> setttingsFactory =  shared_ptr<ISettingsFactory>(new SettingsFactory(libraries_path,config_path,modelicasystem_path));
+    return setttingsFactory;
 }
 
 #else

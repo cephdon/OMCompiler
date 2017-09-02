@@ -34,7 +34,6 @@ encapsulated package FExpand
   package:     FExpand
   description: Expanding parts of the graph
 
-  RCS: $Id: FExpand 18987 2014-02-05 16:24:53Z adrpo $
 
 "
 
@@ -80,10 +79,7 @@ algorithm
   (outGraph, outRef)  := match(inGraph, inPath)
     local
       Ref r, t;
-      Name n;
-      Absyn.Path p;
       Graph g;
-      Scope s;
 
     case (g, _)
       equation

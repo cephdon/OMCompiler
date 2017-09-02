@@ -34,7 +34,6 @@ encapsulated package Util
   package:     Util
   description: Miscellanous MetaModelica Compiler (MMC) utilities
 
-  RCS: $Id$
 
   This package contains various MetaModelica Compiler (MMC) utilities sigh, mostly
   related to lists.
@@ -101,12 +100,14 @@ public constant String rightBraketStr = "$rB";
 public constant String leftParStr = "$lP";
 public constant String rightParStr = "$rP";
 public constant String commaStr = "$c";
+public constant String appostrophStr = "$a";
 
 protected constant list<ReplacePattern> replaceStringPatterns=
          {REPLACEPATTERN(".",pointStr),
           REPLACEPATTERN("[",leftBraketStr),REPLACEPATTERN("]",rightBraketStr),
           REPLACEPATTERN("(",leftParStr),REPLACEPATTERN(")",rightParStr),
-          REPLACEPATTERN(",",commaStr)};
+          REPLACEPATTERN(",",commaStr),
+          REPLACEPATTERN("'",appostrophStr)};
 
 public function isIntGreater "Author: BZ"
   input Integer lhs;
@@ -383,7 +384,7 @@ end stringContainsChar;
 
 public function stringDelimitListPrintBuf "
 Author: BZ, 2009-11
-Same funcitonality as stringDelimitListPrint, but writes to print buffer instead of string variable.
+Same functionality as stringDelimitListPrint, but writes to print buffer instead of string variable.
 Usefull for heavy string operations(causes malloc error on some models when generating init file).
 "
   input list<String> inStringLst;
@@ -810,6 +811,25 @@ algorithm
   end match;
 end applyOptionOrDefault2;
 
+public function applyOption_2<T>
+  input Option<T> inValue1;
+  input Option<T> inValue2;
+  input FuncType inFunc;
+  output Option<T> outValue;
+
+  partial function FuncType
+    input T inValue1;
+    input T inValue2;
+    output T outValue;
+  end FuncType;
+algorithm
+  outValue := match (inValue1, inValue2)
+    case (NONE(), _) then inValue2;
+    case (_, NONE()) then inValue1;
+    else SOME(inFunc(getOption(inValue1), getOption(inValue2)));
+  end match;
+end applyOption_2;
+
 public function makeOption<T>
   "Makes a value into value option, using SOME(value)"
   input T inValue;
@@ -891,6 +911,37 @@ public function intCompare
   input Integer inM;
   output Integer outResult = if inN == inM then 0 elseif inN > inM then 1 else -1;
 end intCompare;
+
+public function intPow
+  "Performs integer exponentiation."
+  input Integer base;
+  input Integer exponent;
+  output Integer result = 1;
+algorithm
+  if exponent >= 0 then
+    for i in 1:exponent loop
+      result := result * base;
+    end for;
+  else
+    fail();
+  end if;
+end intPow;
+
+public function realCompare
+  "Compares two reals and return -1 if the first is smallest, 1 if the second
+   is smallest, or 0 if they are equal."
+  input Real inN;
+  input Real inM;
+  output Integer outResult = if inN == inM then 0 elseif inN > inM then 1 else -1;
+end realCompare;
+
+public function boolCompare
+  "Compares two booleans and return -1 if the first is smallest, 1 if the second
+   is smallest, or 0 if they are equal."
+  input Boolean inN;
+  input Boolean inM;
+  output Integer outResult = if inN == inM then 0 elseif inN > inM then 1 else -1;
+end boolCompare;
 
 public function isEmptyString
   "Returns true if string is the empty string."
@@ -1041,7 +1092,7 @@ algorithm
   end match;
 end mulListIntegerOpt;
 
-public type StatefulBoolean = array<Boolean> "A single boolean value that can be updated (a destructive operation)";
+public type StatefulBoolean = array<Boolean> "A single boolean value that can be updated (a destructive operation). NOTE: Use Mutable<Boolean> instead. This implementation is kept since Susan cannot use that type.";
 
 public function makeStatefulBoolean
 "Create a boolean with state (that is, it is mutable)"
@@ -1234,7 +1285,7 @@ algorithm
       Integer sz,maxSz;
     case (_,SOME(maxSz),_)
       equation
-        sz = intMul(listLength(lst),List.fold(List.map(lst,listLength),intMul,1));
+        sz = intMul(listLength(lst),List.applyAndFold(lst,intMul,listLength,1));
         true = (sz <= maxSz);
       then allCombinations2(lst);
 
@@ -1675,7 +1726,7 @@ public function isCIdentifier
 protected
   Integer i;
 algorithm
-  (i,_) := System.regex(str, "^[][_A-Za-z0-9]*$", 0, true, false);
+  (i,_) := System.regex(str, "^[_A-Za-z][_A-Za-z0-9]*$", 0, true, false);
   b := i == 1;
 end isCIdentifier;
 
@@ -1715,6 +1766,43 @@ algorithm
                 then inFileName
                 else stringAppendList({pwd,pd,inFileName});
 end absoluteOrRelative;
+
+public function intLstString
+  input list<Integer> lst;
+  output String s;
+algorithm
+  s := stringDelimitList(List.map(lst,intString),", ");
+end intLstString;
+
+public function sourceInfoIsEmpty
+  "Returns whether the given SourceInfo is empty or not."
+  input SourceInfo inInfo;
+  output Boolean outIsEmpty;
+algorithm
+  outIsEmpty := match inInfo
+    case SOURCEINFO(fileName = "") then true;
+    else false;
+  end match;
+end sourceInfoIsEmpty;
+
+public function sourceInfoIsEqual
+  "Returns whether two SourceInfo are equal or not."
+  input SourceInfo inInfo1;
+  input SourceInfo inInfo2;
+  output Boolean outIsEqual;
+algorithm
+  outIsEqual := match (inInfo1, inInfo2)
+    case (SOURCEINFO(), SOURCEINFO())
+      then inInfo1.fileName == inInfo2.fileName and
+           inInfo1.isReadOnly == inInfo2.isReadOnly and
+           inInfo1.lineNumberStart == inInfo2.lineNumberStart and
+           inInfo1.columnNumberStart == inInfo2.columnNumberStart and
+           inInfo1.lineNumberEnd == inInfo2.lineNumberEnd and
+           inInfo1.columnNumberEnd == inInfo2.columnNumberEnd;
+
+    else false;
+  end match;
+end sourceInfoIsEqual;
 
 annotation(__OpenModelica_Interface="util");
 end Util;

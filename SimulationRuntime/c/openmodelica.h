@@ -75,7 +75,7 @@ extern "C" {
 #endif
 
 /* BEFORE: compat.h */
-#if defined(__MINGW32__) || defined(_MSC_VER)
+#if defined(__MINGW32__) || defined(_MSC_VER) || defined(__AVR__)
 #define EXIT(code) exit(code)
 #else
 /* We need to patch exit() on Unix systems
@@ -134,7 +134,7 @@ struct type_desc_s {
       size_t elements;
       struct type_desc_s *element;
     } tuple;
-    modelica_complex complex;
+    modelica_complex om_complex;
     struct _record {
       const char *record_name;
       size_t elements;
@@ -151,37 +151,23 @@ struct type_desc_s {
 
 /* Special Modelica builtin functions*/
 #define smooth(P,EXP)    (EXP)
-#define semiLinear(x,positiveSlope,negativeSlope) (x>=0?positiveSlope*x:negativeSlope*x)
-
+static inline modelica_real semiLinear(const modelica_real x,const modelica_real positiveSlope, const modelica_real negativeSlope){return x*((x>=0)? positiveSlope : negativeSlope);}
 /* sign function */
-#define sign(v) (v>0?1:(v<0?-1:0))
+static inline int sign(double v)
+{
+  return v > 0 ? 1 : v < 0 ? -1 : 0;
+}
 
-#if defined(_MSC_VER)
-#define fmax(x, y) ((x>y)?x:y)
-#define fmin(x, y) ((x<y)?x:y)
-#define snprintf sprintf_s
-#define trunc(a) ((double)((int)(a)))
-#endif
+#include "util/omc_msvc.h"
 
 /* initial and terminal function calls */
-#define initial() data->simulationInfo.initial
-#define terminal() data->simulationInfo.terminal
+#define initial() data->simulationInfo->initial
+#define terminal() data->simulationInfo->terminal
 
-#define homotopy(actual, simplified) ((simplified) * (1.0-data->simulationInfo.lambda) + (actual) * data->simulationInfo.lambda)
-#define homotopyParameter() data->simulationInfo.lambda
+#define homotopy(actual, simplified) ((simplified) * (1.0-data->simulationInfo->lambda) + (actual) * data->simulationInfo->lambda)
+#define homotopyParameter() data->simulationInfo->lambda
 
-typedef struct {
-  void (*init)(void);
-  void* (*malloc)(size_t);
-  void* (*malloc_atomic)(size_t);
-  char* (*malloc_string)(size_t);
-  char* (*malloc_strdup)(const char*);
-  int (*collect_a_little)(void);
-} omc_alloc_interface_t;
-
-extern omc_alloc_interface_t omc_alloc_interface;
-extern omc_alloc_interface_t omc_alloc_interface_pooled;
-typedef threadData_t* OpenModelica_threadData_ThreadData;
+#include "gc/omc_gc.h"
 
 /* g++ does not allow putting attributes next to labels
  * clang++ does allow it however...

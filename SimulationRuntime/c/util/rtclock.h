@@ -1,39 +1,48 @@
 /*
  * This file is part of OpenModelica.
  *
- * Copyright (c) 1998-2010, Linköpings University,
- * Department of Computer and Information Science,
+ * Copyright (c) 1998-CurrentYear, Open Source Modelica Consortium (OSMC),
+ * c/o Linköpings universitet, Department of Computer and Information Science,
  * SE-58183 Linköping, Sweden.
  *
  * All rights reserved.
  *
- * THIS PROGRAM IS PROVIDED UNDER THE TERMS OF THIS OSMC PUBLIC
- * LICENSE (OSMC-PL). ANY USE, REPRODUCTION OR DISTRIBUTION OF
- * THIS PROGRAM CONSTITUTES RECIPIENT'S ACCEPTANCE OF THE OSMC
- * PUBLIC LICENSE.
+ * THIS PROGRAM IS PROVIDED UNDER THE TERMS OF THE BSD NEW LICENSE OR THE
+ * GPL VERSION 3 LICENSE OR THE OSMC PUBLIC LICENSE (OSMC-PL) VERSION 1.2.
+ * ANY USE, REPRODUCTION OR DISTRIBUTION OF THIS PROGRAM CONSTITUTES
+ * RECIPIENT'S ACCEPTANCE OF THE OSMC PUBLIC LICENSE OR THE GPL VERSION 3,
+ * ACCORDING TO RECIPIENTS CHOICE.
  *
- * The OpenModelica software and the Open Source Modelica
- * Consortium (OSMC) Public License (OSMC-PL) are obtained
- * from Linköpings University, either from the above address,
- * from the URL: http://www.ida.liu.se/projects/OpenModelica
- * and in the OpenModelica distribution.
+ * The OpenModelica software and the OSMC (Open Source Modelica Consortium)
+ * Public License (OSMC-PL) are obtained from OSMC, either from the above
+ * address, from the URLs: http://www.openmodelica.org or
+ * http://www.ida.liu.se/projects/OpenModelica, and in the OpenModelica
+ * distribution. GNU version 3 is obtained from:
+ * http://www.gnu.org/copyleft/gpl.html. The New BSD License is obtained from:
+ * http://www.opensource.org/licenses/BSD-3-Clause.
  *
- * This program is distributed  WITHOUT ANY WARRANTY; without
- * even the implied warranty of  MERCHANTABILITY or FITNESS
- * FOR A PARTICULAR PURPOSE, EXCEPT AS EXPRESSLY SET FORTH
- * IN THE BY RECIPIENT SELECTED SUBSIDIARY LICENSE CONDITIONS
- * OF OSMC-PL.
- *
- * See the full OSMC Public License conditions for more details.
+ * This program is distributed WITHOUT ANY WARRANTY; without even the implied
+ * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE, EXCEPT AS
+ * EXPRESSLY SET FORTH IN THE BY RECIPIENT SELECTED SUBSIDIARY LICENSE
+ * CONDITIONS OF OSMC-PL.
  *
  */
-
 #ifndef __RTCLOCK__H
 #define __RTCLOCK__H
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#if defined(OMC_MINIMAL_RUNTIME)
+
+typedef int rtclock_t;
+static inline void rt_ext_tp_tick(rtclock_t* tick_tp) {}
+static inline double rt_ext_tp_tock(rtclock_t* tick_tp) {return 0.0;}
+static inline void rt_tick(int ix) {}
+static inline double rt_tock(int ix) {return 0.0;}
+
+#else
 
 #include <stdint.h>
 
@@ -47,7 +56,7 @@ extern "C" {
 #define SIM_TIMER_STEP           2
 #define SIM_TIMER_OUTPUT         3
 #define SIM_TIMER_EVENT          4
-#define SIM_TIMER_LINEARIZE      5
+#define SIM_TIMER_JACOBIAN       5
 #define SIM_TIMER_PREINIT        6
 #define SIM_TIMER_OVERHEAD       7
 #define SIM_TIMER_FUNCTION_ODE   8
@@ -58,15 +67,15 @@ extern "C" {
 #define SIM_PROF_TICK_FN(ix) rt_tick(ix+SIM_TIMER_FIRST_FUNCTION)
 #define SIM_PROF_ACC_FN(ix) rt_accumulate(ix+SIM_TIMER_FIRST_FUNCTION)
 
-//These functions are used for profileBlocks, not for equations
-#define SIM_PROF_TICK_EQ(ix) rt_tick(ix+SIM_TIMER_FIRST_FUNCTION+data->modelData.modelDataXml.nFunctions)
-#define SIM_PROF_ACC_EQ(ix) rt_accumulate(ix+SIM_TIMER_FIRST_FUNCTION+data->modelData.modelDataXml.nFunctions)
-#define SIM_PROF_ADD_NCALL_EQ(ix,num) rt_add_ncall(ix+SIM_TIMER_FIRST_FUNCTION+data->modelData.modelDataXml.nFunctions,num)
+/* These functions are used for profileBlocks, not for equations */
+#define SIM_PROF_TICK_EQ(ix) rt_tick(ix+SIM_TIMER_FIRST_FUNCTION+data->modelData->modelDataXml.nFunctions)
+#define SIM_PROF_ACC_EQ(ix) rt_accumulate(ix+SIM_TIMER_FIRST_FUNCTION+data->modelData->modelDataXml.nFunctions)
+#define SIM_PROF_ADD_NCALL_EQ(ix,num) rt_add_ncall(ix+SIM_TIMER_FIRST_FUNCTION+data->modelData->modelDataXml.nFunctions,num)
 
-#define SIM_PROF_TICK_EQEXT(ix) rt_tick(ix+SIM_TIMER_FIRST_FUNCTION+data->modelData.modelDataXml.nFunctions+data->modelData.modelDataXml.nProfileBlocks)
-#define SIM_PROF_ACC_EQEXT(ix) rt_accumulate(ix+SIM_TIMER_FIRST_FUNCTION+data->modelData.modelDataXml.nFunctions+data->modelData.modelDataXml.nProfileBlocks)
-#define SIM_PROF_ACCED_EQEXT(ix) rt_accumulated(ix+SIM_TIMER_FIRST_FUNCTION+data->modelData.modelDataXml.nFunctions+data->modelData.modelDataXml.nProfileBlocks)
-#define SIM_PROF_NCALL_EQEXT(ix) rt_ncall(ix+SIM_TIMER_FIRST_FUNCTION+data->modelData.modelDataXml.nFunctions+data->modelData.modelDataXml.nProfileBlocks)
+#define SIM_PROF_TICK_EQEXT(ix) rt_tick(ix+SIM_TIMER_FIRST_FUNCTION+data->modelData->modelDataXml.nFunctions+data->modelData->modelDataXml.nProfileBlocks)
+#define SIM_PROF_ACC_EQEXT(ix) rt_accumulate(ix+SIM_TIMER_FIRST_FUNCTION+data->modelData->modelDataXml.nFunctions+data->modelData->modelDataXml.nProfileBlocks)
+#define SIM_PROF_ACCED_EQEXT(ix) rt_accumulated(ix+SIM_TIMER_FIRST_FUNCTION+data->modelData->modelDataXml.nFunctions+data->modelData->modelDataXml.nProfileBlocks)
+#define SIM_PROF_NCALL_EQEXT(ix) rt_ncall(ix+SIM_TIMER_FIRST_FUNCTION+data->modelData->modelDataXml.nFunctions+data->modelData->modelDataXml.nProfileBlocks)
 
 enum omc_rt_clock_t {
   OMC_CLOCK_REALTIME, /* CLOCK_MONOTONIC_RAW if available; else CLOCK_MONOTONIC */
@@ -93,6 +102,7 @@ typedef union rtclock_t {
 #endif
 
 int rt_set_clock(enum omc_rt_clock_t clockType); /* non-zero on failure */
+enum omc_rt_clock_t rt_get_clock(); /* non-zero on failure */
 void rt_init(int numTimer);
 
 void rt_tick(int ix);
@@ -120,7 +130,12 @@ void rt_measure_overhead(int ix);
 
 /* tick() ... tock() with external rtclock_t -> returns the number of seconds since the tick */
 void rt_ext_tp_tick(rtclock_t* tick_tp);
+void rt_ext_tp_tick_realtime(rtclock_t* tick_tp);
 double rt_ext_tp_tock(rtclock_t* tick_tp);
+/* sleep nsec nanoseconds since the call to tick_tp. Returns the number of nanoseconds we are late for the deadline. */
+int64_t rt_ext_tp_sync_nanosec(rtclock_t* tick_tp, uint64_t nsec);
+
+#endif
 
 #ifdef __cplusplus
 }

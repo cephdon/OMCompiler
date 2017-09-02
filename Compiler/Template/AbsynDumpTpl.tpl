@@ -2,10 +2,6 @@ package AbsynDumpTpl
 
 import interface AbsynDumpTV;
 
-template spaceString(String str)
-::= if str then ' <%str%>'
-end spaceString;
-
 template dump(Absyn.Program program, DumpOptions options)
 ::=
 match program
@@ -159,7 +155,7 @@ match restriction
   case R_PREDEFINED_BOOLEAN(__) then "Boolean"
   case R_PREDEFINED_ENUMERATION(__) then "enumeration(:)"
   case R_UNIONTYPE(__) then "uniontype"
-  case R_METARECORD(__) then "metarecord"
+  case R_METARECORD(__) then 'metarecord<% if typeVars then ("<" + (typeVars |> tv => tv; separator=",") + ">") %>'
   case R_UNKNOWN(__) then "*unknown*"
 end dumpRestriction;
 
@@ -214,10 +210,10 @@ match class_part
         let lang_str = match lang case SOME(l) then '"<%l%>" '
         let output_str = match output_ case SOME(o) then '<%dumpCref(o)%> = '
         let args_str = if args then '(<%(args |> arg => dumpExp(arg) ;separator=", ")%>)' else (if fn_str then "()")
-        let ann2_str = dumpAnnotationOpt(annotation_)
+        let ann2_str = dumpAnnotationOptSpace(annotation_)
         <<
 
-          external <%lang_str%><%output_str%><%fn_str%><%args_str%><%spaceString(ann2_str)%>;<%ann_str%>
+          external <%lang_str%><%output_str%><%fn_str%><%args_str%><%ann2_str%>;<%ann_str%>
         >>
 end dumpClassPart;
 
@@ -267,7 +263,7 @@ template dumpElement(Absyn.Element elem, DumpOptions options)
 ::=
 match elem
   case ELEMENT(__) then
-    if boolUnparseFileFromInfo(info, options) then
+    if boolOr(boolUnparseFileFromInfo(info, options), boolNot(isClassdef(elem))) then
     let final_str = dumpFinal(finalPrefix)
     let redecl_str = match redeclareKeywords case SOME(re) then dumpRedeclare(re)
     let repl_str = match redeclareKeywords case SOME(re) then dumpReplaceable(re)
@@ -296,22 +292,27 @@ end dumpInfo;
 template dumpAnnotation(Absyn.Annotation ann)
 ::=
 match ann
+  case ANNOTATION(elementArgs={}) then "annotation()"
   case ANNOTATION(__) then
-    let args = (elementArgs |> earg => dumpElementArg(earg) ;separator=", ")
-    'annotation(<%args ;absIndent%>)'
+    <<
+    annotation(
+      <%(elementArgs |> earg => dumpElementArg(earg) ;separator=',<%\n%>')%>)
+    >>
 end dumpAnnotation;
 
 template dumpAnnotationOpt(Option<Absyn.Annotation> oann)
 ::= match oann case SOME(ann) then dumpAnnotation(ann)
 end dumpAnnotationOpt;
 
+template dumpAnnotationOptSpace(Option<Absyn.Annotation> oann)
+::= match oann case SOME(ann) then " " + dumpAnnotation(ann)
+end dumpAnnotationOptSpace;
+
 template dumpComment(Absyn.Comment cmt)
 ::=
 match cmt
   case COMMENT(__) then
-    let ann_str = dumpAnnotationOpt(annotation_)
-    let cmt_str = dumpStringCommentOption(comment)
-    '<%cmt_str%><%spaceString(ann_str)%>'
+    dumpStringCommentOption(comment) + dumpAnnotationOptSpace(annotation_)
 end dumpComment;
 
 template dumpCommentOpt(Option<Absyn.Comment> ocmt)
@@ -392,8 +393,8 @@ match elem
     let bc_str = dumpPath(path)
     let args_str = (elementArg |> earg => dumpElementArg(earg) ;separator=", ")
     let mod_str = if args_str then '(<%args_str%>)'
-    let ann_str = dumpAnnotationOpt(annotationOpt)
-    'extends <%bc_str%><%mod_str%><%spaceString(ann_str)%>'
+    let ann_str = dumpAnnotationOptSpace(annotationOpt)
+    'extends <%bc_str%><%mod_str%><%ann_str%>'
   case COMPONENTS(__) then
     let ty_str = dumpTypeSpec(typeSpec)
     let attr_str = dumpElementAttr(attributes)
@@ -413,9 +414,10 @@ match attr
     let flow_str = if flowPrefix then "flow "
     let stream_str = if streamPrefix then "stream "
     let par_str = dumpParallelism(parallelism)
+    let field_str = dumpIsField(isField)
     let var_str = dumpVariability(variability)
     let dir_str = dumpDirection(direction)
-    '<%flow_str%><%stream_str%><%par_str%><%var_str%><%dir_str%>'
+    '<%flow_str%><%stream_str%><%par_str%><%field_str%><%var_str%><%dir_str%>'
 end dumpElementAttr;
 
 template dumpParallelism(Absyn.Parallelism par)
@@ -425,6 +427,13 @@ match par
   case PARLOCAL() then "parlocal "
   case NON_PARALLEL() then ""
 end dumpParallelism;
+
+template dumpIsField(Absyn.IsField isField)
+::=
+match isField
+  case NONFIELD() then ""
+  case FIELD() then "field "
+end dumpIsField;
 
 template dumpVariability(Absyn.Variability var)
 ::=
@@ -441,6 +450,7 @@ match dir
   case BIDIR() then ""
   case INPUT() then "input "
   case OUTPUT() then "output "
+  case INPUT_OUTPUT() then "input output "
 end dumpDirection;
 
 template dumpElementAttrDim(Absyn.ElementAttributes attr)
@@ -510,7 +520,7 @@ match eq
     let eq_str = dumpEquation(equation_)
     let cmt_str = dumpCommentOpt(comment)
     '<%eq_str%><%cmt_str%>;'
-  case EQUATIONITEMCOMMENT(__) then System.trimWhitespace(comment)
+  case EQUATIONITEMCOMMENT(__) then (System.trimWhitespace(comment) ; absIndent=0)
 end dumpEquationItem;
 
 template dumpEquationItems(list<Absyn.EquationItem> eql)
@@ -540,6 +550,11 @@ match eq
     let lhs = dumpLhsExp(leftSide)
     let rhs = dumpExp(rightSide)
     '<%lhs%> = <%rhs%>'
+  case EQ_PDE(__) then
+    let lhs = dumpLhsExp(leftSide)
+    let rhs = dumpExp(rightSide)
+    let domain_str = dumpCref(domain)
+    '<%lhs%> = <%rhs%> indomain <%domain_str%>'
   case EQ_CONNECT(__) then
     let c1_str = dumpCref(connector1)
     let c2_str = dumpCref(connector2)
@@ -591,7 +606,7 @@ match alg
     let alg_str = dumpAlgorithm(algorithm_)
     let cmt_str = dumpCommentOpt(comment)
     '<%alg_str%><%cmt_str%>;'
-  case ALGORITHMITEMCOMMENT(__) then System.trimWhitespace(comment)
+  case ALGORITHMITEMCOMMENT(__) then (System.trimWhitespace(comment) ; absIndent=0)
 end dumpAlgorithmItem;
 
 template dumpAlgorithm(Absyn.Algorithm alg)
@@ -687,6 +702,9 @@ match path
   case FULLYQUALIFIED(__) then
     '.<%dumpPath(path)%>'
   case QUALIFIED(__) then
+    if (Flags.getConfigBool(Flags.MODELICA_OUTPUT)) then
+    '<%name%>__<%dumpPath(path)%>'
+    else
     '<%name%>.<%dumpPath(path)%>'
   case IDENT(__) then
     '<%name%>'
@@ -745,7 +763,7 @@ match exp
   case INTEGER(__) then value
   case REAL(__) then value
   case CREF(__) then dumpCref(componentRef)
-  case STRING(__) then '"<%value%>"'
+  case STRING(__) then ('"<%value; absIndent=0%>"')
   case BOOL(__) then value
   case e as BINARY(__) then
     let lhs_str = dumpOperand(exp1, e, true)
@@ -771,6 +789,9 @@ match exp
     let op_str = dumpOperator(op)
     '<%lhs_str%> <%op_str%> <%rhs_str%>'
   case IFEXP(__) then dumpIfExp(exp)
+  case CALL(function_=Absyn.CREF_IDENT(name="$array")) then
+    let args_str = dumpFunctionArgs(functionArgs)
+    '{<%args_str%>}'
   case CALL(__) then
     let func_str = dumpCref(function_)
     let args_str = dumpFunctionArgs(functionArgs)

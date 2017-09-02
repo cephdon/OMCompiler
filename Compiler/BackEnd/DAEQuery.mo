@@ -32,9 +32,8 @@
 encapsulated package DAEQuery
 " file:        DAEQuery.mo
   package:     DAEQuery
-  description: DAEQuery contains functionality for query of Incidence Matrix.
+  description: DAEQuery contains functionality for query of Incidence Matrix."
 
-  RCS: $Id$"
 
 // public imports
 public import BackendDAE;
@@ -85,39 +84,27 @@ public function getEquations
   This function returns the equations"
   input BackendDAE.BackendDAE inBackendDAE;
   output String strEqs;
+protected
+  BackendDAE.EqSystem syst;
+  list<String> ls1;
 algorithm
-  strEqs := match (inBackendDAE)
-    local
-      String s,s1;
-      list<String> ls1;
-      list<BackendDAE.Equation> eqnsl;
-      BackendDAE.EquationArray eqns;
-      list<BackendDAE.WhenClause> wcLst;
-
-    case (BackendDAE.DAE(eqs=BackendDAE.EQSYSTEM(orderedEqs = eqns)::{}, shared=BackendDAE.SHARED(eventInfo = BackendDAE.EVENT_INFO(whenClauseLst = wcLst))))
-      equation
-        eqnsl = BackendEquation.equationList(eqns);
-        ls1 = List.map1(eqnsl, equationStr, wcLst);
-        s1 = stringDelimitList(ls1, ",");
-        s = "EqStr = {" + s1 + "};";
-      then
-        s;
-  end match;
+    BackendDAE.DAE({syst}, _) := inBackendDAE;
+    ls1 := List.map(BackendEquation.equationList(syst.orderedEqs), equationStr);
+    strEqs := "EqStr = {" + stringDelimitList(ls1, ",") + "};";
 end getEquations;
 
 public function equationStr
 "Helper function to getEqustions."
   input BackendDAE.Equation inEquation;
-  input list<BackendDAE.WhenClause> wcLst;
   output String outString;
 algorithm
-  outString := match (inEquation, wcLst)
+  outString := match (inEquation)
     local
       String s1,s2,s3,res;
       DAE.Exp e1,e2,e,condition;
       DAE.ComponentRef cr;
 
-    case (BackendDAE.EQUATION(exp = e1,scalar = e2), _)
+    case (BackendDAE.EQUATION(exp = e1,scalar = e2))
       equation
         s1 = ExpressionDump.printExpStr(e1);
         s2 = ExpressionDump.printExpStr(e2);
@@ -125,7 +112,7 @@ algorithm
       then
         res;
 
-    case (BackendDAE.ARRAY_EQUATION(left=e1,right=e2), _)
+    case (BackendDAE.ARRAY_EQUATION(left=e1,right=e2))
       equation
         s1 = ExpressionDump.printExpStr(e1);
         s2 = ExpressionDump.printExpStr(e2);
@@ -133,7 +120,7 @@ algorithm
       then
         res;
 
-    case (BackendDAE.COMPLEX_EQUATION(left=e1,right=e2), _)
+    case (BackendDAE.COMPLEX_EQUATION(left=e1,right=e2))
       equation
         s1 = ExpressionDump.printExpStr(e1);
         s2 = ExpressionDump.printExpStr(e2);
@@ -141,7 +128,7 @@ algorithm
       then
         res;
 
-    case (BackendDAE.SOLVED_EQUATION(componentRef = cr,exp = e2), _)
+    case (BackendDAE.SOLVED_EQUATION(componentRef = cr,exp = e2))
       equation
         s1 = ComponentReference.printComponentRefStr(cr);
         s2 = ExpressionDump.printExpStr(e2);
@@ -149,23 +136,23 @@ algorithm
       then
         res;
 
-    case (BackendDAE.WHEN_EQUATION(whenEquation = BackendDAE.WHEN_EQ(condition=condition,left = cr,right = e2)), _)
+    case (BackendDAE.WHEN_EQUATION(whenEquation = BackendDAE.WHEN_STMTS(condition=condition,whenStmtLst={BackendDAE.ASSIGN(left = e1,right = e2)})))
       equation
-        s1 = ComponentReference.printComponentRefStr(cr);
+        s1 = ExpressionDump.printExpStr(e1);
         s2 = ExpressionDump.printExpStr(e2);
         s3 = ExpressionDump.printExpStr(condition);
         res = stringAppendList({"'when ", s3, " then " , s1," = ",s2,"; end when;'"});
       then
         res;
 
-    case (BackendDAE.RESIDUAL_EQUATION(exp = e),_)
+    case (BackendDAE.RESIDUAL_EQUATION(exp = e))
       equation
         s1 = ExpressionDump.printExpStr(e);
         res = stringAppendList({"'", s1,"= 0", ";'"});
       then
         res;
 
-    case (BackendDAE.ALGORITHM(),_)
+    case (BackendDAE.ALGORITHM())
       equation
         res = stringAppendList({"Algorithm\n"});
       then
@@ -199,7 +186,7 @@ protected function getIncidenceMatrix2 "author: adrpo
   output String strIMatrix;
 algorithm
   strIMatrix :=
-  matchcontinue (inStringLstLst,rowIndex)
+  match (inStringLstLst,rowIndex)
     local
       list<String> row;
       list<list<String>> rows;
@@ -218,7 +205,7 @@ algorithm
         str = stringAppendList({"{", str1, "},",  str2});
       then
         str;
-  end matchcontinue;
+  end match;
 end getIncidenceMatrix2;
 
 protected function getIncidenceRow "author: adrpo
@@ -228,7 +215,7 @@ protected function getIncidenceRow "author: adrpo
   output String strRow;
 algorithm
   strRow :=
-  matchcontinue (inStringLst)
+  match (inStringLst)
     local
       String s,  s2, x;
       list<String> xs;
@@ -240,7 +227,7 @@ algorithm
         s = stringAppendList({x, ",", s2});
       then
         s;
-  end matchcontinue;
+  end match;
 end getIncidenceRow;
 
 public function getVariables "This function returns the variables
@@ -797,6 +784,15 @@ algorithm
         {};
 
     case (DAE.CALL(path = Absyn.IDENT(name = "pre"),expLst = {DAE.CREF(componentRef = cr)}),vars) /* pre(v) is considered a known variable */ //IS IT????
+      equation
+        (_,p) = BackendVariable.getVar(cr, vars);
+        pStr = List.map(p, intString);
+        //ss = printExpStr(cr, vars);
+        //pStr = ss;
+      then
+        pStr;
+
+    case (DAE.CALL(path = Absyn.IDENT(name = "previous"),expLst = {DAE.CREF(componentRef = cr)}),vars) /* previous(v) is considered a known variable*/
       equation
         (_,p) = BackendVariable.getVar(cr, vars);
         pStr = List.map(p, intString);
